@@ -1,0 +1,69 @@
+{
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
+    "devPath": "http://localhost:5199",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "Dispatch",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "shell": {
+        "all": false,
+        "open": true,
+        "execute": true,
+        "sidecar": false,
+        "scope": [
+          {
+            "name": "git",
+            "cmd": "git",
+            "args": true
+          },
+          {
+            "name": "yarn",
+            "cmd": "yarn",
+            "args": true
+          }
+        ]
+      },
+      "fs": {
+        "all": true,
+        "scope": [
+          "$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/ejfox/**",
+          "$HOME/code/website2/**"
+        ]
+      },
+      "path": { "all": true },
+      "dialog": { "all": true },
+      "clipboard": { "all": true },
+      "notification": { "all": true }
+    },
+    "bundle": {
+      "active": true,
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/icon.icns"
+      ],
+      "identifier": "com.ejfox.dispatch",
+      "targets": "all"
+    },
+    "systemTray": {
+      "iconPath": "icons/tray.png",
+      "iconAsTemplate": true
+    },
+    "windows": [
+      {
+        "title": "Dispatch",
+        "width": 700,
+        "height": 600,
+        "resizable": true,
+        "visible": true
+      }
+    ]
+  }
+}
