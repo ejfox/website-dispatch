@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ref, computed } from 'vue'
+
 interface MarkdownFile {
   path: string
   filename: string
@@ -15,13 +17,51 @@ interface MarkdownFile {
   source_dir: string
 }
 
-defineProps<{
+const props = defineProps<{
   files: MarkdownFile[]
   selected: MarkdownFile | null
   loading: boolean
 }>()
 
 const emit = defineEmits<{ select: [file: MarkdownFile] }>()
+
+const filter = ref<'all' | 'published' | 'drafts'>('all')
+const sort = ref<'modified' | 'created' | 'title' | 'words'>('modified')
+
+const filteredFiles = computed(() => {
+  let result = props.files
+
+  // Filter
+  if (filter.value === 'published') {
+    result = result.filter(f => f.published_url)
+  } else if (filter.value === 'drafts') {
+    result = result.filter(f => !f.published_url)
+  }
+
+  // Sort
+  result = [...result].sort((a, b) => {
+    switch (sort.value) {
+      case 'modified':
+        return b.modified - a.modified
+      case 'created':
+        return b.created - a.created
+      case 'title':
+        return formatTitle(a).localeCompare(formatTitle(b))
+      case 'words':
+        return b.word_count - a.word_count
+      default:
+        return 0
+    }
+  })
+
+  return result
+})
+
+const counts = computed(() => ({
+  all: props.files.length,
+  published: props.files.filter(f => f.published_url).length,
+  drafts: props.files.filter(f => !f.published_url).length
+}))
 
 function formatTitle(file: MarkdownFile): string {
   return file.title || file.filename.replace(/\.md$/, '').replace(/-/g, ' ')
@@ -55,11 +95,33 @@ function getAgeColor(ts: number): string {
       <span class="live">{{ files.filter(f => f.published_url).length }} LIVE</span>
     </div>
 
+    <div class="filters">
+      <button
+        :class="{ active: filter === 'all' }"
+        @click="filter = 'all'"
+      >All ({{ counts.all }})</button>
+      <button
+        :class="{ active: filter === 'published' }"
+        @click="filter = 'published'"
+      >Live ({{ counts.published }})</button>
+      <button
+        :class="{ active: filter === 'drafts' }"
+        @click="filter = 'drafts'"
+      >Drafts ({{ counts.drafts }})</button>
+    </div>
+
+    <div class="sort-row">
+      <button :class="{ active: sort === 'modified' }" @click="sort = 'modified'">Modified</button>
+      <button :class="{ active: sort === 'created' }" @click="sort = 'created'">Created</button>
+      <button :class="{ active: sort === 'title' }" @click="sort = 'title'">Title</button>
+      <button :class="{ active: sort === 'words' }" @click="sort = 'words'">Words</button>
+    </div>
+
     <div v-if="loading" class="loading">Loading...</div>
 
     <div v-else class="list">
       <button
-        v-for="file in files"
+        v-for="file in filteredFiles"
         :key="file.path"
         class="item"
         :class="{
@@ -78,8 +140,14 @@ function getAgeColor(ts: number): string {
           </div>
           <div class="meta">
             <span v-if="file.source_dir" class="dir">{{ file.source_dir }}/</span>
-            <span v-if="file.published_date" class="pub-date">pub {{ formatAge(file.published_date) }}</span>
-            <span v-else>{{ formatAge(file.created) }} → {{ formatAge(file.modified) }}</span>
+            <template v-if="file.published_date">
+              <span class="pub-date">published {{ formatAge(file.published_date) }}</span>
+              <span v-if="file.warnings.includes('Modified since publish')" class="edit-date">edited {{ formatAge(file.modified) }}</span>
+            </template>
+            <template v-else>
+              <span class="create-date">created {{ formatAge(file.created) }}</span>
+              <span class="edit-date">edited {{ formatAge(file.modified) }}</span>
+            </template>
             <span>{{ file.word_count }}w</span>
             <span v-if="file.warnings.length" class="warn">{{ file.warnings.length }}</span>
           </div>
@@ -94,7 +162,9 @@ function getAgeColor(ts: number): string {
   width: 300px;
   min-width: 300px;
   border-right: 1px solid var(--border);
-  background: var(--bg-secondary);
+  background: rgba(25, 25, 28, 0.75);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   display: flex;
   flex-direction: column;
 }
@@ -111,6 +181,78 @@ function getAgeColor(ts: number): string {
 .header .live {
   color: var(--success);
   font-weight: 600;
+}
+
+.filters {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.filters button {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 9px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.filters button:last-child {
+  border-right: none;
+}
+
+.filters button:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+}
+
+.filters button.active {
+  background: rgba(10, 132, 255, 0.2);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.sort-row {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.sort-row button {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 8px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sort-row button:last-child {
+  border-right: none;
+}
+
+.sort-row button:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+}
+
+.sort-row button.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
 }
 
 .loading {
@@ -136,10 +278,12 @@ function getAgeColor(ts: number): string {
   text-align: left;
 }
 
-.item:hover { background: var(--bg-tertiary); }
+.item:hover { background: rgba(255, 255, 255, 0.05); }
 
 .item.selected {
-  background: var(--accent);
+  background: rgba(10, 132, 255, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .item.selected .title,
@@ -235,5 +379,13 @@ function getAgeColor(ts: number): string {
 
 .pub-date {
   color: var(--success);
+}
+
+.create-date {
+  color: var(--text-tertiary);
+}
+
+.edit-date {
+  color: var(--warning);
 }
 </style>

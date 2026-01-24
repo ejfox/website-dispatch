@@ -5,13 +5,15 @@
  */
 
 import { createServer } from 'http'
-import { promises as fs } from 'fs'
+import { promises as fs, watch } from 'fs'
 import path from 'path'
 import { spawn } from 'child_process'
 
 const WEBSITE2_PATH = '/Users/ejfox/code/website2'
 const PORT = 6419
 let currentFile = ''
+let fileWatcher = null
+let lastMtime = 0
 
 // Spawn a child process in website2 using the lightweight converter
 async function processWithWebsite2(filePath) {
@@ -319,6 +321,43 @@ const server = createServer(async (req, res) => {
           currentFile = newFile
           cachedHtml = ''
           console.log(`Preview: ${path.basename(currentFile)}`)
+
+          // Stop watching old file
+          if (fileWatcher) {
+            fileWatcher.close()
+            fileWatcher = null
+          }
+
+          // Start watching new file for changes
+          try {
+            fileWatcher = watch(currentFile, async (eventType) => {
+              if (eventType === 'change' && !processing) {
+                // Debounce: check mtime to avoid duplicate events
+                try {
+                  const stat = await fs.stat(currentFile)
+                  const mtime = stat.mtimeMs
+                  if (mtime === lastMtime) return
+                  lastMtime = mtime
+
+                  console.log(`Changed: ${path.basename(currentFile)}`)
+                  processing = true
+                  processWithWebsite2(currentFile)
+                    .then(result => {
+                      cachedHtml = result.html
+                      cachedToc = result.toc || []
+                      processing = false
+                      console.log(`Reloaded: ${path.basename(currentFile)}`)
+                    })
+                    .catch(err => {
+                      console.error('Reload error:', err.message)
+                      processing = false
+                    })
+                } catch (e) {}
+              }
+            })
+          } catch (e) {
+            console.error('Watch error:', e.message)
+          }
 
           // Start processing in background
           processing = true

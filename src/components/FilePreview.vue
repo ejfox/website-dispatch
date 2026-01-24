@@ -27,12 +27,23 @@ interface Backlink {
 const props = defineProps<{ file: MarkdownFile }>()
 const emit = defineEmits<{ published: [] }>()
 
+interface GitStatus {
+  ok: boolean
+  branch: string
+  error: string | null
+  dirty_files: string[]
+  has_conflicts: boolean
+}
+
 const content = ref('')
 const publishing = ref(false)
 const justPublished = ref<string | null>(null)
 const backlinks = ref<Backlink[]>([])
 const loadingBacklinks = ref(false)
 const obsidianConnected = ref(false)
+const gitStatus = ref<GitStatus | null>(null)
+const showSuccess = ref(false)
+const successMessage = ref('')
 
 watch(() => props.file, async (file) => {
   justPublished.value = null
@@ -69,6 +80,18 @@ invoke('check_obsidian_api').then((connected: unknown) => {
   obsidianConnected.value = connected as boolean
 })
 
+// Check git status
+async function checkGitStatus() {
+  try {
+    gitStatus.value = await invoke('get_git_status') as GitStatus
+  } catch (e) {
+    console.error('Git status check failed:', e)
+  }
+}
+checkGitStatus()
+// Refresh git status periodically
+setInterval(checkGitStatus, 10000)
+
 const title = computed(() =>
   props.file.title || props.file.filename.replace(/\.md$/, '').replace(/-/g, ' ')
 )
@@ -93,8 +116,9 @@ function formatAge(ts: number): string {
   return `${Math.floor(days / 365)} years ago`
 }
 
-async function publish() {
-  if (!props.file.is_safe) return
+async function publish(isRepublish = false) {
+  // For fresh publish, require is_safe. For republish, allow it.
+  if (!isRepublish && !props.file.is_safe) return
   publishing.value = true
   try {
     const url = await invoke<string>('publish_file', {
@@ -102,7 +126,14 @@ async function publish() {
       slug: slug.value
     })
     justPublished.value = url
-    emit('published')
+
+    // Show success toast
+    successMessage.value = isRepublish ? 'Republished!' : 'Published!'
+    showSuccess.value = true
+    setTimeout(() => { showSuccess.value = false }, 3000)
+
+    // Delay refresh slightly to let filesystem settle
+    setTimeout(() => emit('published'), 500)
   } catch (e) {
     alert(`Failed: ${e}`)
   }
@@ -122,10 +153,6 @@ async function openInIAWriter() {
   await invoke('open_in_app', { path: props.file.path, app: 'iA Writer' })
 }
 
-async function openInNvim() {
-  await invoke('open_in_terminal', { path: props.file.path, cmd: 'nvim' })
-}
-
 async function openPreview() {
   await invoke('open_preview')
 }
@@ -133,11 +160,18 @@ async function openPreview() {
 
 <template>
   <div class="panel" :class="{ live: isLive }">
+    <!-- Success Toast -->
+    <Transition name="toast">
+      <div v-if="showSuccess" class="success-toast">
+        {{ successMessage }}
+      </div>
+    </Transition>
+
     <!-- Status Banner -->
     <div v-if="isLive && hasUnpublishedChanges" class="banner modified">
       <span class="banner-text">MODIFIED</span>
       <span>Source changed since last publish</span>
-      <button @click="publish" :disabled="publishing">{{ publishing ? '...' : 'Republish' }}</button>
+      <button @click="publish(true)" :disabled="publishing">{{ publishing ? '...' : 'Republish' }}</button>
     </div>
     <div v-else-if="isLive" class="banner live">
       <span class="banner-text">LIVE</span>
@@ -171,8 +205,8 @@ async function openPreview() {
         <span>{{ formatAge(file.created) }}</span>
       </div>
       <div class="row">
-        <span class="label">Modified</span>
-        <span>{{ formatAge(file.modified) }}</span>
+        <span class="label">Edited</span>
+        <span :class="{ 'modified-highlight': hasUnpublishedChanges }">{{ formatAge(file.modified) }}</span>
       </div>
       <div v-if="file.published_date" class="row">
         <span class="label">Published</span>
@@ -194,6 +228,16 @@ async function openPreview() {
         <span class="label">Obsidian</span>
         <span :class="obsidianConnected ? 'connected' : 'disconnected'">
           {{ obsidianConnected ? 'connected' : 'not connected' }}
+        </span>
+      </div>
+      <div class="row">
+        <span class="label">Git</span>
+        <span v-if="!gitStatus">checking...</span>
+        <span v-else-if="gitStatus.ok" class="connected">
+          {{ gitStatus.branch }} ✓
+        </span>
+        <span v-else class="git-warning" :title="gitStatus.error || ''">
+          {{ gitStatus.error }}
         </span>
       </div>
     </div>
@@ -223,10 +267,6 @@ async function openPreview() {
         <span class="icon">iA</span>
         <span class="label">iA Writer</span>
       </button>
-      <button @click="openInNvim" class="open-btn" title="Open in Neovim">
-        <span class="icon">vi</span>
-        <span class="label">nvim</span>
-      </button>
       <button @click="openPreview" class="open-btn preview" title="Live Preview">
         <span class="icon">▶</span>
         <span class="label">Preview</span>
@@ -237,7 +277,7 @@ async function openPreview() {
     <div class="actions">
       <template v-if="isLive">
         <a :href="liveUrl!" target="_blank" class="btn">View on site →</a>
-        <button @click="publish" :disabled="publishing" class="btn accent">
+        <button @click="publish(true)" :disabled="publishing" class="btn accent">
           {{ publishing ? '...' : 'Republish' }}
         </button>
       </template>
@@ -266,10 +306,13 @@ async function openPreview() {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  background: rgba(20, 20, 22, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .panel.live {
-  background: linear-gradient(180deg, rgba(48, 209, 88, 0.05) 0%, transparent 200px);
+  background: linear-gradient(180deg, rgba(48, 209, 88, 0.08) 0%, rgba(20, 20, 22, 0.6) 200px);
 }
 
 /* Banner */
@@ -388,8 +431,45 @@ async function openPreview() {
   color: var(--success);
 }
 
+.modified-highlight {
+  color: var(--warning);
+  font-weight: 500;
+}
+
 .disconnected {
   color: var(--text-tertiary);
+}
+
+.git-warning {
+  color: var(--warning);
+  font-size: 10px;
+}
+
+/* Success Toast */
+.success-toast {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--success);
+  color: #000;
+  padding: 16px 32px;
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: 600;
+  z-index: 100;
+  box-shadow: 0 8px 32px rgba(48, 209, 88, 0.4);
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition: all 0.3s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.8);
 }
 
 /* Backlinks */
@@ -471,15 +551,16 @@ async function openPreview() {
   align-items: center;
   gap: 2px;
   padding: 8px 4px;
-  background: var(--bg-tertiary);
-  border: none;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .open-btn:hover {
-  background: var(--bg-secondary);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.1);
   transform: translateY(-1px);
 }
 
@@ -501,6 +582,7 @@ async function openPreview() {
 
 .open-btn.preview {
   background: rgba(10, 132, 255, 0.15);
+  border-color: rgba(10, 132, 255, 0.2);
 }
 
 .open-btn.preview .icon {
@@ -509,6 +591,7 @@ async function openPreview() {
 
 .open-btn.preview:hover {
   background: rgba(10, 132, 255, 0.25);
+  border-color: rgba(10, 132, 255, 0.3);
 }
 
 /* Actions */
@@ -538,6 +621,7 @@ async function openPreview() {
 .btn.accent {
   background: var(--accent);
   color: #fff;
+  box-shadow: 0 2px 8px rgba(10, 132, 255, 0.3);
 }
 
 .btn.full {

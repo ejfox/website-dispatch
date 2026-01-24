@@ -30,6 +30,10 @@ const searchQuery = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
 const selectedIndex = ref(0)
 
+// Help & keyboard state
+const showHelp = ref(false)
+const lastGPress = ref(0)
+
 const searchResults = computed(() => {
   if (!searchQuery.value.trim()) return files.value.slice(0, 20)
   const q = searchQuery.value.toLowerCase()
@@ -76,13 +80,129 @@ function handleSearchKey(e: KeyboardEvent) {
 }
 
 function handleGlobalKey(e: KeyboardEvent) {
+  // ⌘K or / for search
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
     e.preventDefault()
     if (searchOpen.value) closeSearch()
     else openSearch()
+    return
   }
-  if (e.key === 'Escape' && searchOpen.value) {
-    closeSearch()
+
+  // Don't handle navigation when search is open
+  if (searchOpen.value) {
+    if (e.key === 'Escape') closeSearch()
+    return
+  }
+
+  // / also opens search (vim style)
+  if (e.key === '/' && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault()
+    openSearch()
+    return
+  }
+
+  // ? shows help
+  if (e.key === '?' && e.shiftKey) {
+    e.preventDefault()
+    showHelp.value = !showHelp.value
+    return
+  }
+
+  const currentIndex = selectedFile.value
+    ? files.value.findIndex(f => f.path === selectedFile.value?.path)
+    : -1
+
+  // Arrow navigation through file list
+  if (e.key === 'ArrowDown' || e.key === 'j') {
+    e.preventDefault()
+    const nextIndex = Math.min(currentIndex + 1, files.value.length - 1)
+    selectedFile.value = files.value[nextIndex]
+  }
+
+  if (e.key === 'ArrowUp' || e.key === 'k') {
+    e.preventDefault()
+    const prevIndex = Math.max(currentIndex - 1, 0)
+    selectedFile.value = files.value[prevIndex]
+  }
+
+  // g g - go to top (vim style, track double-tap)
+  if (e.key === 'g' && !e.metaKey && !e.ctrlKey) {
+    const now = Date.now()
+    if (lastGPress.value && now - lastGPress.value < 300) {
+      selectedFile.value = files.value[0]
+      lastGPress.value = 0
+    } else {
+      lastGPress.value = now
+    }
+  }
+
+  // G - go to bottom
+  if (e.key === 'G' && e.shiftKey) {
+    e.preventDefault()
+    selectedFile.value = files.value[files.value.length - 1]
+  }
+
+  // [ and ] - prev/next with wrap
+  if (e.key === '[') {
+    const prevIndex = currentIndex <= 0 ? files.value.length - 1 : currentIndex - 1
+    selectedFile.value = files.value[prevIndex]
+  }
+  if (e.key === ']') {
+    const nextIndex = currentIndex >= files.value.length - 1 ? 0 : currentIndex + 1
+    selectedFile.value = files.value[nextIndex]
+  }
+
+  // 1-9 jump to nth file
+  if (e.key >= '1' && e.key <= '9' && !e.metaKey && !e.ctrlKey) {
+    const idx = parseInt(e.key) - 1
+    if (idx < files.value.length) {
+      selectedFile.value = files.value[idx]
+    }
+  }
+
+  // Escape to deselect
+  if (e.key === 'Escape') {
+    selectedFile.value = null
+    showHelp.value = false
+  }
+
+  // o - open in Obsidian
+  if (e.key === 'o' && selectedFile.value && !e.metaKey) {
+    invoke('open_in_obsidian', { path: selectedFile.value.path })
+  }
+
+  // i - open in iA Writer
+  if (e.key === 'i' && selectedFile.value) {
+    invoke('open_in_app', { path: selectedFile.value.path, app: 'iA Writer' })
+  }
+
+  // p - open preview
+  if (e.key === 'p' && selectedFile.value && !e.metaKey) {
+    invoke('open_preview')
+  }
+
+  // v - view on site (if published)
+  if (e.key === 'v' && selectedFile.value?.published_url) {
+    window.open(selectedFile.value.published_url, '_blank')
+  }
+
+  // c - copy URL (if published)
+  if (e.key === 'c' && selectedFile.value?.published_url && !e.metaKey) {
+    navigator.clipboard.writeText(selectedFile.value.published_url)
+  }
+
+  // r - refresh
+  if (e.key === 'r' && !e.metaKey && !e.ctrlKey) {
+    loadFiles()
+  }
+
+  // ⌘Enter to publish
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && selectedFile.value?.is_safe) {
+    e.preventDefault()
+    invoke('publish_file', {
+      sourcePath: selectedFile.value.path,
+      slug: selectedFile.value.filename.replace('.md', '')
+    }).then(() => loadFiles())
   }
 }
 
@@ -110,7 +230,6 @@ onUnmounted(() => {
   <div class="app">
     <div class="titlebar" data-tauri-drag-region>
       <div class="titlebar-spacer"></div>
-      <span class="titlebar-title">Dispatch</span>
       <div class="titlebar-btns">
         <button @click="openSearch" class="titlebar-btn" title="Search (⌘K)">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
@@ -123,6 +242,36 @@ onUnmounted(() => {
             <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
           </svg>
         </button>
+      </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div v-if="showHelp" class="search-overlay" @click.self="showHelp = false">
+      <div class="help-modal">
+        <div class="help-title">Keyboard Shortcuts</div>
+        <div class="help-grid">
+          <div class="help-section">
+            <div class="help-section-title">Navigation</div>
+            <div class="help-row"><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> <span>move up/down</span></div>
+            <div class="help-row"><kbd>g</kbd><kbd>g</kbd> <span>go to top</span></div>
+            <div class="help-row"><kbd>G</kbd> <span>go to bottom</span></div>
+            <div class="help-row"><kbd>[</kbd> <kbd>]</kbd> <span>prev/next (wrap)</span></div>
+            <div class="help-row"><kbd>1</kbd>-<kbd>9</kbd> <span>jump to nth file</span></div>
+            <div class="help-row"><kbd>esc</kbd> <span>deselect</span></div>
+          </div>
+          <div class="help-section">
+            <div class="help-section-title">Actions</div>
+            <div class="help-row"><kbd>⌘</kbd><kbd>K</kbd> or <kbd>/</kbd> <span>search</span></div>
+            <div class="help-row"><kbd>o</kbd> <span>open in Obsidian</span></div>
+            <div class="help-row"><kbd>i</kbd> <span>open in iA Writer</span></div>
+            <div class="help-row"><kbd>p</kbd> <span>preview</span></div>
+            <div class="help-row"><kbd>v</kbd> <span>view on site</span></div>
+            <div class="help-row"><kbd>c</kbd> <span>copy URL</span></div>
+            <div class="help-row"><kbd>r</kbd> <span>refresh</span></div>
+            <div class="help-row"><kbd>⌘</kbd><kbd>↵</kbd> <span>publish</span></div>
+          </div>
+        </div>
+        <div class="help-hint">Press <kbd>?</kbd> or <kbd>esc</kbd> to close</div>
       </div>
     </div>
 
@@ -175,7 +324,8 @@ onUnmounted(() => {
       />
 
       <div v-else class="empty">
-        Select a file
+        <div>Select a file</div>
+        <div class="empty-hint">Press <kbd>?</kbd> for shortcuts</div>
       </div>
     </main>
   </div>
@@ -185,10 +335,12 @@ onUnmounted(() => {
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --bg-primary: #1a1a1a;
-  --bg-secondary: #242424;
-  --bg-tertiary: #2e2e2e;
-  --border: #333;
+  --bg-primary: rgba(20, 20, 22, 0.85);
+  --bg-secondary: rgba(30, 30, 34, 0.8);
+  --bg-tertiary: rgba(45, 45, 50, 0.6);
+  --bg-solid: #141416;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-light: rgba(255, 255, 255, 0.12);
   --text-primary: #e5e5e5;
   --text-secondary: #999;
   --text-tertiary: #666;
@@ -201,7 +353,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
   font-size: 12px;
   color: var(--text-primary);
-  background: var(--bg-primary);
+  background: var(--bg-solid);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -214,7 +366,9 @@ body {
 .titlebar {
   height: 36px;
   background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--border-light);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -223,12 +377,6 @@ body {
 }
 
 .titlebar-spacer { width: 70px; }
-
-.titlebar-title {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
 
 .titlebar-btns {
   -webkit-app-region: no-drag;
@@ -265,16 +413,26 @@ body {
 .empty {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   color: var(--text-tertiary);
+}
+
+.empty-hint {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  opacity: 0.6;
 }
 
 /* Search Modal */
 .search-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   z-index: 100;
   display: flex;
   align-items: flex-start;
@@ -285,11 +443,13 @@ body {
 .search-modal {
   width: 500px;
   max-width: 90vw;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  background: rgba(35, 35, 40, 0.85);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--border-light);
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255,255,255,0.05) inset;
 }
 
 .search-input {
@@ -326,7 +486,7 @@ body {
 
 .search-result:hover,
 .search-result.selected {
-  background: var(--bg-tertiary);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .result-live {
@@ -367,5 +527,80 @@ body {
   gap: 16px;
   font-size: 10px;
   color: var(--text-tertiary);
+}
+
+/* Help Modal */
+.help-modal {
+  width: 480px;
+  max-width: 90vw;
+  background: rgba(35, 35, 40, 0.9);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+}
+
+.help-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.help-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.help-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.help-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.help-row span {
+  margin-left: auto;
+  color: var(--text-tertiary);
+}
+
+kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-family: 'SF Mono', monospace;
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: var(--text-primary);
+}
+
+.help-hint {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.help-hint kbd {
+  font-size: 9px;
+  padding: 1px 4px;
 }
 </style>

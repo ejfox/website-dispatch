@@ -69,6 +69,11 @@ fn publish_file(source_path: String, slug: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn get_git_status() -> publish::GitStatus {
+    publish::get_git_status()
+}
+
+#[tauri::command]
 async fn get_backlinks(filename: String) -> Result<Vec<obsidian::Backlink>, String> {
     obsidian::get_backlinks(&filename).await
 }
@@ -165,8 +170,33 @@ fn set_preview_file(path: String) {
 }
 
 #[tauri::command]
-fn open_preview() -> Result<String, String> {
-    preview::open_preview()
+async fn open_preview(app_handle: tauri::AppHandle) -> Result<String, String> {
+    use tauri::WindowBuilder;
+
+    // Check if preview window already exists
+    if let Some(window) = app_handle.get_window("preview") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok("http://127.0.0.1:6419".into());
+    }
+
+    // Create new preview window
+    let window = WindowBuilder::new(
+        &app_handle,
+        "preview",
+        tauri::WindowUrl::External("http://127.0.0.1:6419".parse().unwrap())
+    )
+    .title("Preview")
+    .inner_size(900.0, 800.0)
+    .min_inner_size(400.0, 300.0)
+    .decorations(true)
+    .resizable(true)
+    .build()
+    .map_err(|e| e.to_string())?;
+
+    let _ = window.set_focus();
+
+    Ok("http://127.0.0.1:6419".into())
 }
 
 fn main() {
@@ -207,11 +237,11 @@ fn main() {
             get_recent_files,
             get_file_content,
             publish_file,
+            get_git_status,
             get_backlinks,
             check_obsidian_api,
             open_in_obsidian,
             open_in_app,
-            open_in_terminal,
             set_preview_file,
             open_preview,
         ])

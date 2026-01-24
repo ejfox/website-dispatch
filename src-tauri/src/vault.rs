@@ -60,7 +60,7 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .to_string();
             let slug = filename.trim_end_matches(".md");
 
-            let (published_url, published_date) = find_published_info(&config.website_repo, slug);
+            let (published_url, published_date, published_content) = find_published_info(&config.website_repo, slug);
             let source_dir = path
                 .parent()
                 .and_then(|p| p.strip_prefix(&config.vault_path).ok())
@@ -69,10 +69,9 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
 
             let mut warnings = check_warnings(&body, &frontmatter, title.is_some());
 
-            // Check if source is newer than published (has unpublished changes)
-            if let Some(pub_date) = published_date {
-                if modified > pub_date + 60 {
-                    // 60 second grace period
+            // Check if content actually differs from published version
+            if let Some(ref pub_content) = published_content {
+                if content_differs(&content, pub_content) {
                     warnings.insert(0, "Modified since publish".into());
                 }
             }
@@ -107,27 +106,62 @@ fn get_timestamp(time: std::io::Result<SystemTime>) -> u64 {
         .unwrap_or(0)
 }
 
-fn find_published_info(website_repo: &str, slug: &str) -> (Option<String>, Option<u64>) {
-    let blog_path = format!("{}/content/blog", website_repo);
+fn find_published_info(website_repo: &str, slug: &str) -> (Option<String>, Option<u64>, Option<String>) {
+    // Posts are in content/blog/blog/{year}/ (note the nested blog folder)
+    let blog_path = format!("{}/content/blog/blog", website_repo);
 
     if let Ok(entries) = fs::read_dir(&blog_path) {
         for entry in entries.flatten() {
             if entry.path().is_dir() {
-                let year = entry.file_name().to_string_lossy().to_string();
-                let file_path = format!("{}/{}/{}.md", blog_path, year, slug);
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                // Only look in year folders (4 digits), skip drafts/projects/etc
+                if dir_name.len() != 4 || !dir_name.chars().all(|c| c.is_ascii_digit()) {
+                    continue;
+                }
+                let file_path = format!("{}/{}/{}.md", blog_path, dir_name, slug);
                 let path = Path::new(&file_path);
                 if path.exists() {
-                    let url = format!("https://ejfox.com/blog/{}/{}", year, slug);
+                    let url = format!("https://ejfox.com/blog/{}/{}", dir_name, slug);
                     let date = fs::metadata(path)
                         .and_then(|m| m.modified())
                         .map(|t| get_timestamp(Ok(t)))
                         .ok();
-                    return (Some(url), date);
+                    let published_content = fs::read_to_string(path).ok();
+                    return (Some(url), date, published_content);
                 }
             }
         }
     }
-    (None, None)
+    (None, None, None)
+}
+
+fn normalize_content(content: &str) -> String {
+    // Extract body after frontmatter and normalize whitespace
+    let body = if content.starts_with("---") {
+        if let Some(end) = content[3..].find("---") {
+            content[end + 6..].to_string()
+        } else {
+            content.to_string()
+        }
+    } else {
+        content.to_string()
+    };
+
+    // Normalize: trim, collapse whitespace, remove trailing newlines
+    body.trim()
+        .lines()
+        .map(|l| l.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn content_differs(source: &str, published: &str) -> bool {
+    // Simple comparison - if files are byte-identical, no diff
+    if source == published {
+        return false;
+    }
+    // Fall back to normalized comparison
+    normalize_content(source) != normalize_content(published)
 }
 
 fn parse_frontmatter(content: &str) -> (HashMap<String, String>, String) {
