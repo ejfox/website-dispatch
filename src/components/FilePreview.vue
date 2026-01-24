@@ -81,6 +81,7 @@ const targetUrl = computed(() =>
 
 const isLive = computed(() => !!props.file.published_url || !!justPublished.value)
 const liveUrl = computed(() => props.file.published_url || justPublished.value)
+const hasUnpublishedChanges = computed(() => props.file.warnings.includes('Modified since publish'))
 
 function formatAge(ts: number): string {
   const days = Math.floor((Date.now() / 1000 - ts) / 86400)
@@ -133,7 +134,12 @@ async function openPreview() {
 <template>
   <div class="panel" :class="{ live: isLive }">
     <!-- Status Banner -->
-    <div v-if="isLive" class="banner live">
+    <div v-if="isLive && hasUnpublishedChanges" class="banner modified">
+      <span class="banner-text">MODIFIED</span>
+      <span>Source changed since last publish</span>
+      <button @click="publish" :disabled="publishing">{{ publishing ? '...' : 'Republish' }}</button>
+    </div>
+    <div v-else-if="isLive" class="banner live">
       <span class="banner-text">LIVE</span>
       <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
       <button @click="copyUrl">Copy</button>
@@ -309,6 +315,26 @@ async function openPreview() {
 .banner.warn {
   background: rgba(255, 159, 10, 0.15);
   color: var(--warning);
+}
+
+.banner.modified {
+  background: var(--warning);
+  color: #000;
+}
+
+.banner.modified .banner-text {
+  font-weight: 700;
+}
+
+.banner.modified button {
+  background: rgba(0,0,0,0.2);
+  border: none;
+  color: #000;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+  margin-left: auto;
 }
 
 .banner.ready {

@@ -72,7 +72,8 @@ function getAgeColor(ts: number): string {
         <div class="age-bar"></div>
         <div class="content">
           <div class="row">
-            <span v-if="file.published_url" class="live-badge">LIVE</span>
+            <span v-if="file.published_url && file.warnings.includes('Modified since publish')" class="modified-badge">MODIFIED</span>
+            <span v-else-if="file.published_url" class="live-badge">LIVE</span>
             <span class="title">{{ formatTitle(file) }}</span>
           </div>
           <div class="meta">
@@ -187,7 +188,18 @@ function getAgeColor(ts: number): string {
   flex-shrink: 0;
 }
 
-.item.selected .live-badge {
+.modified-badge {
+  font-size: 8px;
+  font-weight: 700;
+  background: var(--warning);
+  color: #000;
+  padding: 1px 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.item.selected .live-badge,
+.item.selected .modified-badge {
   background: #fff;
   color: var(--accent);
 }

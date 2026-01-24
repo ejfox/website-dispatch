@@ -67,7 +67,15 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
 
-            let warnings = check_warnings(&body, &frontmatter, title.is_some());
+            let mut warnings = check_warnings(&body, &frontmatter, title.is_some());
+
+            // Check if source is newer than published (has unpublished changes)
+            if let Some(pub_date) = published_date {
+                if modified > pub_date + 60 {
+                    // 60 second grace period
+                    warnings.insert(0, "Modified since publish".into());
+                }
+            }
 
             files.push(MarkdownFile {
                 path: path.to_string_lossy().to_string(),
