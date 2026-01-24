@@ -191,5 +191,64 @@ fn check_warnings(body: &str, frontmatter: &HashMap<String, String>, has_title: 
         warnings.push("Local images".into());
     }
 
+    // Check for broken/empty links
+    let broken_link_patterns = [
+        "]()",           // Empty link
+        "](#)",          // Empty anchor
+        "](http)",       // Incomplete http
+        "[[]]",          // Empty wikilink
+        "![](",          // Image with no alt text (not critical but worth noting)
+    ];
+    for pattern in broken_link_patterns {
+        if body.contains(pattern) {
+            warnings.push("Broken link".into());
+            break;
+        }
+    }
+
+    // Check for potentially broken image embeds
+    let broken_image_patterns = [
+        "![]()",                    // Empty image
+        "src=\"\"",                 // Empty src in HTML
+        "src=''",                   // Empty src single quotes
+        ".png)",                    // Might be local
+        ".jpg)",                    // Might be local
+        ".jpeg)",                   // Might be local
+        ".gif)",                    // Might be local
+        "](attachments/",           // Obsidian attachments folder
+        "](Attachments/",           // Obsidian attachments (capitalized)
+        "](assets/",                // Common local assets folder
+        "](images/",                // Common local images folder
+    ];
+
+    let mut has_local_media = false;
+    for pattern in broken_image_patterns {
+        if body.contains(pattern) {
+            // Skip if it's a cloudinary URL (those are fine)
+            if !body.contains("cloudinary") || pattern == "![]()" || pattern == "src=\"\"" {
+                has_local_media = true;
+                break;
+            }
+        }
+    }
+
+    if has_local_media && !warnings.contains(&"Local images".to_string()) {
+        warnings.push("Local media".into());
+    }
+
+    // Check for broken HTML embeds
+    if body.contains("<img") && !body.contains("cloudinary") && !body.contains("https://") {
+        if !warnings.contains(&"Local media".to_string()) {
+            warnings.push("Local media".into());
+        }
+    }
+
+    // Check for video embeds that might be broken
+    if body.contains("<video") || body.contains(".mp4)") || body.contains(".webm)") {
+        if !body.contains("cloudinary") && !body.contains("https://") {
+            warnings.push("Local video".into());
+        }
+    }
+
     warnings
 }
