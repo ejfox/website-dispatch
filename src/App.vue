@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/tauri'
 import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
+import MediaLibraryModal from './components/MediaLibraryModal.vue'
 
 interface MarkdownFile {
   path: string
@@ -34,6 +35,10 @@ const selectedIndex = ref(0)
 const showHelp = ref(false)
 const lastGPress = ref(0)
 
+// Right panel tab state
+const rightTab = ref<'preview' | 'media'>('preview')
+const cloudinaryConnected = ref(false)
+
 const searchResults = computed(() => {
   if (!searchQuery.value.trim()) return files.value.slice(0, 20)
   const q = searchQuery.value.toLowerCase()
@@ -56,6 +61,31 @@ function openSearch() {
 function closeSearch() {
   searchOpen.value = false
   searchQuery.value = ''
+}
+
+async function handleInsertMedia(markdown: string) {
+  if (!selectedFile.value) {
+    // No file selected - just copy to clipboard
+    navigator.clipboard.writeText(markdown)
+    return
+  }
+
+  try {
+    await invoke('append_to_file', {
+      path: selectedFile.value.path,
+      content: markdown
+    })
+    rightTab.value = 'preview'
+    // Refresh the file content by re-selecting
+    const file = selectedFile.value
+    selectedFile.value = null
+    await nextTick()
+    selectedFile.value = file
+  } catch (e) {
+    console.error('Failed to insert media:', e)
+    // Fallback to clipboard
+    navigator.clipboard.writeText(markdown)
+  }
 }
 
 function selectResult(file: MarkdownFile) {
@@ -196,6 +226,12 @@ function handleGlobalKey(e: KeyboardEvent) {
     loadFiles()
   }
 
+  // m - toggle media library tab
+  if (e.key === 'm' && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault()
+    rightTab.value = rightTab.value === 'media' ? 'preview' : 'media'
+  }
+
   // ⌘Enter to publish
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && selectedFile.value?.is_safe) {
     e.preventDefault()
@@ -219,6 +255,13 @@ async function loadFiles() {
 onMounted(() => {
   loadFiles()
   window.addEventListener('keydown', handleGlobalKey)
+
+  // Check Cloudinary status
+  invoke('check_cloudinary_status').then((connected: unknown) => {
+    cloudinaryConnected.value = connected as boolean
+  }).catch(() => {
+    cloudinaryConnected.value = false
+  })
 })
 
 onUnmounted(() => {
@@ -231,6 +274,12 @@ onUnmounted(() => {
     <div class="titlebar" data-tauri-drag-region>
       <div class="titlebar-spacer"></div>
       <div class="titlebar-btns">
+        <button @click="rightTab = rightTab === 'media' ? 'preview' : 'media'" class="titlebar-btn" :class="{ active: rightTab === 'media' }" title="Media Library (m)">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            <path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2h-12zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1h12z"/>
+          </svg>
+        </button>
         <button @click="openSearch" class="titlebar-btn" title="Search (⌘K)">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
             <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
@@ -268,12 +317,14 @@ onUnmounted(() => {
             <div class="help-row"><kbd>v</kbd> <span>view on site</span></div>
             <div class="help-row"><kbd>c</kbd> <span>copy URL</span></div>
             <div class="help-row"><kbd>r</kbd> <span>refresh</span></div>
+            <div class="help-row"><kbd>m</kbd> <span>media library</span></div>
             <div class="help-row"><kbd>⌘</kbd><kbd>↵</kbd> <span>publish</span></div>
           </div>
         </div>
         <div class="help-hint">Press <kbd>?</kbd> or <kbd>esc</kbd> to close</div>
       </div>
     </div>
+
 
     <!-- Search Modal -->
     <div v-if="searchOpen" class="search-overlay" @click.self="closeSearch">
@@ -311,21 +362,50 @@ onUnmounted(() => {
 
     <main class="main">
       <FileList
+        v-if="rightTab === 'preview'"
         :files="files"
         :selected="selectedFile"
         :loading="loading"
-        @select="(f) => selectedFile = f"
+        @select="(f) => { selectedFile = f; rightTab = 'preview' }"
       />
 
-      <FilePreview
-        v-if="selectedFile"
-        :file="selectedFile"
-        @published="loadFiles"
-      />
+      <div class="right-panel">
+        <div class="panel-tabs">
+          <button
+            :class="{ active: rightTab === 'preview' }"
+            @click="rightTab = 'preview'"
+          >
+            Preview
+          </button>
+          <button
+            :class="{ active: rightTab === 'media' }"
+            @click="rightTab = 'media'"
+          >
+            Media
+          </button>
+        </div>
 
-      <div v-else class="empty">
-        <div>Select a file</div>
-        <div class="empty-hint">Press <kbd>?</kbd> for shortcuts</div>
+        <div class="panel-content">
+          <FilePreview
+            v-if="rightTab === 'preview' && selectedFile"
+            :file="selectedFile"
+            @published="loadFiles"
+          />
+
+          <div v-else-if="rightTab === 'preview'" class="empty">
+            <div>Select a file</div>
+            <div class="empty-hint">Press <kbd>?</kbd> for shortcuts</div>
+          </div>
+
+          <MediaLibraryModal
+            v-else-if="rightTab === 'media'"
+            :selected-file="selectedFile"
+            :inline="true"
+            @close="rightTab = 'preview'"
+            @select="(asset) => navigator.clipboard.writeText(asset.secure_url)"
+            @insert="handleInsertMedia"
+          />
+        </div>
       </div>
     </main>
   </div>
@@ -344,9 +424,11 @@ onUnmounted(() => {
   --text-primary: #e5e5e5;
   --text-secondary: #999;
   --text-tertiary: #666;
-  --accent: #0a84ff;
-  --warning: #ff9f0a;
-  --success: #30d158;
+  /* Semantic colors only - use for data/state, not decoration */
+  --accent: rgba(255, 255, 255, 0.15);  /* Selection highlight - neutral */
+  --success: #30d158;  /* Good: published, used, connected */
+  --warning: #ff9f0a;  /* Caution: modified, local media */
+  --danger: #ff453a;   /* Bad: errors, broken links */
 }
 
 body {
@@ -404,10 +486,56 @@ body {
   color: var(--text-primary);
 }
 
+.titlebar-btn.connected {
+  color: var(--success);
+}
+
 .main {
   flex: 1;
   display: flex;
   overflow: hidden;
+}
+
+.right-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.panel-tabs button {
+  padding: 8px 16px;
+  font-size: 11px;
+  font-weight: 500;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.panel-tabs button:hover {
+  color: var(--text-secondary);
+}
+
+.panel-tabs button.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--text-primary);
+}
+
+.panel-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .empty {

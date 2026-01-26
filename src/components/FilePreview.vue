@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/tauri'
+import LocalMediaFixer from './LocalMediaFixer.vue'
 
 interface MarkdownFile {
   path: string
@@ -24,6 +25,15 @@ interface Backlink {
   context: string
 }
 
+interface LocalMediaRef {
+  original_text: string
+  path: string
+  resolved_path: string | null
+  alt_text: string | null
+  media_type: string
+  line_number: number
+}
+
 const props = defineProps<{ file: MarkdownFile }>()
 const emit = defineEmits<{ published: [] }>()
 
@@ -44,10 +54,15 @@ const obsidianConnected = ref(false)
 const gitStatus = ref<GitStatus | null>(null)
 const showSuccess = ref(false)
 const successMessage = ref('')
+const localMedia = ref<LocalMediaRef[]>([])
+const loadingLocalMedia = ref(false)
+const showMediaFixer = ref(false)
 
 watch(() => props.file, async (file) => {
   justPublished.value = null
   backlinks.value = []
+  localMedia.value = []
+  showMediaFixer.value = false
 
   // Set this file as the preview target (Node server for accurate rendering)
   fetch('http://127.0.0.1:6419/set-file', {
@@ -73,6 +88,15 @@ watch(() => props.file, async (file) => {
     console.log('Backlinks unavailable:', e)
   }
   loadingBacklinks.value = false
+
+  // Fetch local media references
+  loadingLocalMedia.value = true
+  try {
+    localMedia.value = await invoke('get_local_media', { path: file.path })
+  } catch (e) {
+    console.log('Local media detection unavailable:', e)
+  }
+  loadingLocalMedia.value = false
 }, { immediate: true })
 
 // Check Obsidian API status on mount
@@ -257,6 +281,37 @@ async function openPreview() {
       </div>
     </div>
 
+    <!-- Local Media -->
+    <div v-if="localMedia.length > 0 || loadingLocalMedia" class="local-media-section">
+      <div class="local-media-header">
+        <span class="label">Local Media</span>
+        <span class="count warning">{{ loadingLocalMedia ? '...' : localMedia.length }}</span>
+        <button v-if="localMedia.length > 0" @click="showMediaFixer = true" class="fix-btn">
+          Fix
+        </button>
+      </div>
+      <div v-if="loadingLocalMedia" class="local-media-loading">Scanning...</div>
+      <div v-else class="local-media-list">
+        <div v-for="media in localMedia.slice(0, 3)" :key="media.path + media.line_number" class="local-media-item">
+          <span class="media-type">{{ media.media_type === 'video' ? '🎬' : '🖼' }}</span>
+          <span class="media-path">{{ media.path }}</span>
+          <span v-if="!media.resolved_path" class="missing">not found</span>
+        </div>
+        <div v-if="localMedia.length > 3" class="local-media-more">
+          +{{ localMedia.length - 3 }} more
+        </div>
+      </div>
+    </div>
+
+    <!-- Local Media Fixer Modal -->
+    <LocalMediaFixer
+      v-if="showMediaFixer"
+      :file-path="file.path"
+      :local-media="localMedia"
+      @close="showMediaFixer = false"
+      @fixed="$emit('published')"
+    />
+
     <!-- Open In -->
     <div class="open-in">
       <button @click="openInObsidian" class="open-btn" title="Open in Obsidian">
@@ -381,8 +436,8 @@ async function openPreview() {
 }
 
 .banner.ready {
-  background: rgba(10, 132, 255, 0.1);
-  color: var(--accent);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
 }
 
 /* Header */
@@ -497,7 +552,7 @@ async function openPreview() {
 
 .backlinks-header .count {
   font-size: 10px;
-  color: var(--accent);
+  color: var(--text-secondary);
   font-weight: 600;
 }
 
@@ -534,6 +589,98 @@ async function openPreview() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Local Media */
+.local-media-section {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.local-media-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.local-media-header .label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.local-media-header .count {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.local-media-header .count.warning {
+  color: var(--warning);
+}
+
+.fix-btn {
+  margin-left: auto;
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  background: var(--warning);
+  color: #000;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.fix-btn:hover {
+  filter: brightness(1.1);
+}
+
+.local-media-loading {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.local-media-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.local-media-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: rgba(255, 159, 10, 0.1);
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+.media-type {
+  flex-shrink: 0;
+}
+
+.media-path {
+  flex: 1;
+  font-family: 'SF Mono', monospace;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.local-media-item .missing {
+  color: var(--warning);
+  font-size: 9px;
+}
+
+.local-media-more {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: 4px;
 }
 
 /* Open In */
@@ -581,17 +728,17 @@ async function openPreview() {
 }
 
 .open-btn.preview {
-  background: rgba(10, 132, 255, 0.15);
-  border-color: rgba(10, 132, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 .open-btn.preview .icon {
-  color: var(--accent);
+  color: var(--text-secondary);
 }
 
 .open-btn.preview:hover {
-  background: rgba(10, 132, 255, 0.25);
-  border-color: rgba(10, 132, 255, 0.3);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 /* Actions */
@@ -619,9 +766,9 @@ async function openPreview() {
 }
 
 .btn.accent {
-  background: var(--accent);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(10, 132, 255, 0.3);
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .btn.full {

@@ -1,6 +1,6 @@
 [package]
 name = "website-dispatch"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [build-dependencies]
@@ -13,9 +13,14 @@ serde_json = "1.0"
 walkdir = "2.4"
 chrono = "0.4"
 gray_matter = "0.2"
-reqwest = { version = "0.11", features = ["json", "rustls-tls", "blocking"], default-features = false }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+reqwest = { version = "0.11", features = ["json", "rustls-tls", "blocking", "multipart"], default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 urlencoding = "2.1"
+sha1 = "0.10"
+regex = "1.10"
+mime_guess = "2.0"
+dotenvy = "0.15"
+tauri-plugin-window-state = "0.1"
 
 [features]
 default = ["custom-protocol"]

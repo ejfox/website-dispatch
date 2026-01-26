@@ -149,7 +149,6 @@ function getAgeColor(ts: number): string {
               <span class="edit-date">edited {{ formatAge(file.modified) }}</span>
             </template>
             <span>{{ file.word_count }}w</span>
-            <span v-if="file.warnings.length" class="warn">{{ file.warnings.length }}</span>
           </div>
         </div>
       </button>
@@ -214,8 +213,8 @@ function getAgeColor(ts: number): string {
 }
 
 .filters button.active {
-  background: rgba(10, 132, 255, 0.2);
-  color: var(--accent);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
   font-weight: 600;
 }
 
@@ -345,7 +344,7 @@ function getAgeColor(ts: number): string {
 .item.selected .live-badge,
 .item.selected .modified-badge {
   background: #fff;
-  color: var(--accent);
+  color: #333;
 }
 
 .title {
@@ -373,10 +372,6 @@ function getAgeColor(ts: number): string {
   text-overflow: ellipsis;
 }
 
-.warn {
-  color: var(--warning);
-}
-
 .pub-date {
   color: var(--success);
 }
@@ -386,6 +381,6 @@ function getAgeColor(ts: number): string {
 }
 
 .edit-date {
-  color: var(--warning);
+  color: var(--text-tertiary);
 }
 </style>
