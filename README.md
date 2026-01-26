@@ -2,6 +2,8 @@
 
 Tauri desktop app for publishing Obsidian notes to ejfox.com.
 
+<img width="900" height="1131" alt="screenshot 2026-01-26 at 11 40 14 AM" src="https://github.com/user-attachments/assets/6964af9d-aa81-4184-85d3-e0a8ef27c27f" />
+
 ## Features
 
 - Scans Obsidian vault (`blog/` and `drafts/` folders)
