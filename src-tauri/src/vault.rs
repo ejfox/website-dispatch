@@ -1,4 +1,5 @@
 use crate::{Config, MarkdownFile};
+use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -44,14 +45,22 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
         }
 
         if let Ok(metadata) = fs::metadata(path) {
-            let modified = get_timestamp(metadata.modified());
-            let created = metadata
+            let fs_modified = get_timestamp(metadata.modified());
+            let fs_created = metadata
                 .created()
                 .map(|t| get_timestamp(Ok(t)))
-                .unwrap_or(modified);
+                .unwrap_or(fs_modified);
 
             let content = fs::read_to_string(path).unwrap_or_default();
             let (frontmatter, body) = parse_frontmatter(&content);
+
+            // Prefer frontmatter dates over filesystem dates
+            let modified = frontmatter.get("modified")
+                .and_then(|d| parse_iso_date(d))
+                .unwrap_or(fs_modified);
+            let created = frontmatter.get("date")
+                .and_then(|d| parse_iso_date(d))
+                .unwrap_or(fs_created);
             let title = extract_h1_title(&body);
             let filename = path
                 .file_name()
@@ -76,10 +85,19 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 }
             }
 
+            // Parse visibility controls
+            let unlisted = frontmatter
+                .get("unlisted")
+                .map(|v| v == "true" || v == "yes")
+                .unwrap_or(false);
+            let password = frontmatter.get("password").cloned();
+            let dek = frontmatter.get("dek").cloned();
+
             files.push(MarkdownFile {
                 path: path.to_string_lossy().to_string(),
                 filename,
                 title,
+                dek,
                 date: frontmatter.get("date").cloned(),
                 tags: parse_tags(&frontmatter),
                 created,
@@ -90,6 +108,8 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 published_url,
                 published_date,
                 source_dir,
+                unlisted,
+                password,
             });
         }
     }
@@ -106,9 +126,31 @@ fn get_timestamp(time: std::io::Result<SystemTime>) -> u64 {
         .unwrap_or(0)
 }
 
+fn parse_iso_date(date_str: &str) -> Option<u64> {
+    // Parse ISO 8601 dates like "2024-01-01T00:00:00-05:00" or "2024-01-01"
+    use chrono::{DateTime, NaiveDate};
+
+    // Try full datetime with timezone
+    if let Ok(dt) = DateTime::parse_from_rfc3339(date_str) {
+        return Some(dt.timestamp() as u64);
+    }
+
+    // Try datetime without timezone (assume UTC)
+    if let Ok(dt) = date_str.parse::<DateTime<chrono::Utc>>() {
+        return Some(dt.timestamp() as u64);
+    }
+
+    // Try just date
+    if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+        return Some(date.and_hms_opt(0, 0, 0)?.and_utc().timestamp() as u64);
+    }
+
+    None
+}
+
 fn find_published_info(website_repo: &str, slug: &str) -> (Option<String>, Option<u64>, Option<String>) {
-    // Posts are in content/blog/blog/{year}/ (note the nested blog folder)
-    let blog_path = format!("{}/content/blog/blog", website_repo);
+    // Posts are in content/blog/{year}/
+    let blog_path = format!("{}/content/blog", website_repo);
 
     if let Ok(entries) = fs::read_dir(&blog_path) {
         for entry in entries.flatten() {
@@ -217,12 +259,81 @@ fn parse_tags(frontmatter: &HashMap<String, String>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn check_warnings(body: &str, frontmatter: &HashMap<String, String>, has_title: bool) -> Vec<String> {
+pub fn add_tag_to_file(path: &str, tag: &str) -> Result<(), String> {
+    let content = fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
+
+    // Parse frontmatter
+    if !content.starts_with("---") {
+        // No frontmatter - add it with the tag
+        let new_content = format!("---\ntags: [{}]\n---\n{}", tag, content);
+        fs::write(path, new_content).map_err(|e| format!("Failed to write file: {}", e))?;
+        return Ok(());
+    }
+
+    // Find frontmatter boundaries
+    let end_pos = content[3..]
+        .find("---")
+        .ok_or("Invalid frontmatter: no closing ---")?;
+    let fm_content = &content[3..end_pos + 3];
+    let body = &content[end_pos + 6..];
+
+    // Check if tags line exists - filter empty lines to keep frontmatter clean
+    let mut lines: Vec<String> = fm_content
+        .lines()
+        .map(|l| l.to_string())
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let mut found_tags = false;
+
+    for line in lines.iter_mut() {
+        if line.starts_with("tags:") {
+            // Parse existing tags and add the new one
+            let existing = line.trim_start_matches("tags:").trim();
+            let mut tags: Vec<String> = if existing.starts_with('[') {
+                // Array format: [tag1, tag2]
+                existing
+                    .trim_matches(|c| c == '[' || c == ']')
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            } else {
+                // Single value or empty
+                if existing.is_empty() {
+                    vec![]
+                } else {
+                    vec![existing.to_string()]
+                }
+            };
+
+            // Don't add duplicate
+            if !tags.iter().any(|t| t.eq_ignore_ascii_case(tag)) {
+                tags.push(tag.to_string());
+            }
+
+            *line = format!("tags: [{}]", tags.join(", "));
+            found_tags = true;
+            break;
+        }
+    }
+
+    if !found_tags {
+        // Insert tags after first line (or at end of frontmatter)
+        lines.push(format!("tags: [{}]", tag));
+    }
+
+    // Rebuild the file
+    let new_content = format!("---\n{}\n---{}", lines.join("\n"), body);
+    fs::write(path, new_content).map_err(|e| format!("Failed to write file: {}", e))?;
+
+    Ok(())
+}
+
+fn check_warnings(body: &str, frontmatter: &HashMap<String, String>, _has_title: bool) -> Vec<String> {
     let mut warnings = Vec::new();
 
-    if !has_title {
-        warnings.push("No title".into());
-    }
+    // Title is now optional - website will derive from filename if missing
+    // Date is still required for proper sorting/display
     if !frontmatter.contains_key("date") {
         warnings.push("No date".into());
     }
@@ -292,5 +403,57 @@ fn check_warnings(body: &str, frontmatter: &HashMap<String, String>, has_title: 
         }
     }
 
+    // Check for long link text (over 4 words)
+    if has_long_link_text(body, 4) {
+        warnings.push("Long link text".into());
+    }
+
     warnings
+}
+
+fn has_long_link_text(body: &str, max_words: usize) -> bool {
+    let link_re = Regex::new(r"(!)?\[([^\]]+)\]\(([^)]+)\)").unwrap();
+    for caps in link_re.captures_iter(body) {
+        if caps.get(1).is_some() {
+            continue;
+        }
+        let text = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+        let word_count = text.split_whitespace().count();
+        if word_count > max_words {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add_tag_to_file() {
+        let test_file = "/tmp/test-tag.md";
+        
+        // Create test file with frontmatter
+        std::fs::write(test_file, "---\ndate: 2026-01-31\n---\n\n# Test\n").unwrap();
+        
+        // Add a tag
+        add_tag_to_file(test_file, "politics").unwrap();
+        
+        let content = std::fs::read_to_string(test_file).unwrap();
+        assert!(content.contains("tags: [politics]"), "Should have tags: {}", content);
+        
+        // Add another tag
+        add_tag_to_file(test_file, "coding").unwrap();
+        
+        let content = std::fs::read_to_string(test_file).unwrap();
+        assert!(content.contains("politics") && content.contains("coding"), "Should have both tags: {}", content);
+        
+        // Try adding duplicate (should not duplicate)
+        add_tag_to_file(test_file, "politics").unwrap();
+        
+        let content = std::fs::read_to_string(test_file).unwrap();
+        let count = content.matches("politics").count();
+        assert_eq!(count, 1, "Should not duplicate: {}", content);
+    }
 }

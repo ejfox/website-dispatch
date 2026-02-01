@@ -21,6 +21,15 @@ Tauri desktop app for publishing Obsidian notes to ejfox.com.
 - **Frontend:** Vue 3 + TypeScript
 - **Preview:** Node.js server using website2's remark/rehype pipeline
 
+## Media Library Components
+
+The Cloudinary media library UI was split into a dedicated folder to make it easier to extend into a full-featured media management tool. The modal stays as the stateful container (loading, keyboard handling, selection, Cloudinary calls), and the UI is broken into focused subcomponents (sidebar, grid, detail). This keeps behavior centralized while letting the UI evolve without a single monolithic file.
+
+- Container: `src/components/Media/MediaLibraryModal.vue`
+- Sidebar: `src/components/Media/MediaLibrarySidebar.vue`
+- Grid: `src/components/Media/MediaLibraryGrid.vue`
+- Detail panel: `src/components/Media/MediaLibraryDetail.vue`
+
 ## Development
 
 ```bash

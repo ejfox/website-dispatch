@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/tauri'
+import { FileText, Search, RefreshCw, Image, GitBranch, Circle, Zap } from 'lucide-vue-next'
 import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
-import MediaLibraryModal from './components/MediaLibraryModal.vue'
+import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
 
 interface MarkdownFile {
   path: string
   filename: string
   title: string | null
+  dek: string | null
   date: string | null
   tags: string[]
   created: number
@@ -19,6 +21,8 @@ interface MarkdownFile {
   published_url: string | null
   published_date: number | null
   source_dir: string
+  unlisted: boolean
+  password: string | null
 }
 
 const files = ref<MarkdownFile[]>([])
@@ -38,6 +42,16 @@ const lastGPress = ref(0)
 // Right panel tab state
 const rightTab = ref<'preview' | 'media'>('preview')
 const cloudinaryConnected = ref(false)
+const obsidianConnected = ref(false)
+const gitBranch = ref<string | null>(null)
+
+// Compact mode preference
+const compactMode = ref(localStorage.getItem('dispatch-compact') === 'true')
+function toggleCompactMode() {
+  compactMode.value = !compactMode.value
+  localStorage.setItem('dispatch-compact', compactMode.value.toString())
+}
+
 
 const searchResults = computed(() => {
   if (!searchQuery.value.trim()) return files.value.slice(0, 20)
@@ -51,6 +65,27 @@ const searchResults = computed(() => {
     .slice(0, 20)
 })
 
+// Stats computations
+const stats = computed(() => {
+  const now = Date.now() / 1000
+  const dayAgo = now - 86400
+  const weekAgo = now - 86400 * 7
+
+  const liveFiles = files.value.filter(f => f.published_url)
+  const todayPublished = liveFiles.filter(f => f.published_date && f.published_date > dayAgo)
+  const weekPublished = liveFiles.filter(f => f.published_date && f.published_date > weekAgo)
+
+  return {
+    total: files.value.length,
+    live: liveFiles.length,
+    drafts: files.value.length - liveFiles.length,
+    totalWords: files.value.reduce((sum, f) => sum + f.word_count, 0),
+    todayPublished: todayPublished.length,
+    weekPublished: weekPublished.length,
+    weekWords: weekPublished.reduce((sum, f) => sum + f.word_count, 0)
+  }
+})
+
 function openSearch() {
   searchOpen.value = true
   searchQuery.value = ''
@@ -62,6 +97,7 @@ function closeSearch() {
   searchOpen.value = false
   searchQuery.value = ''
 }
+
 
 async function handleInsertMedia(markdown: string) {
   if (!selectedFile.value) {
@@ -256,12 +292,24 @@ onMounted(() => {
   loadFiles()
   window.addEventListener('keydown', handleGlobalKey)
 
-  // Check Cloudinary status
+  // Check connection statuses
   invoke('check_cloudinary_status').then((connected: unknown) => {
     cloudinaryConnected.value = connected as boolean
   }).catch(() => {
     cloudinaryConnected.value = false
   })
+
+  invoke('check_obsidian_api').then((connected: unknown) => {
+    obsidianConnected.value = connected as boolean
+  }).catch(() => {
+    obsidianConnected.value = false
+  })
+
+  invoke('get_git_status').then((status: any) => {
+    if (status?.ok) {
+      gitBranch.value = status.branch
+    }
+  }).catch(() => {})
 })
 
 onUnmounted(() => {
@@ -273,23 +321,19 @@ onUnmounted(() => {
   <div class="app">
     <div class="titlebar" data-tauri-drag-region>
       <div class="titlebar-spacer"></div>
+      <div class="titlebar-stats" v-if="stats.weekPublished > 0">
+        <Zap :size="10" />
+        <span>{{ stats.weekPublished }} this week</span>
+      </div>
       <div class="titlebar-btns">
         <button @click="rightTab = rightTab === 'media' ? 'preview' : 'media'" class="titlebar-btn" :class="{ active: rightTab === 'media' }" title="Media Library (m)">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
-            <path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2h-12zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1h12z"/>
-          </svg>
+          <Image :size="14" />
         </button>
         <button @click="openSearch" class="titlebar-btn" title="Search (⌘K)">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
-          </svg>
+          <Search :size="14" />
         </button>
-        <button @click="loadFiles" class="titlebar-btn" title="Refresh">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
-            <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
-          </svg>
+        <button @click="loadFiles" class="titlebar-btn" :class="{ spinning: loading }" title="Refresh (r)">
+          <RefreshCw :size="14" />
         </button>
       </div>
     </div>
@@ -321,14 +365,22 @@ onUnmounted(() => {
             <div class="help-row"><kbd>⌘</kbd><kbd>↵</kbd> <span>publish</span></div>
           </div>
         </div>
+        <div class="help-divider"></div>
+        <div class="help-section-title">Visibility Spectrum</div>
+        <div class="visibility-spectrum">
+          <div class="vis-row"><span class="vis-badge vis-public">✓ PUBLIC</span> <span class="vis-desc">Appears in listings, feeds, search</span></div>
+          <div class="vis-row"><span class="vis-badge vis-unlisted">👁 UNLISTED</span> <span class="vis-desc">Link only — add <code>unlisted: true</code></span></div>
+          <div class="vis-row"><span class="vis-badge vis-protected">🔒 PROTECTED</span> <span class="vis-desc">Link + password — add <code>password: xyz</code></span></div>
+        </div>
         <div class="help-hint">Press <kbd>?</kbd> or <kbd>esc</kbd> to close</div>
       </div>
     </div>
 
 
     <!-- Search Modal -->
-    <div v-if="searchOpen" class="search-overlay" @click.self="closeSearch">
-      <div class="search-modal">
+    <Transition name="modal">
+      <div v-if="searchOpen" class="search-overlay" @click.self="closeSearch">
+        <div class="search-modal">
         <input
           ref="searchInput"
           v-model="searchQuery"
@@ -346,8 +398,11 @@ onUnmounted(() => {
             @click="selectResult(file)"
             @mouseenter="selectedIndex = i"
           >
-            <span v-if="file.published_url" class="result-live">LIVE</span>
+            <span v-if="file.password" class="result-badge protected">🔒</span>
+            <span v-else-if="file.unlisted" class="result-badge unlisted">👁</span>
+            <span v-else-if="file.published_url" class="result-badge live">✓</span>
             <span class="result-title">{{ file.title || file.filename.replace('.md', '') }}</span>
+            <span class="result-words">{{ file.word_count }}w</span>
             <span class="result-dir">{{ file.source_dir }}</span>
           </button>
           <div v-if="searchResults.length === 0" class="no-results">No results</div>
@@ -359,6 +414,7 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+    </Transition>
 
     <main class="main">
       <FileList
@@ -366,6 +422,7 @@ onUnmounted(() => {
         :files="files"
         :selected="selectedFile"
         :loading="loading"
+        :compact="compactMode"
         @select="(f) => { selectedFile = f; rightTab = 'preview' }"
       />
 
@@ -393,8 +450,15 @@ onUnmounted(() => {
           />
 
           <div v-else-if="rightTab === 'preview'" class="empty">
-            <div>Select a file</div>
-            <div class="empty-hint">Press <kbd>?</kbd> for shortcuts</div>
+            <div class="empty-icon">
+              <FileText :size="48" :stroke-width="1" />
+            </div>
+            <div class="empty-title">Select a post</div>
+            <div class="empty-shortcuts">
+              <div class="shortcut-row"><kbd>j</kbd><kbd>k</kbd> <span>navigate</span></div>
+              <div class="shortcut-row"><kbd>/</kbd> <span>search</span></div>
+              <div class="shortcut-row"><kbd>?</kbd> <span>all shortcuts</span></div>
+            </div>
           </div>
 
           <MediaLibraryModal
@@ -408,13 +472,45 @@ onUnmounted(() => {
         </div>
       </div>
     </main>
+
+    <!-- Status Bar -->
+    <div class="statusbar">
+      <div class="status-left">
+        <span v-if="selectedFile" class="status-item file-path">
+          {{ selectedFile.source_dir }}/{{ selectedFile.filename }}
+        </span>
+        <span v-else class="status-item muted">No file selected</span>
+        <span v-if="selectedFile" class="status-item muted tabular">
+          {{ selectedFile.word_count.toLocaleString() }} words
+        </span>
+      </div>
+      <div class="status-right">
+        <button @click="toggleCompactMode" class="status-btn" :class="{ active: compactMode }" title="Toggle compact view">
+          {{ compactMode ? '⊟' : '⊞' }}
+        </button>
+        <span class="status-item" :class="gitBranch ? 'connected' : 'muted'" :title="gitBranch ? `Branch: ${gitBranch}` : 'Git not connected'">
+          <GitBranch :size="10" />
+          {{ gitBranch || 'git' }}
+        </span>
+        <span class="status-item" :class="obsidianConnected ? 'connected' : 'muted'" title="Obsidian API">
+          <Circle :size="6" :fill="obsidianConnected ? 'currentColor' : 'none'" />
+          obsidian
+        </span>
+        <span class="status-item" :class="cloudinaryConnected ? 'connected' : 'muted'" title="Cloudinary">
+          <Circle :size="6" :fill="cloudinaryConnected ? 'currentColor' : 'none'" />
+          media
+        </span>
+      </div>
+    </div>
   </div>
 </template>
 
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* Base/fallback (dark default) - must come FIRST */
 :root {
+  /* Colors */
   --bg-primary: rgba(20, 20, 22, 0.85);
   --bg-secondary: rgba(30, 30, 34, 0.8);
   --bg-tertiary: rgba(45, 45, 50, 0.6);
@@ -424,11 +520,63 @@ onUnmounted(() => {
   --text-primary: #e5e5e5;
   --text-secondary: #999;
   --text-tertiary: #666;
-  /* Semantic colors only - use for data/state, not decoration */
-  --accent: rgba(255, 255, 255, 0.15);  /* Selection highlight - neutral */
-  --success: #30d158;  /* Good: published, used, connected */
-  --warning: #ff9f0a;  /* Caution: modified, local media */
-  --danger: #ff453a;   /* Bad: errors, broken links */
+  --accent: rgba(255, 255, 255, 0.15);
+  --selection-bg: rgba(10, 132, 255, 0.85);
+  --selection-text: #fff;
+  --success: #30d158;
+  --warning: #ff9f0a;
+  --danger: #ff453a;
+  --modal-bg: rgba(35, 35, 40, 0.9);
+  --kbd-bg: rgba(255, 255, 255, 0.1);
+  --kbd-border: rgba(255, 255, 255, 0.15);
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Animation timing */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --transition-fast: 0.15s var(--ease-spring);
+  --transition-normal: 0.25s var(--ease-out-expo);
+
+  /* Refined shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 24px 48px rgba(0, 0, 0, 0.2);
+  --shadow-glow: 0 0 0 1px var(--selection-bg), 0 2px 8px color-mix(in srgb, var(--selection-bg) 30%, transparent);
+}
+
+/* Light mode - overrides base when system is light */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-primary: rgba(255, 255, 255, 0.9);
+    --bg-secondary: rgba(248, 248, 248, 0.95);
+    --bg-tertiary: rgba(235, 235, 235, 0.8);
+    --bg-solid: #ffffff;
+    --border: rgba(0, 0, 0, 0.08);
+    --border-light: rgba(0, 0, 0, 0.12);
+    --text-primary: #1a1a1a;
+    --text-secondary: #555;
+    --text-tertiary: #888;
+    --accent: rgba(0, 0, 0, 0.08);
+    --selection-bg: rgba(10, 132, 255, 0.2);
+    --selection-text: #1a1a1a;
+    --success: #28a745;
+    --warning: #e67700;
+    --danger: #dc3545;
+    --modal-bg: rgba(255, 255, 255, 0.92);
+    --kbd-bg: rgba(0, 0, 0, 0.06);
+    --kbd-border: rgba(0, 0, 0, 0.12);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.03);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 24px 48px rgba(0, 0, 0, 0.1);
+    --shadow-glow: 0 0 0 1px var(--selection-bg), 0 2px 8px color-mix(in srgb, var(--selection-bg) 20%, transparent);
+  }
 }
 
 body {
@@ -437,6 +585,27 @@ body {
   color: var(--text-primary);
   background: var(--bg-solid);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Focus ring for accessibility */
+:focus-visible {
+  outline: 2px solid var(--selection-bg);
+  outline-offset: 2px;
+}
+
+button:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Smooth scroll */
+* {
+  scroll-behavior: smooth;
+}
+
+/* Selection color */
+::selection {
+  background: var(--selection-bg);
+  color: var(--selection-text);
 }
 
 .app {
@@ -472,18 +641,29 @@ body {
   background: none;
   border: none;
   color: var(--text-tertiary);
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: all var(--transition-fast);
 }
 
 .titlebar-btn:hover {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+  transform: scale(1.1);
+}
+
+.titlebar-btn:active {
+  transform: scale(0.95);
+}
+
+.titlebar-btn.active {
+  color: var(--text-primary);
+  background: var(--accent);
 }
 
 .titlebar-btn.connected {
@@ -497,7 +677,7 @@ body {
 }
 
 .right-panel {
-  flex: 1;
+  flex: 0.618; /* Golden ratio: larger section */
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -544,14 +724,71 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 16px;
+  color: var(--text-tertiary);
+  user-select: none;
+}
+
+.empty-icon {
+  opacity: 0.15;
+  margin-bottom: 4px;
+}
+
+.empty-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.empty-shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
   color: var(--text-tertiary);
 }
 
-.empty-hint {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  opacity: 0.6;
+.shortcut-row span {
+  margin-left: 4px;
+  opacity: 0.7;
+}
+
+.titlebar-btn.spinning svg {
+  animation: spin 1s linear infinite;
+}
+
+/* Spring animations */
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes celebrate {
+  0% { transform: translate(-50%, -50%) scale(1); }
+  50% { transform: translate(-50%, -50%) scale(1.08); }
+  100% { transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes successGlow {
+  0% { box-shadow: 0 0 60px color-mix(in srgb, var(--success) 50%, transparent); }
+  100% { box-shadow: none; }
+}
+
+@keyframes confettiBurst {
+  0% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-20px) scale(0); }
 }
 
 /* Search Modal */
@@ -571,13 +808,13 @@ body {
 .search-modal {
   width: 500px;
   max-width: 90vw;
-  background: rgba(35, 35, 40, 0.85);
+  background: var(--modal-bg);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid var(--border-light);
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255,255,255,0.05) inset;
+  box-shadow: var(--shadow-lg);
 }
 
 .search-input {
@@ -610,20 +847,55 @@ body {
   border: none;
   cursor: pointer;
   text-align: left;
+  transition: background 0.1s ease;
 }
 
-.search-result:hover,
+.search-result:hover {
+  background: var(--accent);
+}
+
 .search-result.selected {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--selection-bg);
+  color: var(--selection-text);
 }
 
-.result-live {
-  font-size: 8px;
-  font-weight: 700;
-  background: var(--success);
-  color: #000;
+.search-result.selected .result-title {
+  color: var(--selection-text);
+}
+
+.search-result.selected .result-dir {
+  color: var(--selection-text);
+  opacity: 0.7;
+}
+
+.result-badge {
+  font-size: 9px;
   padding: 2px 5px;
   border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.result-badge.live {
+  background: var(--success);
+  color: #000;
+}
+
+.result-badge.unlisted {
+  background: #6366f1;
+  color: #fff;
+}
+
+.result-badge.protected {
+  background: #8b5cf6;
+  color: #fff;
+}
+
+.result-words {
+  font-size: 9px;
+  font-family: 'SF Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  color: var(--text-tertiary);
   flex-shrink: 0;
 }
 
@@ -657,17 +929,52 @@ body {
   color: var(--text-tertiary);
 }
 
+/* Modal animations - using spring timing */
+.modal-enter-active,
+.modal-leave-active {
+  transition: all var(--transition-normal);
+}
+
+.modal-enter-active .search-modal,
+.modal-leave-active .search-modal {
+  transition: all var(--transition-normal);
+}
+
+.modal-leave-active {
+  transition: all 0.15s ease;
+}
+
+.modal-leave-active .search-modal {
+  transition: all 0.15s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-from .search-modal {
+  transform: scale(0.96) translateY(-10px);
+  opacity: 0;
+}
+
+.modal-leave-to .search-modal {
+  transform: scale(0.98) translateY(-4px);
+  opacity: 0;
+}
+
 /* Help Modal */
 .help-modal {
   width: 480px;
   max-width: 90vw;
-  background: rgba(35, 35, 40, 0.9);
+  background: var(--modal-bg);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid var(--border-light);
   border-radius: 12px;
-  padding: 20px;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-lg);
+  animation: scaleIn 0.25s var(--ease-out-expo);
 }
 
 .help-title {
@@ -689,7 +996,7 @@ body {
   font-weight: 600;
   color: var(--text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.75px;
   margin-bottom: 8px;
 }
 
@@ -712,8 +1019,8 @@ kbd {
   padding: 2px 6px;
   font-family: 'SF Mono', monospace;
   font-size: 10px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--kbd-bg);
+  border: 1px solid var(--kbd-border);
   border-radius: 4px;
   color: var(--text-primary);
 }
@@ -731,4 +1038,153 @@ kbd {
   font-size: 9px;
   padding: 1px 4px;
 }
+
+.help-divider {
+  margin: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.visibility-spectrum {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.vis-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 10px;
+}
+
+.vis-badge {
+  font-size: 8px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  min-width: 80px;
+  text-align: center;
+}
+
+.vis-public {
+  background: var(--success);
+  color: #000;
+}
+
+.vis-unlisted {
+  background: #6366f1;
+  color: #fff;
+}
+
+.vis-protected {
+  background: #8b5cf6;
+  color: #fff;
+}
+
+.vis-desc {
+  color: var(--text-tertiary);
+}
+
+.vis-desc code {
+  font-family: 'SF Mono', monospace;
+  font-size: 9px;
+  background: var(--kbd-bg);
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+/* Status Bar */
+.statusbar {
+  height: 22px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  font-size: 10px;
+  font-family: 'SF Mono', monospace;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.status-left,
+.status-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-item.connected {
+  color: var(--success);
+}
+
+.status-item.connected::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  background: var(--success);
+  border-radius: 50%;
+}
+
+.status-item.muted {
+  opacity: 0.5;
+}
+
+.status-item.file-path {
+  color: var(--text-secondary);
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-item.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+.status-btn {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 12px;
+  transition: all var(--transition-fast);
+  border-radius: 3px;
+}
+
+.status-btn:hover {
+  background: var(--accent);
+  color: var(--text-secondary);
+}
+
+.status-btn.active {
+  color: var(--text-primary);
+}
+
+/* Titlebar Stats */
+.titlebar-stats {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  padding: 2px 8px;
+  border-radius: 10px;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
 </style>

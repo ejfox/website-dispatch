@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- Chaotic turbo gradient - diagonal slash -->
+    <linearGradient id="turbo" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d0887"/>
+      <stop offset="20%" stop-color="#7e03a8"/>
+      <stop offset="35%" stop-color="#cc4778"/>
+      <stop offset="50%" stop-color="#f89540"/>
+      <stop offset="70%" stop-color="#f0f921"/>
+      <stop offset="100%" stop-color="#0d0887"/>
+    </linearGradient>
+
+    <!-- Secondary gradient for glitch layers -->
+    <linearGradient id="glitch" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0f921" stop-opacity="0.6"/>
+      <stop offset="50%" stop-color="#cc4778" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#0d0887" stop-opacity="0.8"/>
+    </linearGradient>
+
+    <!-- Noise filter -->
+    <filter id="noise">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="8" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+
+  <!-- Background - slightly rotated square -->
+  <rect x="36" y="36" width="440" height="440" rx="80" fill="url(#turbo)" transform="rotate(3 256 256)"/>
+
+  <!-- Glitch shadow layer - offset -->
+  <g transform="translate(-12, 8)" opacity="0.4">
+    <g fill="none" stroke="#f0f921" stroke-width="28" stroke-linecap="round">
+      <path d="M 130 370 A 170 170 0 0 1 150 130"/>
+      <path d="M 380 150 A 160 160 0 0 1 360 390"/>
+    </g>
+  </g>
+
+  <!-- Main signal arcs - intentionally imperfect -->
+  <g fill="none" stroke="#ffffff" stroke-linecap="round">
+    <!-- Outer arcs - different weights, broken -->
+    <path d="M 135 385 A 180 180 0 0 1 125 145" stroke-width="24" opacity="0.9"/>
+    <path d="M 377 127 A 175 175 0 0 1 395 340" stroke-width="32"/>
+    <path d="M 390 355 A 180 180 0 0 1 385 385" stroke-width="18" opacity="0.5"/>
+
+    <!-- Middle arcs - offset from center -->
+    <path d="M 170 345 A 120 120 0 0 1 160 175" stroke-width="26"/>
+    <path d="M 345 165 A 115 115 0 0 1 360 330" stroke-width="20" opacity="0.8"/>
+
+    <!-- Inner arcs - glitchy -->
+    <path d="M 205 305 A 70 70 0 0 1 200 210" stroke-width="22"/>
+    <path d="M 310 205 A 65 65 0 0 1 320 295" stroke-width="28" opacity="0.7"/>
+
+    <!-- Extra chaotic arc -->
+    <path d="M 240 280 A 30 30 0 0 1 235 235" stroke-width="14" opacity="0.5"/>
+  </g>
+
+  <!-- Center - off-center, multiple dots -->
+  <circle cx="262" cy="250" r="32" fill="#ffffff"/>
+  <circle cx="248" cy="268" r="18" fill="url(#glitch)"/>
+  <circle cx="270" cy="242" r="8" fill="#f0f921" opacity="0.8"/>
+
+  <!-- Scattered particles -->
+  <circle cx="145" cy="420" r="6" fill="#ffffff" opacity="0.4"/>
+  <circle cx="390" cy="95" r="9" fill="#f0f921" opacity="0.6"/>
+  <circle cx="88" cy="200" r="5" fill="#cc4778" opacity="0.5"/>
+  <circle cx="430" cy="280" r="7" fill="#ffffff" opacity="0.3"/>
+  <circle cx="310" cy="430" r="4" fill="#f0f921" opacity="0.7"/>
+</svg>
