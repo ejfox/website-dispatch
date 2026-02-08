@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/tauri'
-import { FileText, Search, RefreshCw, Image, GitBranch, Circle, Zap } from 'lucide-vue-next'
+import { FileText, Search, RefreshCw, Image, GitBranch, Circle, Zap, Plus } from 'lucide-vue-next'
 import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
 import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
@@ -38,6 +38,12 @@ const selectedIndex = ref(0)
 // Help & keyboard state
 const showHelp = ref(false)
 const lastGPress = ref(0)
+
+// New post modal state
+const newPostOpen = ref(false)
+const newPostTitle = ref('')
+const newPostVisibility = ref<'public' | 'unlisted' | 'protected'>('public')
+const newPostInput = ref<HTMLInputElement | null>(null)
 
 // Right panel tab state
 const rightTab = ref<'preview' | 'media'>('preview')
@@ -124,6 +130,48 @@ async function handleInsertMedia(markdown: string) {
   }
 }
 
+function openNewPost() {
+  newPostOpen.value = true
+  newPostTitle.value = ''
+  newPostVisibility.value = 'public'
+  setTimeout(() => newPostInput.value?.focus(), 10)
+}
+
+function closeNewPost() {
+  newPostOpen.value = false
+  newPostTitle.value = ''
+}
+
+async function createNewPost() {
+  const title = newPostTitle.value.trim()
+  if (!title) return
+
+  try {
+    const path: string = await invoke('create_new_post', {
+      title,
+      visibility: newPostVisibility.value
+    })
+    closeNewPost()
+    await invoke('open_in_obsidian', { path })
+    await loadFiles()
+    // Auto-select the new file
+    const newFile = files.value.find(f => f.path === path)
+    if (newFile) selectedFile.value = newFile
+  } catch (e) {
+    console.error('Failed to create post:', e)
+    alert(`Failed to create post: ${e}`)
+  }
+}
+
+function handleNewPostKey(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    closeNewPost()
+  } else if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    createNewPost()
+  }
+}
+
 function selectResult(file: MarkdownFile) {
   selectedFile.value = file
   closeSearch()
@@ -154,9 +202,12 @@ function handleGlobalKey(e: KeyboardEvent) {
     return
   }
 
-  // Don't handle navigation when search is open
+  // Don't handle navigation when search or new post modal is open
   if (searchOpen.value) {
     if (e.key === 'Escape') closeSearch()
+    return
+  }
+  if (newPostOpen.value) {
     return
   }
 
@@ -171,6 +222,13 @@ function handleGlobalKey(e: KeyboardEvent) {
   if (e.key === '?' && e.shiftKey) {
     e.preventDefault()
     showHelp.value = !showHelp.value
+    return
+  }
+
+  // n - new post
+  if (e.key === 'n' && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault()
+    openNewPost()
     return
   }
 
@@ -329,6 +387,9 @@ onUnmounted(() => {
         <button @click="rightTab = rightTab === 'media' ? 'preview' : 'media'" class="titlebar-btn" :class="{ active: rightTab === 'media' }" title="Media Library (m)">
           <Image :size="14" />
         </button>
+        <button @click="openNewPost" class="titlebar-btn" title="New Post (n)">
+          <Plus :size="14" />
+        </button>
         <button @click="openSearch" class="titlebar-btn" title="Search (⌘K)">
           <Search :size="14" />
         </button>
@@ -355,6 +416,7 @@ onUnmounted(() => {
           <div class="help-section">
             <div class="help-section-title">Actions</div>
             <div class="help-row"><kbd>⌘</kbd><kbd>K</kbd> or <kbd>/</kbd> <span>search</span></div>
+            <div class="help-row"><kbd>n</kbd> <span>new post</span></div>
             <div class="help-row"><kbd>o</kbd> <span>open in Obsidian</span></div>
             <div class="help-row"><kbd>i</kbd> <span>open in iA Writer</span></div>
             <div class="help-row"><kbd>p</kbd> <span>preview</span></div>
@@ -414,6 +476,47 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+    </Transition>
+
+    <!-- New Post Modal -->
+    <Transition name="modal">
+      <div v-if="newPostOpen" class="search-overlay" @click.self="closeNewPost">
+        <div class="search-modal new-post-modal">
+          <input
+            ref="newPostInput"
+            v-model="newPostTitle"
+            type="text"
+            placeholder="Post title..."
+            class="search-input"
+            @keydown="handleNewPostKey"
+          />
+          <div class="new-post-visibility">
+            <button
+              v-for="opt in ([
+                { value: 'public', label: 'Public', icon: '✓' },
+                { value: 'unlisted', label: 'Unlisted', icon: '👁' },
+                { value: 'protected', label: 'Protected', icon: '🔒' },
+              ] as const)"
+              :key="opt.value"
+              class="vis-option"
+              :class="{ active: newPostVisibility === opt.value, [opt.value]: true }"
+              @click="newPostVisibility = opt.value as any"
+            >
+              <span class="vis-icon">{{ opt.icon }}</span>
+              {{ opt.label }}
+            </button>
+          </div>
+          <div class="new-post-actions">
+            <button class="new-post-create" :disabled="!newPostTitle.trim()" @click="createNewPost">
+              Create Post
+            </button>
+          </div>
+          <div class="search-hint">
+            <span>↵ create</span>
+            <span>esc cancel</span>
+          </div>
+        </div>
+      </div>
     </Transition>
 
     <main class="main">
@@ -1185,6 +1288,89 @@ kbd {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
+}
+
+/* New Post Modal */
+.new-post-visibility {
+  display: flex;
+  gap: 4px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.vis-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.vis-option:hover {
+  background: var(--accent);
+  border-color: var(--border-light);
+}
+
+.vis-option.active.public {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.vis-option.active.unlisted {
+  background: color-mix(in srgb, #6366f1 15%, transparent);
+  border-color: #6366f1;
+  color: #6366f1;
+}
+
+.vis-option.active.protected {
+  background: color-mix(in srgb, #8b5cf6 15%, transparent);
+  border-color: #8b5cf6;
+  color: #8b5cf6;
+}
+
+.vis-icon {
+  font-size: 10px;
+}
+
+.new-post-actions {
+  padding: 10px 12px;
+}
+
+.new-post-create {
+  width: 100%;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--text-primary);
+  color: var(--bg-solid);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.new-post-create:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: scale(1.01);
+}
+
+.new-post-create:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.new-post-create:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 </style>
