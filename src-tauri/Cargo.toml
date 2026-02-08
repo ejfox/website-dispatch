@@ -21,6 +21,11 @@ regex = "1.10"
 mime_guess = "2.0"
 dotenvy = "0.15"
 tauri-plugin-window-state = "0.1"
+notify = "6.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
 
 [features]
 default = ["custom-protocol"]

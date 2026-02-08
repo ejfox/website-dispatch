@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/tauri'
+import { listen } from '@tauri-apps/api/event'
 import { FileText, Search, RefreshCw, Image, GitBranch, Circle, Zap } from 'lucide-vue-next'
 import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
@@ -282,15 +283,41 @@ async function loadFiles() {
   loading.value = true
   try {
     files.value = await invoke('get_recent_files', { limit: 200 })
+    // Update tray menu and dock badge after loading
+    invoke('refresh_tray').catch(() => {})
+    const drafts = files.value.filter(f => !f.published_url).length
+    invoke('set_dock_badge', { count: drafts }).catch(() => {})
   } catch (e) {
     console.error('Failed to load files:', e)
   }
   loading.value = false
 }
 
-onMounted(() => {
+// Event listener cleanup handles
+const unlisten: Array<() => void> = []
+
+onMounted(async () => {
   loadFiles()
   window.addEventListener('keydown', handleGlobalKey)
+
+  // Listen for file watcher events (auto-refresh when vault changes)
+  unlisten.push(await listen('vault-changed', () => {
+    loadFiles()
+  }))
+
+  // Listen for tray menu file selection
+  unlisten.push(await listen<string>('tray-select-file', (event) => {
+    const match = files.value.find(f => f.path === event.payload)
+    if (match) {
+      selectedFile.value = match
+    }
+  }))
+
+  // Listen for tray "New Post..." action
+  unlisten.push(await listen('tray-new-post', () => {
+    // TODO: open new post modal when implemented
+    openSearch()
+  }))
 
   // Check connection statuses
   invoke('check_cloudinary_status').then((connected: unknown) => {
@@ -314,6 +341,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKey)
+  unlisten.forEach(fn => fn())
 })
 </script>
 

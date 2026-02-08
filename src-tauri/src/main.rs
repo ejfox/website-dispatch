@@ -3,20 +3,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 // --- IMPORTS ---
-// `serde` is a library for converting Rust structs to/from JSON.
-// Deserialize = JSON -> Rust struct, Serialize = Rust struct -> JSON
 use serde::{Deserialize, Serialize};
-
-// `std::fs` is Rust's standard library for file system operations (read, write, etc.)
 use std::fs;
-
-// Tauri-specific imports for building desktop apps:
-// - CustomMenuItem: a clickable item in the system tray menu
-// - Manager: lets us access windows by name
-// - SystemTray: the icon in your menu bar (macOS) or system tray (Windows)
-// - SystemTrayEvent: events like clicking the tray icon
-// - SystemTrayMenu: the dropdown menu when you click the tray icon
-use tauri::{CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu};
+use std::sync::Mutex;
+use tauri::{CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem};
 
 // --- MODULE DECLARATIONS ---
 // `mod X` tells Rust "there's a file called X.rs in this folder - include it"
@@ -163,14 +153,24 @@ fn append_to_file(path: String, content: String) -> Result<(), String> {
 // Publish a markdown file to the website (copy + git commit + push)
 #[tauri::command]
 fn publish_file(source_path: String, slug: String) -> Result<String, String> {
-    // Delegate to the publish module, passing references (&) to avoid copying
-    publish::publish_file(&source_path, &slug)
+    let result = publish::publish_file(&source_path, &slug)?;
+    // Send native notification on success
+    let _ = tauri::api::notification::Notification::new("com.ejfox.dispatch")
+        .title("Post Published")
+        .body(&format!("{} is now live", slug))
+        .show();
+    Ok(result)
 }
 
 // Unpublish a file (move from blog/ to drafts/ in the website repo)
 #[tauri::command]
 fn unpublish_file(slug: String) -> Result<(), String> {
-    publish::unpublish_file(&slug)
+    publish::unpublish_file(&slug)?;
+    let _ = tauri::api::notification::Notification::new("com.ejfox.dispatch")
+        .title("Post Unpublished")
+        .body(&format!("{} moved to drafts", slug))
+        .show();
+    Ok(())
 }
 
 // Get the current git status of the website repo
@@ -547,8 +547,99 @@ async fn open_preview(app_handle: tauri::AppHandle) -> Result<String, String> {
     Ok("http://127.0.0.1:6419".into())
 }
 
+// --- TRAY MENU ---
+// Builds a rich tray menu showing recent drafts, stats, and actions.
+
+/// State for mapping tray menu item IDs back to file paths
+static TRAY_FILE_PATHS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn build_tray_menu(files: &[MarkdownFile]) -> SystemTrayMenu {
+    let mut menu = SystemTrayMenu::new();
+    let mut paths = Vec::new();
+
+    // Add up to 5 recent unpublished files
+    let recent_drafts: Vec<&MarkdownFile> = files
+        .iter()
+        .filter(|f| f.published_url.is_none())
+        .take(5)
+        .collect();
+
+    for (i, file) in recent_drafts.iter().enumerate() {
+        let label = file
+            .title
+            .clone()
+            .unwrap_or_else(|| file.filename.trim_end_matches(".md").to_string());
+        // Truncate long titles
+        let label = if label.len() > 40 {
+            format!("{}...", &label[..37])
+        } else {
+            label
+        };
+        menu = menu.add_item(CustomMenuItem::new(format!("file:{}", i), label));
+        paths.push(file.path.clone());
+    }
+
+    // Stats line
+    let draft_count = files.iter().filter(|f| f.published_url.is_none()).count();
+    let published_count = files.iter().filter(|f| f.published_url.is_some()).count();
+    let stats_label = format!("{} drafts · {} published", draft_count, published_count);
+
+    menu = menu
+        .add_native_item(SystemTrayMenuItem::Separator)
+        .add_item(CustomMenuItem::new("stats", stats_label).disabled())
+        .add_native_item(SystemTrayMenuItem::Separator)
+        .add_item(CustomMenuItem::new("new_post", "New Post..."))
+        .add_item(CustomMenuItem::new("open", "Open Dispatch"))
+        .add_item(CustomMenuItem::new("quit", "Quit"));
+
+    // Store paths for lookup in event handler
+    if let Ok(mut guard) = TRAY_FILE_PATHS.lock() {
+        *guard = paths;
+    }
+
+    menu
+}
+
+// --- TRAY REFRESH COMMAND ---
+#[tauri::command]
+fn refresh_tray(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let files = vault::get_recent_files(200)?;
+    let menu = build_tray_menu(&files);
+    app_handle
+        .tray_handle()
+        .set_menu(menu)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// --- DOCK BADGE ---
+#[tauri::command]
+fn set_dock_badge(count: usize) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use cocoa::appkit::NSApp;
+        use cocoa::base::nil;
+        use cocoa::foundation::NSString;
+        use objc::msg_send;
+        use objc::sel;
+        use objc::sel_impl;
+
+        let dock_tile: cocoa::base::id = msg_send![NSApp(), dockTile];
+        let label = if count > 0 {
+            NSString::alloc(nil).init_str(&count.to_string())
+        } else {
+            nil
+        };
+        let _: () = msg_send![dock_tile, setBadgeLabel: label];
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = count; // suppress unused warning on non-macOS
+    }
+}
+
 // --- MAIN FUNCTION ---
-// This is where the app starts. It sets up everything and runs the event loop.
 fn main() {
     // --- LOAD ENVIRONMENT VARIABLES ---
     // Try to load .env file from multiple locations
@@ -573,12 +664,18 @@ fn main() {
     preview::init_server();
 
     // --- SET UP SYSTEM TRAY ---
-    // Create the menu that appears when you click the tray icon
-    let tray_menu = SystemTrayMenu::new()
-        .add_item(CustomMenuItem::new("open", "Open Dispatch"))
-        .add_item(CustomMenuItem::new("quit", "Quit"));
+    // Build initial tray menu with recent files
+    let initial_menu = match vault::get_recent_files(200) {
+        Ok(files) => build_tray_menu(&files),
+        Err(_) => {
+            // Fallback to simple menu if vault scan fails at startup
+            SystemTrayMenu::new()
+                .add_item(CustomMenuItem::new("open", "Open Dispatch"))
+                .add_item(CustomMenuItem::new("quit", "Quit"))
+        }
+    };
 
-    let system_tray = SystemTray::new().with_menu(tray_menu);
+    let system_tray = SystemTray::new().with_menu(initial_menu);
 
     // --- BUILD AND RUN THE APP ---
     tauri::Builder::default()
@@ -598,25 +695,94 @@ fn main() {
                 }
             }
             // Menu item clicked
-            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-                "open" => {
-                    if let Some(window) = app.get_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
+            SystemTrayEvent::MenuItemClick { id, .. } => {
+                // Handle file:N clicks from tray menu
+                if id.starts_with("file:") {
+                    if let Ok(index) = id[5..].parse::<usize>() {
+                        let path = TRAY_FILE_PATHS
+                            .lock()
+                            .ok()
+                            .and_then(|paths| paths.get(index).cloned());
+                        if let Some(path) = path {
+                            let _ = app.emit_all("tray-select-file", path);
+                            if let Some(window) = app.get_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    }
+                    return;
+                }
+
+                match id.as_str() {
+                    "new_post" => {
+                        let _ = app.emit_all("tray-new-post", ());
+                        if let Some(window) = app.get_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "open" => {
+                        if let Some(window) = app.get_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => {
+                        preview::stop_server();
+                        std::process::exit(0)
+                    }
+                    _ => {}
+                }
+            },
+            _ => {}
+        })
+
+        // File watcher: watch blog/ directory for changes and emit events
+        .setup(|app| {
+            let handle = app.handle();
+            let config = Config::default();
+            let blog_path = format!("{}/blog", config.vault_path);
+
+            std::thread::spawn(move || {
+                use notify::{Watcher, RecursiveMode, Config as NotifyConfig};
+                let (tx, rx) = std::sync::mpsc::channel();
+                let mut watcher = match notify::RecommendedWatcher::new(tx, NotifyConfig::default()) {
+                    Ok(w) => w,
+                    Err(e) => {
+                        eprintln!("File watcher init failed: {}", e);
+                        return;
+                    }
+                };
+                if let Err(e) = watcher.watch(std::path::Path::new(&blog_path), RecursiveMode::Recursive) {
+                    eprintln!("File watch failed for {}: {}", blog_path, e);
+                    return;
+                }
+                eprintln!("Watching {} for changes", blog_path);
+
+                let mut last_emit = std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_secs(5))
+                    .unwrap();
+
+                loop {
+                    match rx.recv_timeout(std::time::Duration::from_millis(300)) {
+                        Ok(_) => {
+                            // Debounce: only emit if >500ms since last emit
+                            if last_emit.elapsed() >= std::time::Duration::from_millis(500) {
+                                let _ = handle.emit_all("vault-changed", ());
+                                last_emit = std::time::Instant::now();
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(_) => break,
                     }
                 }
-                "quit" => {
-                    // Clean up the preview server before exiting
-                    preview::stop_server();
-                    std::process::exit(0)
-                }
-                _ => {}  // Ignore unknown menu items
-            },
-            _ => {}  // Ignore other tray events
+            });
+
+            Ok(())
         })
 
         // Register all the commands that JavaScript can call
-        // tauri::generate_handler! creates the dispatch table
         .invoke_handler(tauri::generate_handler![
             get_recent_files,
             get_file_content,
@@ -631,6 +797,9 @@ fn main() {
             open_in_app,
             set_preview_file,
             open_preview,
+            // OS integration commands
+            refresh_tray,
+            set_dock_badge,
             // Cloudinary commands
             check_cloudinary_status,
             get_cloudinary_config,
