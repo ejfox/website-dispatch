@@ -107,6 +107,102 @@ impl Default for Config {
     }
 }
 
+// --- DISPATCH STATUS INTEROP ---
+// Writes a .dispatch/status.json file to the vault root so the Obsidian
+// companion plugin can read the current state of all tracked files.
+
+#[derive(Serialize)]
+struct DispatchStatusFile {
+    path: String,
+    slug: String,
+    title: Option<String>,
+    published_url: Option<String>,
+    warnings: Vec<String>,
+    word_count: usize,
+    is_safe: bool,
+    unlisted: bool,
+    has_password: bool,
+    modified: u64,
+}
+
+#[derive(Serialize)]
+struct DispatchStats {
+    total: usize,
+    drafts: usize,
+    published: usize,
+    total_words: usize,
+}
+
+#[derive(Serialize)]
+struct DispatchStatus {
+    updated_at: String,
+    files: Vec<DispatchStatusFile>,
+    stats: DispatchStats,
+}
+
+fn write_dispatch_status(files: &[MarkdownFile]) {
+    let config = Config::default();
+    let dispatch_dir = format!("{}/.dispatch", config.vault_path);
+
+    // Create .dispatch/ directory if it doesn't exist
+    if let Err(e) = fs::create_dir_all(&dispatch_dir) {
+        eprintln!("Failed to create .dispatch dir: {}", e);
+        return;
+    }
+
+    let vault_prefix = format!("{}/", config.vault_path);
+
+    let status_files: Vec<DispatchStatusFile> = files
+        .iter()
+        .map(|f| {
+            let relative_path = f.path
+                .strip_prefix(&vault_prefix)
+                .unwrap_or(&f.path)
+                .to_string();
+
+            let slug = f.filename.trim_end_matches(".md").to_string();
+
+            DispatchStatusFile {
+                path: relative_path,
+                slug,
+                title: f.title.clone(),
+                published_url: f.published_url.clone(),
+                warnings: f.warnings.clone(),
+                word_count: f.word_count,
+                is_safe: f.is_safe,
+                unlisted: f.unlisted,
+                has_password: f.password.is_some(),
+                modified: f.modified,
+            }
+        })
+        .collect();
+
+    let drafts = files.iter().filter(|f| f.published_url.is_none()).count();
+    let published = files.iter().filter(|f| f.published_url.is_some()).count();
+    let total_words: usize = files.iter().map(|f| f.word_count).sum();
+
+    let status = DispatchStatus {
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        files: status_files,
+        stats: DispatchStats {
+            total: files.len(),
+            drafts,
+            published,
+            total_words,
+        },
+    };
+
+    let status_path = format!("{}/status.json", dispatch_dir);
+    match serde_json::to_string_pretty(&status) {
+        Ok(json) => {
+            if let Err(e) = fs::write(&status_path, json) {
+                eprintln!("Failed to write dispatch status: {}", e);
+            }
+        }
+        Err(e) => eprintln!("Failed to serialize dispatch status: {}", e),
+    }
+}
+
 // --- TAURI COMMANDS ---
 // These are functions the Vue frontend can call using `invoke("command_name", args)`
 // The #[tauri::command] attribute makes them available to JavaScript.
@@ -159,6 +255,10 @@ fn publish_file(source_path: String, slug: String) -> Result<String, String> {
         .title("Post Published")
         .body(&format!("{} is now live", slug))
         .show();
+    // Update dispatch status for Obsidian companion plugin
+    if let Ok(files) = vault::get_recent_files(200) {
+        write_dispatch_status(&files);
+    }
     Ok(result)
 }
 
@@ -170,6 +270,10 @@ fn unpublish_file(slug: String) -> Result<(), String> {
         .title("Post Unpublished")
         .body(&format!("{} moved to drafts", slug))
         .show();
+    // Update dispatch status for Obsidian companion plugin
+    if let Ok(files) = vault::get_recent_files(200) {
+        write_dispatch_status(&files);
+    }
     Ok(())
 }
 
@@ -294,6 +398,17 @@ fn open_in_terminal(path: String, cmd: String) -> Result<(), String> {
 #[tauri::command]
 fn set_preview_file(path: String) {
     preview::set_file(&path);
+}
+
+// --- DISPATCH QUEUE COMMAND ---
+// Read the queue file that the Obsidian companion plugin writes to mark
+// files as "ready to publish".
+
+#[tauri::command]
+fn read_dispatch_queue() -> Result<String, String> {
+    let config = Config::default();
+    let queue_path = format!("{}/.dispatch/queue.json", config.vault_path);
+    fs::read_to_string(&queue_path).map_err(|e| e.to_string())
 }
 
 // --- CLOUDINARY COMMANDS ---
@@ -609,6 +724,7 @@ fn refresh_tray(app_handle: tauri::AppHandle) -> Result<(), String> {
         .tray_handle()
         .set_menu(menu)
         .map_err(|e| e.to_string())?;
+    write_dispatch_status(&files);
     Ok(())
 }
 
@@ -800,6 +916,8 @@ fn main() {
             // OS integration commands
             refresh_tray,
             set_dock_badge,
+            // Obsidian companion plugin interop
+            read_dispatch_queue,
             // Cloudinary commands
             check_cloudinary_status,
             get_cloudinary_config,
