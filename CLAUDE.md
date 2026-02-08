@@ -105,7 +105,7 @@ No intermediate steps. No "move from drafts." Write where you publish.
 - [x] Safety linter catches typos (`unlsted`, `pasword`) before publishing
 
 ### Remaining
-- [ ] Quick-create "New Post" button from Dispatch
+- [x] Quick-create "New Post" button from Dispatch
 - [ ] Clean up legacy `draft: true` frontmatter in vault
 
 ## Required Changes
