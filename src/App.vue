@@ -397,8 +397,8 @@ onUnmounted(() => {
         <div class="help-section-title">Visibility Spectrum</div>
         <div class="visibility-spectrum">
           <div class="vis-row"><span class="vis-badge vis-public">✓ PUBLIC</span> <span class="vis-desc">Appears in listings, feeds, search</span></div>
-          <div class="vis-row"><span class="vis-badge vis-unlisted">👁 UNLISTED</span> <span class="vis-desc">Link only — add <code>unlisted: true</code></span></div>
-          <div class="vis-row"><span class="vis-badge vis-protected">🔒 PROTECTED</span> <span class="vis-desc">Link + password — add <code>password: xyz</code></span></div>
+          <div class="vis-row"><span class="vis-badge vis-unlisted">UNLISTED</span> <span class="vis-desc">Link only — add <code>unlisted: true</code></span></div>
+          <div class="vis-row"><span class="vis-badge vis-protected">PROTECTED</span> <span class="vis-desc">Link + password — add <code>password: xyz</code></span></div>
         </div>
         <div class="help-hint">Press <kbd>?</kbd> or <kbd>esc</kbd> to close</div>
       </div>
@@ -426,8 +426,8 @@ onUnmounted(() => {
             @click="selectResult(file)"
             @mouseenter="selectedIndex = i"
           >
-            <span v-if="file.password" class="result-badge protected">🔒</span>
-            <span v-else-if="file.unlisted" class="result-badge unlisted">👁</span>
+            <span v-if="file.password" class="result-badge protected">pw</span>
+            <span v-else-if="file.unlisted" class="result-badge unlisted">un</span>
             <span v-else-if="file.published_url" class="result-badge live">✓</span>
             <span class="result-title">{{ file.title || file.filename.replace('.md', '') }}</span>
             <span class="result-words">{{ file.word_count }}w</span>

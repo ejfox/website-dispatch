@@ -136,9 +136,13 @@ struct DispatchStats {
 #[derive(Serialize)]
 struct DispatchStatus {
     updated_at: String,
+    last_publish: Option<String>,  // slug of most recently published file, if just published
     files: Vec<DispatchStatusFile>,
     stats: DispatchStats,
 }
+
+// Track last publish for the session
+static LAST_PUBLISHED_SLUG: Mutex<Option<String>> = Mutex::new(None);
 
 fn write_dispatch_status(files: &[MarkdownFile]) {
     let config = Config::default();
@@ -181,8 +185,12 @@ fn write_dispatch_status(files: &[MarkdownFile]) {
     let published = files.iter().filter(|f| f.published_url.is_some()).count();
     let total_words: usize = files.iter().map(|f| f.word_count).sum();
 
+    // Read and clear last_publish
+    let last_publish = LAST_PUBLISHED_SLUG.lock().ok().and_then(|mut guard| guard.take());
+
     let status = DispatchStatus {
         updated_at: chrono::Utc::now().to_rfc3339(),
+        last_publish,
         files: status_files,
         stats: DispatchStats {
             total: files.len(),
@@ -255,6 +263,10 @@ fn publish_file(source_path: String, slug: String) -> Result<String, String> {
         .title("Post Published")
         .body(&format!("{} is now live", slug))
         .show();
+    // Record slug so status.json includes it for the plugin's celebrate flow
+    if let Ok(mut guard) = LAST_PUBLISHED_SLUG.lock() {
+        *guard = Some(slug.clone());
+    }
     // Update dispatch status for Obsidian companion plugin
     if let Ok(files) = vault::get_recent_files(200) {
         write_dispatch_status(&files);
