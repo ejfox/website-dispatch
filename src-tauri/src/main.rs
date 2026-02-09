@@ -447,6 +447,58 @@ fn apply_media_fixes(
     cloudinary::apply_fixes_to_file(&file_path, &fixes)
 }
 
+// --- NEW POST COMMAND ---
+// Create a new blog post file in the vault with proper frontmatter
+
+#[tauri::command]
+fn create_new_post(title: String, visibility: String) -> Result<String, String> {
+    let config = Config::default();
+
+    // Generate slug from title: lowercase, replace non-alphanumeric with hyphens, dedupe hyphens
+    let slug: String = title
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<&str>>()
+        .join("-");
+
+    if slug.is_empty() {
+        return Err("Title must contain at least one alphanumeric character".into());
+    }
+
+    // Get current year
+    let year = chrono::Local::now().format("%Y").to_string();
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+    // Create directory if needed
+    let dir_path = format!("{}/blog/{}", config.vault_path, year);
+    fs::create_dir_all(&dir_path).map_err(|e| format!("Failed to create directory: {}", e))?;
+
+    // Build file path
+    let file_path = format!("{}/{}.md", dir_path, slug);
+
+    // Don't overwrite existing files
+    if std::path::Path::new(&file_path).exists() {
+        return Err(format!("File already exists: {}", file_path));
+    }
+
+    // Build frontmatter based on visibility
+    let frontmatter = match visibility.as_str() {
+        "unlisted" => format!("---\ndate: {}\ntags: []\nunlisted: true\n---", today),
+        "protected" => format!("---\ndate: {}\ntags: []\npassword: draft\n---", today),
+        _ => format!("---\ndate: {}\ntags: []\n---", today), // "public" default
+    };
+
+    let content = format!("{}\n\n# {}\n\n", frontmatter, title);
+
+    fs::write(&file_path, content).map_err(|e| format!("Failed to write file: {}", e))?;
+
+    Ok(file_path)
+}
+
 // --- ASSET USAGE COMMANDS ---
 // Track which Cloudinary assets are used in which posts
 
@@ -642,6 +694,8 @@ fn main() {
             get_local_media,
             fix_local_media,
             apply_media_fixes,
+            // New post
+            create_new_post,
             // Asset usage commands
             scan_asset_usage,
             get_asset_usage,
