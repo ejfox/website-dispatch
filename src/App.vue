@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/tauri'
+import { listen } from '@tauri-apps/api/event'
 import { FileText, Search, RefreshCw, Image, GitBranch, Circle, Zap } from 'lucide-vue-next'
 import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
@@ -282,15 +283,41 @@ async function loadFiles() {
   loading.value = true
   try {
     files.value = await invoke('get_recent_files', { limit: 200 })
+    // Update tray menu and dock badge after loading
+    invoke('refresh_tray').catch(() => {})
+    const drafts = files.value.filter(f => !f.published_url).length
+    invoke('set_dock_badge', { count: drafts }).catch(() => {})
   } catch (e) {
     console.error('Failed to load files:', e)
   }
   loading.value = false
 }
 
-onMounted(() => {
+// Event listener cleanup handles
+const unlisten: Array<() => void> = []
+
+onMounted(async () => {
   loadFiles()
   window.addEventListener('keydown', handleGlobalKey)
+
+  // Listen for file watcher events (auto-refresh when vault changes)
+  unlisten.push(await listen('vault-changed', () => {
+    loadFiles()
+  }))
+
+  // Listen for tray menu file selection
+  unlisten.push(await listen<string>('tray-select-file', (event) => {
+    const match = files.value.find(f => f.path === event.payload)
+    if (match) {
+      selectedFile.value = match
+    }
+  }))
+
+  // Listen for tray "New Post..." action
+  unlisten.push(await listen('tray-new-post', () => {
+    // TODO: open new post modal when implemented
+    openSearch()
+  }))
 
   // Check connection statuses
   invoke('check_cloudinary_status').then((connected: unknown) => {
@@ -314,6 +341,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKey)
+  unlisten.forEach(fn => fn())
 })
 </script>
 
@@ -369,8 +397,8 @@ onUnmounted(() => {
         <div class="help-section-title">Visibility Spectrum</div>
         <div class="visibility-spectrum">
           <div class="vis-row"><span class="vis-badge vis-public">✓ PUBLIC</span> <span class="vis-desc">Appears in listings, feeds, search</span></div>
-          <div class="vis-row"><span class="vis-badge vis-unlisted">👁 UNLISTED</span> <span class="vis-desc">Link only — add <code>unlisted: true</code></span></div>
-          <div class="vis-row"><span class="vis-badge vis-protected">🔒 PROTECTED</span> <span class="vis-desc">Link + password — add <code>password: xyz</code></span></div>
+          <div class="vis-row"><span class="vis-badge vis-unlisted">UNLISTED</span> <span class="vis-desc">Link only — add <code>unlisted: true</code></span></div>
+          <div class="vis-row"><span class="vis-badge vis-protected">PROTECTED</span> <span class="vis-desc">Link + password — add <code>password: xyz</code></span></div>
         </div>
         <div class="help-hint">Press <kbd>?</kbd> or <kbd>esc</kbd> to close</div>
       </div>
@@ -398,8 +426,8 @@ onUnmounted(() => {
             @click="selectResult(file)"
             @mouseenter="selectedIndex = i"
           >
-            <span v-if="file.password" class="result-badge protected">🔒</span>
-            <span v-else-if="file.unlisted" class="result-badge unlisted">👁</span>
+            <span v-if="file.password" class="result-badge protected">pw</span>
+            <span v-else-if="file.unlisted" class="result-badge unlisted">un</span>
             <span v-else-if="file.published_url" class="result-badge live">✓</span>
             <span class="result-title">{{ file.title || file.filename.replace('.md', '') }}</span>
             <span class="result-words">{{ file.word_count }}w</span>
