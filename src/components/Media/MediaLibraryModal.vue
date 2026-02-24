@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 import MediaLibrarySidebar from './MediaLibrarySidebar.vue'
 import MediaLibraryGrid from './MediaLibraryGrid.vue'
 import MediaLibraryDetail from './MediaLibraryDetail.vue'
@@ -258,12 +258,6 @@ function copyMarkdown(asset: CloudinaryAsset, alt = '') {
   navigator.clipboard.writeText(md)
   copiedText.value = 'Markdown'
   setTimeout(() => { copiedText.value = null }, 1500)
-}
-
-function insertMarkdown(asset: CloudinaryAsset, alt = '') {
-  const md = `![${alt}](${asset.secure_url})`
-  emit('insert', md)
-  emit('close')
 }
 
 function formatBytes(bytes: number): string {

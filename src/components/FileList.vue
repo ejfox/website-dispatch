@@ -362,6 +362,8 @@ function getAgeColor(ts: number): string {
 .sort-row button.active {
   background: var(--accent);
   color: var(--text-primary);
+  font-weight: 600;
+  border-bottom: 2px solid var(--text-primary);
 }
 
 .loading {
@@ -458,6 +460,11 @@ function getAgeColor(ts: number): string {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   box-shadow: var(--shadow-glow, 0 0 0 1px var(--selection-bg), 0 2px 8px color-mix(in srgb, var(--selection-bg) 30%, transparent));
+  border-left: 2px solid var(--selection-text, #fff);
+}
+
+.item.selected .content {
+  padding-left: 8px;
 }
 
 .item.selected .title,

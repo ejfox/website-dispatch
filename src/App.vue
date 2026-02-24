@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 import { FileText, Search, RefreshCw, Image, GitBranch, Circle, Zap } from 'lucide-vue-next'
 import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
@@ -98,6 +98,10 @@ function closeSearch() {
   searchQuery.value = ''
 }
 
+
+function copyToClipboard(text: string) {
+  navigator.clipboard.writeText(text)
+}
 
 async function handleInsertMedia(markdown: string) {
   if (!selectedFile.value) {
@@ -309,7 +313,7 @@ onMounted(() => {
     if (status?.ok) {
       gitBranch.value = status.branch
     }
-  }).catch(() => {})
+  }).catch(() => { /* git status check - non-critical */ })
 })
 
 onUnmounted(() => {
@@ -466,7 +470,7 @@ onUnmounted(() => {
             :selected-file="selectedFile"
             :inline="true"
             @close="rightTab = 'preview'"
-            @select="(asset) => navigator.clipboard.writeText(asset.secure_url)"
+            @select="(asset) => copyToClipboard(asset.secure_url)"
             @insert="handleInsertMedia"
           />
         </div>

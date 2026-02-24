@@ -1,8 +1,21 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
-import { ExternalLink, Copy, Lock, Eye, Check, AlertTriangle, Command } from 'lucide-vue-next'
+import { ref, watch, computed, onBeforeUnmount } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+import { Command } from 'lucide-vue-next'
 import LocalMediaFixer from './LocalMediaFixer.vue'
+import { unified } from 'unified'
+import remarkParse from 'remark-parse'
+import remarkGfm from 'remark-gfm'
+import remarkRehype from 'remark-rehype'
+import rehypeRaw from 'rehype-raw'
+import rehypeStringify from 'rehype-stringify'
+
+const markdownProcessor = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeRaw)
+  .use(rehypeStringify)
 
 interface MarkdownFile {
   path: string
@@ -50,6 +63,7 @@ interface GitStatus {
 }
 
 const content = ref('')
+const renderedContent = ref('')
 const publishing = ref(false)
 const justPublished = ref<string | null>(null)
 const backlinks = ref<Backlink[]>([])
@@ -69,6 +83,7 @@ const localMedia = ref<LocalMediaRef[]>([])
 const loadingLocalMedia = ref(false)
 const showMediaFixer = ref(false)
 const justPublishedGlow = ref(false)
+const metadataExpanded = ref(false)
 
 // Tag suggestions
 const availableTags = ref<Record<string, number>>({})
@@ -182,34 +197,40 @@ watch(() => props.file, async (file) => {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: file.path })
-  }).catch(() => {})
+  }).catch(() => { /* preview server may not be running - non-critical */ })
 
   // Also tell Rust server (fallback)
   invoke('set_preview_file', { path: file.path })
 
   try {
-    content.value = await invoke('get_file_content', { path: file.path })
+    const raw: string = await invoke('get_file_content', { path: file.path })
+    // Strip YAML frontmatter from preview since metadata is shown above
+    content.value = raw.replace(/^---\n[\s\S]*?\n---\n*/, '')
+    // Render markdown to HTML
+    try {
+      const result = await markdownProcessor.process(content.value)
+      renderedContent.value = String(result)
+    } catch {
+      renderedContent.value = ''
+    }
   } catch (e) {
     content.value = `Error: ${e}`
+    renderedContent.value = ''
   }
 
-  // Fetch backlinks from Obsidian API
+  // Fetch backlinks + local media in parallel
   loadingBacklinks.value = true
-  try {
-    backlinks.value = await invoke('get_backlinks', { filename: file.filename })
-  } catch (e) {
-    console.log('Backlinks unavailable:', e)
-  }
-  loadingBacklinks.value = false
-
-  // Fetch local media references
   loadingLocalMedia.value = true
-  try {
-    localMedia.value = await invoke('get_local_media', { path: file.path })
-  } catch (e) {
-    console.log('Local media detection unavailable:', e)
-  }
-  loadingLocalMedia.value = false
+  await Promise.all([
+    invoke('get_backlinks', { filename: file.filename })
+      .then((res) => { backlinks.value = res as Backlink[] })
+      .catch((e) => { console.log('Backlinks unavailable:', e) })
+      .finally(() => { loadingBacklinks.value = false }),
+    invoke('get_local_media', { path: file.path })
+      .then((res) => { localMedia.value = res as LocalMediaRef[] })
+      .catch((e) => { console.log('Local media detection unavailable:', e) })
+      .finally(() => { loadingLocalMedia.value = false }),
+  ])
 
   // Analyze content for tag suggestions
   await fetchAvailableTags()
@@ -231,7 +252,8 @@ async function checkGitStatus() {
 }
 checkGitStatus()
 // Refresh git status periodically
-setInterval(checkGitStatus, 10000)
+const gitStatusInterval = setInterval(checkGitStatus, 10000)
+onBeforeUnmount(() => clearInterval(gitStatusInterval))
 
 // Format filename into title, handling date-based names specially
 const formatTitle = (filename: string): string => {
@@ -275,20 +297,32 @@ const visibilityLabel = computed(() => {
   return null
 })
 
-function formatAge(ts: number): string {
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso)
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+  } catch { return iso }
+}
+
+function formatAgeShort(ts: number): string {
   const seconds = Math.floor(Date.now() / 1000 - ts)
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)
 
-  if (seconds < 60) return 'just now'
-  if (minutes < 60) return `${minutes} min ago`
-  if (hours < 24) return `${hours} hours ago`
+  if (seconds < 60) return 'now'
+  if (minutes < 60) return `${minutes}m ago`
+  if (hours < 24) return `${hours}h ago`
   if (days === 1) return 'yesterday'
-  if (days < 7) return `${days} days ago`
-  if (days < 30) return `${Math.floor(days / 7)} weeks ago`
-  if (days < 365) return `${Math.floor(days / 30)} months ago`
-  return `${Math.floor(days / 365)} years ago`
+  if (days < 7) return `${days}d ago`
+  if (days < 30) return `${Math.floor(days / 7)}w ago`
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`
+  return `${Math.floor(days / 365)}y ago`
+}
+
+function formatDateCompact(ts: number): string {
+  const d = new Date(ts * 1000)
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function openPublishConfirm(isRepublish = false) {
@@ -440,48 +474,78 @@ async function openPreview() {
 
     <!-- Header -->
     <div class="header">
-      <h1 :class="{ 'derived-title': titleIsDerived }">{{ title }}</h1>
-      <p v-if="titleIsDerived" class="title-hint">Title derived from filename</p>
-      <p v-if="file.dek" class="dek">{{ file.dek }}</p>
+      <template v-if="titleIsDerived && file.dek">
+        <h1>{{ file.dek }}</h1>
+        <p class="title-hint">{{ slug }}</p>
+      </template>
+      <template v-else>
+        <h1 :class="{ 'derived-title': titleIsDerived }">{{ title }}</h1>
+        <p v-if="titleIsDerived" class="title-hint">Title derived from filename</p>
+        <p v-if="file.dek" class="dek">{{ file.dek }}</p>
+      </template>
     </div>
 
     <!-- Info -->
-  <div class="info">
-      <div v-if="liveUrl" class="row live-url-row">
-        <span class="label">Live URL</span>
-        <div class="live-url">
-          <code>{{ liveUrl }}</code>
-          <button class="mini-btn" @click="copyUrl">Copy</button>
+    <div class="info">
+      <!-- Summary bar (always visible, clickable) -->
+      <div class="info-summary" @click="metadataExpanded = !metadataExpanded">
+        <span class="info-toggle" :class="{ expanded: metadataExpanded }">&#9654;</span>
+        <span>{{ file.word_count }}w</span>
+        <span class="date-sep">&middot;</span>
+        <span>{{ file.tags.length }} tags</span>
+        <span class="date-sep">&middot;</span>
+        <span>{{ file.date ? formatDate(file.date) : formatDateCompact(file.created) }}</span>
+      </div>
+
+      <!-- Detail rows (collapsed by default) -->
+      <div v-show="metadataExpanded" class="info-detail">
+        <div class="row">
+          <span class="label">Source</span>
+          <code>{{ file.source_dir || '.' }}/{{ file.filename }}</code>
+        </div>
+        <div class="row">
+          <span class="label">Dates</span>
+          <span class="dates-compact">
+            <span>c: {{ formatAgeShort(file.created) }}</span>
+            <span class="date-sep">&middot;</span>
+            <span :class="{ 'modified-highlight': hasUnpublishedChanges }">e: {{ formatAgeShort(file.modified) }}</span>
+            <template v-if="file.published_date">
+              <span class="date-sep">&middot;</span>
+              <span class="published">p: {{ formatAgeShort(file.published_date) }}</span>
+            </template>
+          </span>
+        </div>
+        <div class="row">
+          <span class="label">Obsidian</span>
+          <span :class="obsidianConnected ? 'connected' : 'disconnected'">
+            {{ obsidianConnected ? 'connected' : 'not connected' }}
+          </span>
+        </div>
+        <div class="row">
+          <span class="label">Git</span>
+          <span v-if="!gitStatus">checking...</span>
+          <span v-else-if="gitStatus.ok" class="connected">
+            {{ gitStatus.branch }} ✓
+          </span>
+          <span v-else class="git-warning" :title="gitStatus.error || ''">
+            {{ gitStatus.error }}
+          </span>
+        </div>
+        <div class="row">
+          <span class="label">Visibility</span>
+          <span v-if="isPasswordProtected" class="protected-text" :title="`Password: ${file.password}`">
+            🔒 Protected
+          </span>
+          <span v-else-if="isUnlisted" class="unlisted-text">
+            👁 Unlisted
+          </span>
+          <span v-else class="public-text">
+            ✓ Public
+          </span>
         </div>
       </div>
-      <div class="row">
-        <span class="label">Source</span>
-        <code>{{ file.source_dir || '.' }}/{{ file.filename }}</code>
-      </div>
-      <div class="row">
-        <span class="label">Target</span>
-        <code>{{ targetUrl }}</code>
-      </div>
-      <div class="row">
-        <span class="label">Created</span>
-        <span>{{ formatAge(file.created) }}</span>
-      </div>
-      <div class="row">
-        <span class="label">Edited</span>
-        <span :class="{ 'modified-highlight': hasUnpublishedChanges }">{{ formatAge(file.modified) }}</span>
-      </div>
-      <div v-if="file.published_date" class="row">
-        <span class="label">Published</span>
-        <span class="published">{{ formatAge(file.published_date) }}</span>
-      </div>
-      <div class="row">
-        <span class="label">Date</span>
-        <span :class="{ missing: !file.date }">{{ file.date || 'none' }}</span>
-      </div>
-      <div class="row">
-        <span class="label">Words</span>
-        <span>{{ file.word_count }}</span>
-      </div>
+
+      <!-- Always visible: actionable metadata -->
       <div v-if="file.tags.length" class="row">
         <span class="label">Tags</span>
         <span class="tags-list">{{ file.tags.join(', ') }}</span>
@@ -503,50 +567,21 @@ async function openPreview() {
           </button>
         </div>
       </div>
-      <div class="row">
-        <span class="label">Visibility</span>
-        <span v-if="isPasswordProtected" class="protected-text" :title="`Password: ${file.password}`">
-          🔒 Protected
-        </span>
-        <span v-else-if="isUnlisted" class="unlisted-text">
-          👁 Unlisted
-        </span>
-        <span v-else class="public-text">
-          ✓ Public
-        </span>
-      </div>
-      <div class="row">
-        <span class="label">Obsidian</span>
-        <span :class="obsidianConnected ? 'connected' : 'disconnected'">
-          {{ obsidianConnected ? 'connected' : 'not connected' }}
-        </span>
-      </div>
-      <div class="row">
-        <span class="label">Git</span>
-        <span v-if="!gitStatus">checking...</span>
-        <span v-else-if="gitStatus.ok" class="connected">
-          {{ gitStatus.branch }} ✓
-        </span>
-        <span v-else class="git-warning" :title="gitStatus.error || ''">
-          {{ gitStatus.error }}
-        </span>
-      </div>
     </div>
 
-    <!-- Lint Receipt -->
-    <div class="lint-receipt">
+    <!-- Lint Receipt (only when warnings exist) -->
+    <div v-if="lintWarnings.length" class="lint-receipt">
       <div class="lint-receipt-header">
         <span>Lint Receipt</span>
         <span class="lint-receipt-count">{{ lintWarnings.length }}</span>
       </div>
       <div class="lint-receipt-divider"></div>
-      <div v-if="lintWarnings.length" class="lint-receipt-list">
+      <div class="lint-receipt-list">
         <div v-for="warning in lintWarnings" :key="warning" class="lint-receipt-item">
           <span class="lint-receipt-bullet">•</span>
           <span class="lint-receipt-text">{{ warning }}</span>
         </div>
       </div>
-      <div v-else class="lint-receipt-ok">All clear</div>
       <div class="lint-receipt-footer">Dispatch</div>
     </div>
 
@@ -596,20 +631,43 @@ async function openPreview() {
       @fixed="$emit('published')"
     />
 
-    <!-- Open In -->
-    <div class="open-in">
-      <button @click="openInObsidian" class="open-btn" title="Open in Obsidian">
-        <span class="icon">O</span>
-        <span class="label">Obsidian</span>
-      </button>
-      <button @click="openInIAWriter" class="open-btn" title="Open in iA Writer">
-        <span class="icon">iA</span>
-        <span class="label">iA Writer</span>
-      </button>
-      <button @click="openPreview" class="open-btn preview" title="Live Preview">
-        <span class="icon">▶</span>
-        <span class="label">Preview</span>
-      </button>
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <div class="toolbar-open">
+        <button @click="openInObsidian" class="tool-btn" title="Open in Obsidian">
+          <span class="tool-icon">Ob</span> Obsidian
+        </button>
+        <button @click="openInIAWriter" class="tool-btn" title="Open in iA Writer">
+          <span class="tool-icon">iA</span> iA Writer
+        </button>
+        <button @click="openPreview" class="tool-btn" title="Live Preview">
+          <span class="tool-icon">&#9654;</span> Preview
+        </button>
+      </div>
+      <div class="toolbar-actions">
+        <template v-if="isLive">
+          <a :href="liveUrl!" target="_blank" class="btn">View &rarr;</a>
+          <button @click="unpublish" :disabled="unpublishing" class="btn">
+            {{ unpublishing ? '...' : 'Unpublish' }}
+          </button>
+          <button @click="openPublishConfirm(true)" :disabled="publishing" class="btn accent">
+            {{ publishing ? '...' : 'Republish' }}
+          </button>
+        </template>
+        <template v-else>
+          <button
+            @click="openPublishConfirm(false)"
+            :disabled="!file.is_safe || publishing"
+            class="btn accent full publish-btn"
+            :class="{ disabled: !file.is_safe }"
+          >
+            <span>{{ publishing ? 'Publishing...' : file.is_safe ? 'Publish' : 'Fix issues to publish' }}</span>
+            <kbd v-if="file.is_safe && !publishing" class="shortcut-hint">
+              <Command :size="10" />&crarr;
+            </kbd>
+          </button>
+        </template>
+      </div>
     </div>
 
     <!-- Publish Confirmation -->
@@ -617,7 +675,7 @@ async function openPreview() {
       <div class="publish-confirm">
         <div class="publish-confirm-header">
           <h2>{{ publishConfirmRepublish ? 'Republish Confirmation' : 'Publish Confirmation' }}</h2>
-          <button class="close-btn" @click="closePublishConfirm">×</button>
+          <button class="close-btn" @click="closePublishConfirm">&times;</button>
         </div>
         <div class="publish-confirm-body">
           <div v-if="publishConfirmStep === 1" class="confirm-step">
@@ -667,35 +725,13 @@ async function openPreview() {
       </div>
     </div>
 
-    <!-- Actions -->
-    <div class="actions">
-      <template v-if="isLive">
-        <a :href="liveUrl!" target="_blank" class="btn">View on site →</a>
-        <button @click="unpublish" :disabled="unpublishing" class="btn">
-          {{ unpublishing ? '...' : 'Unpublish' }}
-        </button>
-        <button @click="openPublishConfirm(true)" :disabled="publishing" class="btn accent">
-          {{ publishing ? '...' : 'Republish' }}
-        </button>
-      </template>
-      <template v-else>
-        <button
-          @click="openPublishConfirm(false)"
-          :disabled="!file.is_safe || publishing"
-          class="btn accent full publish-btn"
-          :class="{ disabled: !file.is_safe }"
-        >
-          <span>{{ publishing ? 'Publishing...' : file.is_safe ? 'Publish' : 'Fix issues to publish' }}</span>
-          <kbd v-if="file.is_safe && !publishing" class="shortcut-hint">
-            <Command :size="10" />↵
-          </kbd>
-        </button>
-      </template>
-    </div>
+    <!-- Content Divider -->
+    <div class="content-divider"><span>CONTENT</span></div>
 
     <!-- Preview -->
     <div class="preview">
-      <pre>{{ content }}</pre>
+      <div v-if="renderedContent" class="rendered-content" v-html="renderedContent"></div>
+      <pre v-else>{{ content }}</pre>
     </div>
   </div>
 </template>
@@ -940,6 +976,41 @@ async function openPreview() {
   border-bottom: 1px solid var(--border);
 }
 
+.info-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.info-summary:hover {
+  color: var(--text-primary);
+}
+
+.info-toggle {
+  font-size: 8px;
+  color: var(--text-tertiary);
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+
+.info-toggle.expanded {
+  transform: rotate(90deg);
+}
+
+.info-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0 4px 4px;
+  margin-bottom: 4px;
+  border-left: 2px solid var(--border-light);
+}
+
 .row {
   display: flex;
   font-size: 11px;
@@ -956,10 +1027,10 @@ async function openPreview() {
 .lint-receipt {
   margin: 10px 16px 12px;
   padding: 10px 12px;
-  background: color-mix(in srgb, var(--bg-secondary) 70%, #f7f2e8);
+  background: var(--bg-tertiary);
   border: 1px dashed var(--border-light);
-  border-radius: 6px;
-  font-family: 'SF Mono', monospace;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Menlo', monospace;
   font-size: 10px;
   color: var(--text-secondary);
 }
@@ -982,8 +1053,8 @@ async function openPreview() {
   margin: 6px 0 8px;
   background: repeating-linear-gradient(
     90deg,
-    color-mix(in srgb, var(--border-light) 80%, transparent) 0 6px,
-    transparent 6px 10px
+    var(--border-light) 0 4px,
+    transparent 4px 8px
   );
 }
 
@@ -1006,11 +1077,6 @@ async function openPreview() {
 
 .lint-receipt-text {
   color: var(--text-primary);
-}
-
-.lint-receipt-ok {
-  color: var(--success);
-  letter-spacing: 0.06em;
 }
 
 .lint-receipt-footer {
@@ -1166,37 +1232,18 @@ async function openPreview() {
   color: var(--text-secondary);
 }
 
-.live-url-row {
-  align-items: center;
-}
-
-.live-url {
+.dates-compact {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.live-url code {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 260px;
-}
-
-.mini-btn {
-  padding: 2px 6px;
-  font-size: 9px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg-tertiary);
+  gap: 4px;
+  font-size: 10px;
   color: var(--text-secondary);
-  cursor: pointer;
+  flex-wrap: wrap;
 }
 
-.mini-btn:hover {
-  color: var(--text-primary);
-  border-color: var(--border-light);
+.date-sep {
+  color: var(--text-tertiary);
+  opacity: 0.5;
 }
 
 .missing {
@@ -1213,7 +1260,8 @@ async function openPreview() {
 }
 
 .disconnected {
-  color: var(--text-tertiary);
+  color: var(--warning);
+  opacity: 0.7;
 }
 
 .git-warning {
@@ -1458,81 +1506,58 @@ async function openPreview() {
   padding: 4px;
 }
 
-/* Open In */
-.open-in {
+/* Toolbar */
+.toolbar {
   padding: 8px 16px;
   display: flex;
+  flex-direction: column;
   gap: 6px;
   border-bottom: 1px solid var(--border);
 }
 
-.open-btn {
+.toolbar-open {
+  display: flex;
+  gap: 4px;
+}
+
+.tool-btn {
   flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 10px 4px;
-  background: var(--accent);
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 6px;
+  height: 26px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
-  min-height: 48px;
 }
 
-.open-btn:hover {
+.tool-btn:hover {
   background: var(--bg-tertiary);
   border-color: var(--border-light);
-  transform: translateY(-1px);
+  color: var(--text-primary);
 }
 
-.open-btn:active {
-  transform: translateY(0);
+.tool-btn:active {
+  transform: scale(0.97);
 }
 
-.open-btn .icon {
-  font-size: 12px;
+.tool-icon {
+  font-size: 10px;
   font-weight: 700;
-  color: var(--text-secondary);
-  font-family: 'SF Mono', monospace;
-  transition: transform 0.15s ease;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  letter-spacing: -0.5px;
 }
 
-.open-btn:hover .icon {
-  transform: scale(1.1);
-}
-
-.open-btn .label {
-  font-size: 9px;
-  color: var(--text-tertiary);
-  transition: color 0.15s ease;
-}
-
-.open-btn:hover .label {
-  color: var(--text-secondary);
-}
-
-.open-btn.preview {
-  background: var(--bg-tertiary);
-  border-color: var(--border-light);
-}
-
-.open-btn.preview .icon {
-  color: var(--text-secondary);
-}
-
-.open-btn.preview:hover {
-  background: var(--bg-secondary);
-  border-color: var(--border-light);
-}
-
-/* Actions */
-.actions {
-  padding: 10px 16px;
+.toolbar-actions {
   display: flex;
   gap: 8px;
-  border-bottom: 1px solid var(--border);
 }
 
 .btn {
@@ -1559,8 +1584,8 @@ async function openPreview() {
 }
 
 .btn.accent {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+  background: color-mix(in srgb, var(--success) 20%, var(--bg-tertiary));
+  color: var(--success);
   font-weight: 600;
 }
 
@@ -1608,6 +1633,21 @@ async function openPreview() {
   opacity: 0.8;
 }
 
+/* Content Divider */
+.content-divider {
+  padding: 4px 16px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+.content-divider span {
+  font-size: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.75px;
+  color: var(--text-tertiary);
+}
+
 /* Preview */
 .preview {
   flex: 1;
@@ -1634,13 +1674,140 @@ async function openPreview() {
 }
 
 .preview pre {
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 10px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 10.5px;
   line-height: 1.6;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   white-space: pre-wrap;
   word-wrap: break-word;
   margin: 0;
   tab-size: 2;
+}
+
+/* Rendered markdown content */
+.rendered-content {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.rendered-content :deep(h1) {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 16px 0 8px;
+  color: var(--text-primary);
+}
+
+.rendered-content :deep(h2) {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 14px 0 6px;
+  color: var(--text-primary);
+}
+
+.rendered-content :deep(h3) {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 12px 0 4px;
+  color: var(--text-primary);
+}
+
+.rendered-content :deep(h4),
+.rendered-content :deep(h5),
+.rendered-content :deep(h6) {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 10px 0 4px;
+  color: var(--text-secondary);
+}
+
+.rendered-content :deep(p) {
+  margin: 0 0 8px;
+}
+
+.rendered-content :deep(a) {
+  color: #5b9bd5;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.rendered-content :deep(a:hover) {
+  color: #7bb8eb;
+}
+
+.rendered-content :deep(code) {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 11px;
+  padding: 1px 4px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  color: var(--text-primary);
+}
+
+.rendered-content :deep(pre) {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.rendered-content :deep(pre code) {
+  padding: 0;
+  background: none;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.rendered-content :deep(blockquote) {
+  border-left: 3px solid var(--border-light);
+  margin: 8px 0;
+  padding: 4px 12px;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.rendered-content :deep(ul),
+.rendered-content :deep(ol) {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+}
+
+.rendered-content :deep(li) {
+  margin: 2px 0;
+}
+
+.rendered-content :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  margin: 8px 0;
+}
+
+.rendered-content :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+.rendered-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 11px;
+}
+
+.rendered-content :deep(th),
+.rendered-content :deep(td) {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.rendered-content :deep(th) {
+  background: var(--bg-tertiary);
+  font-weight: 600;
 }
 </style>
