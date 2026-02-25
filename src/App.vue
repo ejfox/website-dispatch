@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { FileText, Search, RefreshCw, Image, GitBranch, Circle, Zap } from 'lucide-vue-next'
+import { listen } from '@tauri-apps/api/event'
+import { FileText, Search, RefreshCw, Image, GitBranch, Circle, Zap, Settings } from 'lucide-vue-next'
 import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
 import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
+import SettingsModal from './components/SettingsModal.vue'
 
 interface MarkdownFile {
   path: string
@@ -23,6 +25,7 @@ interface MarkdownFile {
   source_dir: string
   unlisted: boolean
   password: string | null
+  publish_at: string | null
 }
 
 const files = ref<MarkdownFile[]>([])
@@ -43,7 +46,22 @@ const lastGPress = ref(0)
 const rightTab = ref<'preview' | 'media'>('preview')
 const cloudinaryConnected = ref(false)
 const obsidianConnected = ref(false)
+const analyticsConnected = ref(false)
+const companionUrl = ref<string | null>(null)
+const companionPin = ref('')
 const gitBranch = ref<string | null>(null)
+
+// Settings modal
+const showSettings = ref(false)
+
+// App config
+interface EditorConfig { name: string; app_name: string; enabled: boolean }
+interface AppConfig {
+  default_editor: string
+  editors: EditorConfig[]
+  publish_targets: { id: string; name: string; is_default: boolean }[]
+}
+const appConfig = ref<AppConfig | null>(null)
 
 // Compact mode preference
 const compactMode = ref(localStorage.getItem('dispatch-compact') === 'true')
@@ -158,9 +176,21 @@ function handleGlobalKey(e: KeyboardEvent) {
     return
   }
 
-  // Don't handle navigation when search is open
+  // Don't handle navigation when search or settings is open
   if (searchOpen.value) {
     if (e.key === 'Escape') closeSearch()
+    return
+  }
+
+  if (showSettings.value) {
+    if (e.key === 'Escape') showSettings.value = false
+    return
+  }
+
+  // , opens settings (like ⌘, in macOS apps)
+  if (e.key === ',' && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault()
+    showSettings.value = true
     return
   }
 
@@ -241,9 +271,10 @@ function handleGlobalKey(e: KeyboardEvent) {
     invoke('open_in_obsidian', { path: selectedFile.value.path })
   }
 
-  // i - open in iA Writer
+  // i - open in default editor
   if (e.key === 'i' && selectedFile.value) {
-    invoke('open_in_app', { path: selectedFile.value.path, app: 'iA Writer' })
+    const editor = appConfig.value?.default_editor || 'iA Writer'
+    invoke('open_in_app', { path: selectedFile.value.path, app: editor })
   }
 
   // p - open preview
@@ -292,9 +323,31 @@ async function loadFiles() {
   loading.value = false
 }
 
-onMounted(() => {
+let unlistenSchedule: (() => void) | null = null
+
+async function loadConfig() {
+  try {
+    appConfig.value = await invoke('get_app_config') as AppConfig
+  } catch (e) {
+    console.error('Failed to load config:', e)
+  }
+}
+
+function onSettingsSaved() {
+  loadConfig()
+  loadFiles()
+}
+
+onMounted(async () => {
+  loadConfig()
   loadFiles()
   window.addEventListener('keydown', handleGlobalKey)
+
+  // Listen for scheduled publish events from backend
+  const unlisten = await listen('scheduled-publish', (_event) => {
+    loadFiles()
+  })
+  unlistenSchedule = unlisten
 
   // Check connection statuses
   invoke('check_cloudinary_status').then((connected: unknown) => {
@@ -309,6 +362,17 @@ onMounted(() => {
     obsidianConnected.value = false
   })
 
+  invoke('check_analytics_status').then((connected: unknown) => {
+    analyticsConnected.value = connected as boolean
+  }).catch(() => {
+    analyticsConnected.value = false
+  })
+
+  invoke('get_companion_info').then((info: any) => {
+    companionUrl.value = info.url
+    companionPin.value = info.pin
+  }).catch(() => {})
+
   invoke('get_git_status').then((status: any) => {
     if (status?.ok) {
       gitBranch.value = status.branch
@@ -318,6 +382,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKey)
+  unlistenSchedule?.()
 })
 </script>
 
@@ -338,6 +403,9 @@ onUnmounted(() => {
         </button>
         <button @click="loadFiles" class="titlebar-btn" :class="{ spinning: loading }" title="Refresh (r)">
           <RefreshCw :size="14" />
+        </button>
+        <button @click="showSettings = true" class="titlebar-btn" title="Settings (,)">
+          <Settings :size="14" />
         </button>
       </div>
     </div>
@@ -367,6 +435,7 @@ onUnmounted(() => {
             <div class="help-row"><kbd>r</kbd> <span>refresh</span></div>
             <div class="help-row"><kbd>m</kbd> <span>media library</span></div>
             <div class="help-row"><kbd>⌘</kbd><kbd>↵</kbd> <span>publish</span></div>
+            <div class="help-row"><kbd>,</kbd> <span>settings</span></div>
           </div>
         </div>
         <div class="help-divider"></div>
@@ -477,6 +546,13 @@ onUnmounted(() => {
       </div>
     </main>
 
+    <!-- Settings Modal -->
+    <SettingsModal
+      v-if="showSettings"
+      @close="showSettings = false"
+      @saved="onSettingsSaved"
+    />
+
     <!-- Status Bar -->
     <div class="statusbar">
       <div class="status-left">
@@ -503,6 +579,14 @@ onUnmounted(() => {
         <span class="status-item" :class="cloudinaryConnected ? 'connected' : 'muted'" title="Cloudinary">
           <Circle :size="6" :fill="cloudinaryConnected ? 'currentColor' : 'none'" />
           media
+        </span>
+        <span class="status-item" :class="analyticsConnected ? 'connected' : 'muted'" title="Umami Analytics">
+          <Circle :size="6" :fill="analyticsConnected ? 'currentColor' : 'none'" />
+          analytics
+        </span>
+        <span v-if="companionUrl" class="status-item connected" :title="`PIN: ${companionPin}`">
+          <Circle :size="6" fill="currentColor" />
+          {{ companionUrl.replace('http://', '') }}
         </span>
       </div>
     </div>

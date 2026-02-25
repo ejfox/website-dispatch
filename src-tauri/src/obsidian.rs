@@ -2,7 +2,10 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 
 const OBSIDIAN_API_URL: &str = "https://127.0.0.1:27124";
-const OBSIDIAN_API_KEY: &str = "f246add73b5d8d1ca913c5770baa7da457f3839a69d5cf1b5c64cf4608662ef1";
+
+fn get_api_key() -> Result<String, String> {
+    std::env::var("OBSIDIAN_API_KEY").map_err(|_| "OBSIDIAN_API_KEY not set in .env".to_string())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Backlink {
@@ -37,25 +40,31 @@ fn build_client() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
-fn build_headers() -> HeaderMap {
+fn build_headers() -> Result<HeaderMap, String> {
+    let api_key = get_api_key()?;
     let mut headers = HeaderMap::new();
     headers.insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", OBSIDIAN_API_KEY)).unwrap(),
+        HeaderValue::from_str(&format!("Bearer {}", api_key))
+            .map_err(|e| format!("Invalid API key format: {}", e))?,
     );
-    headers
+    Ok(headers)
 }
 
 pub async fn get_backlinks(filename: &str) -> Result<Vec<Backlink>, String> {
     let client = build_client()?;
-    let headers = build_headers();
+    let headers = build_headers()?;
 
     // Strip .md extension for wiki-link search
     let base_name = filename.trim_end_matches(".md");
 
     // Search for [[filename]] wiki-links
     let search_query = format!("[[{}]]", base_name);
-    let url = format!("{}/search/simple/?query={}", OBSIDIAN_API_URL, urlencoding::encode(&search_query));
+    let url = format!(
+        "{}/search/simple/?query={}",
+        OBSIDIAN_API_URL,
+        urlencoding::encode(&search_query)
+    );
 
     let response = client
         .get(&url)
@@ -78,7 +87,8 @@ pub async fn get_backlinks(filename: &str) -> Result<Vec<Backlink>, String> {
         .into_iter()
         .filter(|r| r.filename != filename) // Exclude self-references
         .map(|r| {
-            let context = r.matches
+            let context = r
+                .matches
                 .first()
                 .map(|m| m.match_.content.clone())
                 .unwrap_or_default();
@@ -98,7 +108,7 @@ pub async fn get_backlinks(filename: &str) -> Result<Vec<Backlink>, String> {
 
 async fn get_backlinks_via_search(filename: &str) -> Result<Vec<Backlink>, String> {
     let client = build_client()?;
-    let headers = build_headers();
+    let headers = build_headers()?;
 
     let base_name = filename.trim_end_matches(".md");
 
@@ -168,7 +178,10 @@ pub async fn check_api_status() -> bool {
         Err(_) => return false,
     };
 
-    let headers = build_headers();
+    let headers = match build_headers() {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
 
     client
         .get(format!("{}/", OBSIDIAN_API_URL))

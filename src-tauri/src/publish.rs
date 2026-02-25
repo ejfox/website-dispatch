@@ -1,6 +1,8 @@
-use crate::Config;
+use crate::config;
 use std::fs;
+use std::path::Path;
 use std::process::Command;
+use tauri::Emitter;
 
 fn check_git_status(repo_path: &str) -> Result<(), String> {
     // Check if we're in a git repo
@@ -28,7 +30,10 @@ fn check_git_status(repo_path: &str) -> Result<(), String> {
         .collect();
 
     if !dirty_files.is_empty() {
-        eprintln!("Note: {} uncommitted changes in repo (continuing anyway)", dirty_files.len());
+        eprintln!(
+            "Note: {} uncommitted changes in repo (continuing anyway)",
+            dirty_files.len()
+        );
     }
 
     // Check if we're on a branch
@@ -72,9 +77,20 @@ pub struct GitStatus {
     pub has_conflicts: bool,
 }
 
-pub fn get_git_status() -> GitStatus {
-    let config = Config::default();
-    let repo_path = &config.website_repo;
+pub fn get_git_status(target_id: Option<&str>) -> GitStatus {
+    let target = match config::resolve_target(target_id) {
+        Ok(t) => t,
+        Err(e) => {
+            return GitStatus {
+                ok: false,
+                branch: String::new(),
+                error: Some(e),
+                dirty_files: vec![],
+                has_conflicts: false,
+            }
+        }
+    };
+    let repo_path = &target.repo_path;
 
     // Get branch name
     let branch = Command::new("git")
@@ -127,10 +143,15 @@ pub fn get_git_status() -> GitStatus {
     }
 }
 
-pub fn publish_file(source_path: &str, slug: &str) -> Result<String, String> {
-    let config = Config::default();
+pub fn publish_file(
+    source_path: &str,
+    slug: &str,
+    target_id: Option<&str>,
+) -> Result<String, String> {
+    let app_config = config::get();
+    let target = config::resolve_target(target_id)?;
     let normalized_path = source_path.replace('\\', "/");
-    if !normalized_path.starts_with(&config.vault_path)
+    if !normalized_path.starts_with(&app_config.vault.path)
         || (!normalized_path.contains("/blog/") && !normalized_path.contains("/drafts/"))
     {
         return Err("Publish blocked: file must live in vault blog/ or drafts/".into());
@@ -138,11 +159,12 @@ pub fn publish_file(source_path: &str, slug: &str) -> Result<String, String> {
 
     // Pre-flight checks
     eprintln!("Running pre-flight checks...");
-    check_git_status(&config.website_repo)?;
+    check_git_status(&target.repo_path)?;
 
-    // Determine year folder (posts go in content/blog/{year}/)
+    // Determine year folder from content_path_pattern
     let year = chrono::Utc::now().format("%Y").to_string();
-    let dest_dir = format!("{}/content/blog/{}", config.website_repo, year);
+    let content_dir = target.content_path_pattern.replace("{year}", &year);
+    let dest_dir = format!("{}/{}", target.repo_path, content_dir);
     let dest_path = format!("{}/{}.md", dest_dir, slug);
 
     eprintln!("Publishing {} -> {}", source_path, dest_path);
@@ -156,7 +178,7 @@ pub fn publish_file(source_path: &str, slug: &str) -> Result<String, String> {
     eprintln!("Copied file, running git commands...");
 
     // Git add, commit, push
-    let repo_path = &config.website_repo;
+    let repo_path = &target.repo_path;
 
     let add_output = Command::new("git")
         .args(["add", &dest_path])
@@ -165,7 +187,10 @@ pub fn publish_file(source_path: &str, slug: &str) -> Result<String, String> {
         .map_err(|e| format!("Git add failed: {}", e))?;
 
     if !add_output.status.success() {
-        return Err(format!("Git add failed: {}", String::from_utf8_lossy(&add_output.stderr)));
+        return Err(format!(
+            "Git add failed: {}",
+            String::from_utf8_lossy(&add_output.stderr)
+        ));
     }
 
     let commit_msg = format!("Publish: {}", slug);
@@ -228,20 +253,26 @@ pub fn publish_file(source_path: &str, slug: &str) -> Result<String, String> {
 
     eprintln!("Published successfully!");
 
-    // Return the URL
-    let url = format!("https://ejfox.com/blog/{}/{}", year, slug);
+    // Return the URL using configured domain
+    let url = format!("{}/blog/{}/{}", target.domain, year, slug);
     Ok(url)
 }
 
-pub fn unpublish_file(slug: &str) -> Result<(), String> {
-    let config = Config::default();
+pub fn unpublish_file(slug: &str, target_id: Option<&str>) -> Result<(), String> {
+    let target = config::resolve_target(target_id)?;
 
     // Pre-flight checks
     eprintln!("Running pre-flight checks...");
-    check_git_status(&config.website_repo)?;
+    check_git_status(&target.repo_path)?;
 
-    let blog_path = format!("{}/content/blog", config.website_repo);
-    let drafts_path = format!("{}/content/drafts", config.website_repo);
+    // Derive blog path from content_path_pattern base
+    let content_base = target
+        .content_path_pattern
+        .split("/{year}")
+        .next()
+        .unwrap_or("content/blog");
+    let blog_path = format!("{}/{}", target.repo_path, content_base);
+    let drafts_path = format!("{}/content/drafts", target.repo_path);
     fs::create_dir_all(&drafts_path).map_err(|e| format!("Failed to create drafts dir: {}", e))?;
 
     let mut source_path: Option<String> = None;
@@ -271,7 +302,7 @@ pub fn unpublish_file(slug: &str) -> Result<(), String> {
     fs::rename(&source_path, &dest_path).map_err(|e| format!("Failed to move file: {}", e))?;
 
     // Git add, commit, push
-    let repo_path = &config.website_repo;
+    let repo_path = &target.repo_path;
     let add_output = Command::new("git")
         .args(["add", "-A", &source_path, &dest_path])
         .current_dir(repo_path)
@@ -279,7 +310,10 @@ pub fn unpublish_file(slug: &str) -> Result<(), String> {
         .map_err(|e| format!("Git add failed: {}", e))?;
 
     if !add_output.status.success() {
-        return Err(format!("Git add failed: {}", String::from_utf8_lossy(&add_output.stderr)));
+        return Err(format!(
+            "Git add failed: {}",
+            String::from_utf8_lossy(&add_output.stderr)
+        ));
     }
 
     let commit_msg = format!("Unpublish: {}", slug);
@@ -333,4 +367,54 @@ pub fn unpublish_file(slug: &str) -> Result<(), String> {
 
     eprintln!("Unpublished successfully!");
     Ok(())
+}
+
+pub async fn run_schedule_checker(app_handle: tauri::AppHandle) {
+    use tokio::time::{interval, Duration};
+    let mut ticker = interval(Duration::from_secs(60));
+
+    loop {
+        ticker.tick().await;
+        if let Ok(files) = crate::vault::get_recent_files(500) {
+            let now = chrono::Utc::now();
+            for file in files {
+                if let Some(ref publish_at_str) = file.publish_at {
+                    // Skip already-published files
+                    if file.published_url.is_some() {
+                        continue;
+                    }
+                    // Try parsing the scheduled datetime
+                    if let Ok(scheduled_time) = chrono::DateTime::parse_from_rfc3339(publish_at_str)
+                    {
+                        if now >= scheduled_time {
+                            let slug = file.filename.trim_end_matches(".md");
+                            eprintln!("Scheduled publish triggered for: {}", slug);
+                            match publish_file(&file.path, slug, None) {
+                                Ok(url) => {
+                                    // Remove publish_at from frontmatter
+                                    let _ = crate::vault::remove_frontmatter_field(
+                                        &file.path,
+                                        "publish_at",
+                                    );
+                                    // Emit event to frontend
+                                    let _ = app_handle.emit(
+                                        "scheduled-publish",
+                                        serde_json::json!({
+                                            "slug": slug,
+                                            "url": url,
+                                            "title": file.title
+                                        }),
+                                    );
+                                    eprintln!("Scheduled publish succeeded: {}", url);
+                                }
+                                Err(e) => {
+                                    eprintln!("Scheduled publish failed for {}: {}", slug, e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

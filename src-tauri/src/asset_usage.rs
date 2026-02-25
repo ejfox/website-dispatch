@@ -69,11 +69,11 @@ fn extract_cloudinary_urls(content: &str) -> Vec<(String, usize, String)> {
 fn extract_title(content: &str) -> Option<String> {
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("# ") {
-            return Some(trimmed[2..].trim().to_string());
+        if let Some(stripped) = trimmed.strip_prefix("## ") {
+            return Some(stripped.trim().to_string());
         }
-        if trimmed.starts_with("## ") {
-            return Some(trimmed[3..].trim().to_string());
+        if let Some(stripped) = trimmed.strip_prefix("# ") {
+            return Some(stripped.trim().to_string());
         }
     }
     None
@@ -93,15 +93,16 @@ pub fn scan_vault_for_usage() -> Result<UsageScanResult, String> {
     for entry in WalkDir::new(&config.vault_path)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
     {
         let path = entry.path();
         let path_str = path.to_string_lossy().to_string();
 
         // Skip certain directories
-        if path_str.contains("/templates/") ||
-           path_str.contains("/.obsidian/") ||
-           path_str.contains("/node_modules/") {
+        if path_str.contains("/templates/")
+            || path_str.contains("/.obsidian/")
+            || path_str.contains("/node_modules/")
+        {
             continue;
         }
 
@@ -117,7 +118,7 @@ pub fn scan_vault_for_usage() -> Result<UsageScanResult, String> {
                     // Track by asset
                     by_asset
                         .entry(public_id.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(AssetUsage {
                             post_path: path_str.clone(),
                             post_title: title.clone(),
@@ -128,7 +129,10 @@ pub fn scan_vault_for_usage() -> Result<UsageScanResult, String> {
                     post_assets.push(public_id.clone());
 
                     // Reconstruct approximate URL for reference
-                    all_urls.push(format!("https://res.cloudinary.com/ejf/image/upload/{}", public_id));
+                    all_urls.push(format!(
+                        "https://res.cloudinary.com/ejf/image/upload/{}",
+                        public_id
+                    ));
                 }
 
                 // Track by post
@@ -142,7 +146,7 @@ pub fn scan_vault_for_usage() -> Result<UsageScanResult, String> {
     for entry in WalkDir::new(&blog_path)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
     {
         let path = entry.path();
         let path_str = path.to_string_lossy().to_string();
@@ -158,7 +162,7 @@ pub fn scan_vault_for_usage() -> Result<UsageScanResult, String> {
                 for (public_id, line_num, context) in urls {
                     by_asset
                         .entry(public_id.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(AssetUsage {
                             post_path: path_str.clone(),
                             post_title: title.clone(),
@@ -192,13 +196,23 @@ pub fn scan_vault_for_usage() -> Result<UsageScanResult, String> {
 /// Get usage info for a specific asset
 pub fn get_asset_usage(public_id: &str) -> Result<Vec<AssetUsage>, String> {
     let scan = scan_vault_for_usage()?;
-    Ok(scan.usage_map.by_asset.get(public_id).cloned().unwrap_or_default())
+    Ok(scan
+        .usage_map
+        .by_asset
+        .get(public_id)
+        .cloned()
+        .unwrap_or_default())
 }
 
 /// Get all assets used in a specific post
 pub fn get_post_assets(post_path: &str) -> Result<Vec<String>, String> {
     let scan = scan_vault_for_usage()?;
-    Ok(scan.usage_map.by_post.get(post_path).cloned().unwrap_or_default())
+    Ok(scan
+        .usage_map
+        .by_post
+        .get(post_path)
+        .cloned()
+        .unwrap_or_default())
 }
 
 /// Get list of Cloudinary folders from a list of public_ids
@@ -208,7 +222,7 @@ pub fn extract_folders(public_ids: &[String]) -> Vec<String> {
         .filter_map(|id| {
             let parts: Vec<&str> = id.split('/').collect();
             if parts.len() > 1 {
-                Some(parts[..parts.len()-1].join("/"))
+                Some(parts[..parts.len() - 1].join("/"))
             } else {
                 None
             }

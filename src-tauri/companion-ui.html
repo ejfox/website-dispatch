@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Dispatch Companion</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #141416; --bg2: #1e1e22; --bg3: #2d2d32;
+  --text: #e5e5e5; --text2: #999; --text3: #666;
+  --border: rgba(255,255,255,0.08); --accent: #0a84ff;
+  --success: #30d158; --warning: #ff9f0a; --danger: #ff453a;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #fff; --bg2: #f8f8f8; --bg3: #ebebeb;
+    --text: #1a1a1a; --text2: #555; --text3: #888;
+    --border: rgba(0,0,0,0.08);
+  }
+}
+body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; min-height: 100dvh; }
+.container { max-width: 600px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+.auth { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80dvh; gap: 16px; }
+.auth h1 { font-size: 22px; }
+.auth p { color: var(--text2); font-size: 13px; }
+.pin-input { font-size: 28px; text-align: center; letter-spacing: 8px; width: 200px; padding: 12px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: 'SF Mono', monospace; }
+.pin-input:focus { outline: 2px solid var(--accent); }
+.btn { padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; background: var(--accent); color: #fff; }
+.btn:disabled { opacity: 0.5; }
+.btn-sm { padding: 6px 12px; font-size: 12px; border-radius: 6px; }
+.btn-warn { background: var(--warning); color: #000; }
+.error { color: var(--danger); font-size: 12px; }
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.tab { padding: 8px 16px; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text3); font-size: 13px; font-weight: 500; cursor: pointer; }
+.tab.active { color: var(--text); border-bottom-color: var(--text); }
+.file { padding: 12px; border-bottom: 1px solid var(--border); }
+.file:active { background: var(--bg2); }
+.file-title { font-weight: 500; margin-bottom: 4px; }
+.file-meta { font-size: 11px; color: var(--text3); display: flex; gap: 8px; flex-wrap: wrap; }
+.badge { font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 3px; }
+.badge-live { background: var(--success); color: #000; }
+.badge-scheduled { background: rgba(255,159,10,0.2); color: var(--warning); }
+.badge-unlisted { background: rgba(99,102,241,0.2); color: #6366f1; }
+.badge-protected { background: rgba(139,92,246,0.2); color: #8b5cf6; }
+.file-actions { display: flex; gap: 8px; margin-top: 8px; }
+.detail { padding: 16px; }
+.detail h2 { font-size: 16px; margin-bottom: 8px; }
+.detail-meta { font-size: 12px; color: var(--text2); margin-bottom: 12px; }
+.schedule-input { width: 100%; padding: 8px; font-size: 14px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); color-scheme: dark; margin-bottom: 8px; }
+@media (prefers-color-scheme: light) { .schedule-input { color-scheme: light; } }
+.back { background: none; border: none; color: var(--accent); font-size: 13px; cursor: pointer; padding: 4px 0; margin-bottom: 12px; }
+.loading { text-align: center; padding: 40px; color: var(--text3); }
+.empty { text-align: center; padding: 40px; color: var(--text3); }
+</style>
+</head>
+<body>
+<div class="container" id="app"></div>
+<script>
+const API = '';
+let token = sessionStorage.getItem('dispatch-token');
+
+const app = document.getElementById('app');
+let files = [];
+let currentView = 'list'; // list | detail
+let currentFile = null;
+let currentTab = 'all';
+
+function h(tag, attrs, ...children) {
+  const el = document.createElement(tag);
+  if (attrs) Object.entries(attrs).forEach(([k, v]) => {
+    if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'class') el.className = v;
+    else el.setAttribute(k, v);
+  });
+  children.flat().forEach(c => {
+    if (c == null) return;
+    el.append(typeof c === 'string' ? document.createTextNode(c) : c);
+  });
+  return el;
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...opts.headers },
+  });
+  if (res.status === 401) { token = null; sessionStorage.removeItem('dispatch-token'); render(); throw new Error('Unauthorized'); }
+  return res.json();
+}
+
+function formatAge(ts) {
+  const s = Math.floor(Date.now() / 1000 - ts);
+  if (s < 60) return 'now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm';
+  const hr = Math.floor(m / 60);
+  if (hr < 24) return hr + 'h';
+  const d = Math.floor(hr / 24);
+  if (d < 7) return d + 'd';
+  if (d < 30) return Math.floor(d / 7) + 'w';
+  return Math.floor(d / 30) + 'mo';
+}
+
+function renderAuth() {
+  let error = '';
+  app.replaceChildren(
+    h('div', { class: 'auth' },
+      h('h1', null, 'Dispatch'),
+      h('p', null, 'Enter the PIN shown in the desktop app'),
+      h('input', { class: 'pin-input', type: 'tel', maxlength: '6', placeholder: '000000', oninput: (e) => { if (e.target.value.length === 6) tryAuth(e.target.value); } }),
+      h('div', { class: 'error', id: 'auth-error' })
+    )
+  );
+  app.querySelector('.pin-input').focus();
+}
+
+async function tryAuth(pin) {
+  try {
+    const res = await fetch(API + '/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin })
+    });
+    if (!res.ok) {
+      document.getElementById('auth-error').textContent = 'Wrong PIN';
+      return;
+    }
+    const data = await res.json();
+    token = data.token;
+    sessionStorage.setItem('dispatch-token', token);
+    render();
+  } catch (e) {
+    document.getElementById('auth-error').textContent = 'Connection failed';
+  }
+}
+
+async function loadFiles() {
+  files = await api('/api/files');
+  renderList();
+}
+
+function renderList() {
+  let filtered = files;
+  if (currentTab === 'live') filtered = files.filter(f => f.published_url);
+  else if (currentTab === 'scheduled') filtered = files.filter(f => f.publish_at && !f.published_url);
+  else if (currentTab === 'drafts') filtered = files.filter(f => !f.published_url && !f.publish_at);
+
+  const counts = {
+    all: files.length,
+    live: files.filter(f => f.published_url).length,
+    scheduled: files.filter(f => f.publish_at && !f.published_url).length,
+  };
+
+  app.replaceChildren(
+    h('h1', null, 'Dispatch'),
+    h('div', { class: 'tabs' },
+      ...['all', 'live', 'scheduled'].map(tab =>
+        h('button', { class: 'tab' + (currentTab === tab ? ' active' : ''), onclick: () => { currentTab = tab; renderList(); } },
+          tab.charAt(0).toUpperCase() + tab.slice(1) + (counts[tab] != null ? ` (${counts[tab]})` : ''))
+      )
+    ),
+    ...filtered.length === 0
+      ? [h('div', { class: 'empty' }, 'No posts')]
+      : filtered.map(f =>
+          h('div', { class: 'file', onclick: () => { currentFile = f; currentView = 'detail'; renderDetail(); } },
+            h('div', { class: 'file-title' },
+              f.title || f.slug,
+              f.published_url ? h('span', { class: 'badge badge-live', style: 'margin-left:6px' }, 'LIVE') :
+              f.publish_at ? h('span', { class: 'badge badge-scheduled', style: 'margin-left:6px' }, 'SCHEDULED') :
+              f.has_password ? h('span', { class: 'badge badge-protected', style: 'margin-left:6px' }, 'PROTECTED') :
+              f.unlisted ? h('span', { class: 'badge badge-unlisted', style: 'margin-left:6px' }, 'UNLISTED') : null
+            ),
+            h('div', { class: 'file-meta' },
+              h('span', null, f.word_count + 'w'),
+              h('span', null, formatAge(f.modified) + ' ago'),
+              f.warnings.length ? h('span', { style: 'color:var(--warning)' }, f.warnings.length + ' warnings') : null
+            )
+          )
+        )
+  );
+}
+
+function renderDetail() {
+  const f = currentFile;
+  const isLive = !!f.published_url;
+  const isScheduled = !!f.publish_at && !isLive;
+
+  const els = [
+    h('button', { class: 'back', onclick: () => { currentView = 'list'; renderList(); } }, '\u2190 Back'),
+    h('h2', null, f.title || f.slug),
+    h('div', { class: 'detail-meta' },
+      f.word_count + ' words \u00b7 ' + formatAge(f.modified) + ' ago'
+    ),
+  ];
+
+  if (isLive) {
+    els.push(h('div', { style: 'margin-bottom:12px' },
+      h('span', { class: 'badge badge-live' }, 'LIVE'),
+      h('a', { href: f.published_url, target: '_blank', style: 'margin-left:8px;color:var(--accent);font-size:12px' }, f.published_url)
+    ));
+  } else if (isScheduled) {
+    els.push(h('div', { style: 'margin-bottom:12px' },
+      h('span', { class: 'badge badge-scheduled' }, 'SCHEDULED'),
+      h('span', { style: 'margin-left:8px;font-size:12px;color:var(--text2)' }, new Date(f.publish_at).toLocaleString())
+    ));
+    els.push(h('div', { class: 'file-actions' },
+      h('button', { class: 'btn btn-sm btn-warn', onclick: () => cancelSchedule(f.slug) }, 'Cancel Schedule')
+    ));
+  }
+
+  if (f.warnings.length) {
+    els.push(h('div', { style: 'margin:12px 0;padding:8px;background:rgba(255,159,10,0.1);border-radius:6px;font-size:12px;color:var(--warning)' },
+      f.warnings.join(' \u00b7 ')
+    ));
+  }
+
+  if (!isLive) {
+    els.push(h('div', { style: 'margin-top:16px;display:flex;flex-direction:column;gap:8px' },
+      f.is_safe ? h('button', { class: 'btn', onclick: () => publishFile(f.slug) }, 'Publish Now') : null,
+      !isScheduled ? [
+        h('input', { class: 'schedule-input', type: 'datetime-local', id: 'sched-input' }),
+        h('button', { class: 'btn btn-sm', onclick: () => scheduleFile(f.slug) }, 'Schedule'),
+      ] : null
+    ));
+  }
+
+  app.replaceChildren(h('div', { class: 'detail' }, ...els.flat().filter(Boolean)));
+}
+
+async function publishFile(slug) {
+  try {
+    const res = await api(`/api/files/${slug}/publish`, { method: 'POST' });
+    if (res.error) { alert('Publish failed: ' + res.error); return; }
+    alert('Published! ' + res.url);
+    await loadFiles();
+    currentView = 'list';
+    renderList();
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+async function scheduleFile(slug) {
+  const input = document.getElementById('sched-input');
+  if (!input || !input.value) { alert('Pick a date first'); return; }
+  const isoDate = new Date(input.value).toISOString();
+  try {
+    await api(`/api/files/${slug}/schedule`, { method: 'POST', body: JSON.stringify({ publish_at: isoDate }) });
+    await loadFiles();
+    currentView = 'list';
+    renderList();
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+async function cancelSchedule(slug) {
+  try {
+    await api(`/api/files/${slug}/schedule`, { method: 'DELETE' });
+    await loadFiles();
+    currentView = 'list';
+    renderList();
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+function render() {
+  if (!token) { renderAuth(); return; }
+  app.replaceChildren(h('div', { class: 'loading' }, 'Loading...'));
+  loadFiles();
+}
+
+render();
+</script>
+</body>
+</html>

@@ -4,7 +4,30 @@ use std::thread;
 use std::time::Duration;
 
 const PORT: u16 = 6419;
-const PREVIEW_SERVER_PATH: &str = "/Users/ejfox/code/website-dispatch/preview-server.mjs";
+
+fn get_preview_server_path() -> String {
+    // In dev: use CARGO_MANIFEST_DIR (src-tauri/) to find project root
+    let dev_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../preview-server.mjs");
+    if std::path::Path::new(dev_path).exists() {
+        return dev_path.to_string();
+    }
+    // In production: look next to the executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let prod_path = dir.join("preview-server.mjs");
+            if prod_path.exists() {
+                return prod_path.to_string_lossy().to_string();
+            }
+            // macOS .app bundle: check Resources
+            let resources_path = dir.join("../Resources/preview-server.mjs");
+            if resources_path.exists() {
+                return resources_path.to_string_lossy().to_string();
+            }
+        }
+    }
+    // Fallback to dev path even if not found (will error on spawn)
+    dev_path.to_string()
+}
 
 // Global state for the Node.js server process
 static NODE_SERVER: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
@@ -36,14 +59,15 @@ pub fn init_server() {
     thread::sleep(Duration::from_millis(500));
 
     // Start the Node.js preview server
-    match Command::new("node")
-        .arg(PREVIEW_SERVER_PATH)
-        .spawn()
-    {
+    let server_path = get_preview_server_path();
+    match Command::new("node").arg(&server_path).spawn() {
         Ok(child) => {
-            let mut server = get_node_server().lock().unwrap();
+            let mut server = get_node_server().lock().unwrap_or_else(|e| e.into_inner());
             *server = Some(child);
-            println!("Node.js preview server started on http://localhost:{}", PORT);
+            println!(
+                "Node.js preview server started on http://localhost:{}",
+                PORT
+            );
         }
         Err(e) => {
             eprintln!("Failed to start Node.js preview server: {}", e);
@@ -63,7 +87,8 @@ pub fn set_file(path: &str) {
         "path": path
     });
 
-    match client.post(&url)
+    match client
+        .post(&url)
         .header("Content-Type", "application/json")
         .body(body.to_string())
         .timeout(Duration::from_secs(5))
@@ -87,7 +112,7 @@ pub fn open_preview() -> Result<String, String> {
 
 // Stop the server when the app closes
 pub fn stop_server() {
-    let mut server = get_node_server().lock().unwrap();
+    let mut server = get_node_server().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(mut child) = server.take() {
         let _ = child.kill();
     }

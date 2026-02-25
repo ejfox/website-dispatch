@@ -58,12 +58,11 @@ pub struct MediaFixResult {
 
 /// Load Cloudinary configuration from environment variables
 pub fn get_config() -> Result<CloudinaryConfig, String> {
-    let cloud_name = std::env::var("CLOUDINARY_CLOUD_NAME")
-        .map_err(|_| "CLOUDINARY_CLOUD_NAME not set")?;
-    let api_key = std::env::var("CLOUDINARY_API_KEY")
-        .map_err(|_| "CLOUDINARY_API_KEY not set")?;
-    let api_secret = std::env::var("CLOUDINARY_API_SECRET")
-        .map_err(|_| "CLOUDINARY_API_SECRET not set")?;
+    let cloud_name =
+        std::env::var("CLOUDINARY_CLOUD_NAME").map_err(|_| "CLOUDINARY_CLOUD_NAME not set")?;
+    let api_key = std::env::var("CLOUDINARY_API_KEY").map_err(|_| "CLOUDINARY_API_KEY not set")?;
+    let api_secret =
+        std::env::var("CLOUDINARY_API_SECRET").map_err(|_| "CLOUDINARY_API_SECRET not set")?;
 
     Ok(CloudinaryConfig {
         cloud_name,
@@ -320,7 +319,10 @@ pub async fn list_assets(
 }
 
 /// Search assets in Cloudinary
-pub async fn search_assets(query: &str, max_results: Option<u32>) -> Result<MediaLibraryPage, String> {
+pub async fn search_assets(
+    query: &str,
+    max_results: Option<u32>,
+) -> Result<MediaLibraryPage, String> {
     let config = get_config()?;
 
     let max = max_results.unwrap_or(30);
@@ -396,10 +398,7 @@ pub async fn check_credentials() -> bool {
     }
 
     // Try a simple API call to verify credentials
-    match list_assets(Some("image"), Some(1), None).await {
-        Ok(_) => true,
-        Err(_) => false,
-    }
+    (list_assets(Some("image"), Some(1), None).await).is_ok()
 }
 
 /// Extract local media references from markdown content
@@ -407,12 +406,9 @@ pub fn extract_local_media(content: &str, source_dir: &str) -> Vec<LocalMediaRef
     let mut refs = Vec::new();
 
     // Regex patterns for media references
-    let md_image_re =
-        regex::Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap();
-    let html_img_re =
-        regex::Regex::new(r#"<img[^>]+src=["']([^"']+)["'][^>]*>"#).unwrap();
-    let html_video_re =
-        regex::Regex::new(r#"<video[^>]+src=["']([^"']+)["'][^>]*>"#).unwrap();
+    let md_image_re = regex::Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap();
+    let html_img_re = regex::Regex::new(r#"<img[^>]+src=["']([^"']+)["'][^>]*>"#).unwrap();
+    let html_video_re = regex::Regex::new(r#"<video[^>]+src=["']([^"']+)["'][^>]*>"#).unwrap();
 
     for (line_num, line) in content.lines().enumerate() {
         // Skip lines with cloudinary URLs or https URLs
@@ -496,12 +492,12 @@ pub fn extract_local_media(content: &str, source_dir: &str) -> Vec<LocalMediaRef
 
 /// Resolve a relative path to an absolute path
 fn resolve_path(path: &str, source_dir: &str) -> Option<String> {
-    let path_buf = if path.starts_with("./") {
-        Path::new(source_dir).join(&path[2..])
-    } else if path.starts_with('/') {
+    let path_buf = if let Some(stripped) = path.strip_prefix("./") {
+        Path::new(source_dir).join(stripped)
+    } else if let Some(stripped) = path.strip_prefix('/') {
         // Absolute from vault root - need to find vault root
         let config = crate::Config::default();
-        Path::new(&config.vault_path).join(&path[1..])
+        Path::new(&config.vault_path).join(stripped)
     } else {
         Path::new(source_dir).join(path)
     };
@@ -528,10 +524,7 @@ fn is_video_extension(path: &str) -> bool {
 pub fn generate_replacement(original: &LocalMediaRef, asset: &CloudinaryAsset) -> String {
     if original.media_type == "video" {
         // For videos, use HTML video tag
-        format!(
-            r#"<video src="{}" controls></video>"#,
-            asset.secure_url
-        )
+        format!(r#"<video src="{}" controls></video>"#, asset.secure_url)
     } else {
         // For images, use markdown syntax
         let alt = original.alt_text.as_deref().unwrap_or("");
@@ -541,16 +534,15 @@ pub fn generate_replacement(original: &LocalMediaRef, asset: &CloudinaryAsset) -
 
 /// Apply fixes to a markdown file
 pub fn apply_fixes_to_file(file_path: &str, fixes: &[(String, String)]) -> Result<(), String> {
-    let content = fs::read_to_string(file_path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let content =
+        fs::read_to_string(file_path).map_err(|e| format!("Failed to read file: {}", e))?;
 
     let mut new_content = content;
     for (original, replacement) in fixes {
         new_content = new_content.replace(original, replacement);
     }
 
-    fs::write(file_path, new_content)
-        .map_err(|e| format!("Failed to write file: {}", e))?;
+    fs::write(file_path, new_content).map_err(|e| format!("Failed to write file: {}", e))?;
 
     Ok(())
 }

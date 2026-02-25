@@ -34,6 +34,7 @@ interface MarkdownFile {
   source_dir: string
   unlisted: boolean
   password: string | null
+  publish_at: string | null
 }
 
 interface Backlink {
@@ -51,8 +52,39 @@ interface LocalMediaRef {
   line_number: number
 }
 
+interface EditorConfig { name: string; app_name: string; enabled: boolean }
+interface PublishTargetConfig { id: string; name: string; is_default: boolean }
+interface AppConfig {
+  default_editor: string
+  editors: EditorConfig[]
+  publish_targets: PublishTargetConfig[]
+}
+
 const props = defineProps<{ file: MarkdownFile }>()
 const emit = defineEmits<{ published: [] }>()
+
+// Config
+const appConfig = ref<AppConfig | null>(null)
+const selectedTargetId = ref<string | null>(localStorage.getItem('dispatch-target') || null)
+
+invoke('get_app_config').then((c) => { appConfig.value = c as AppConfig }).catch(() => {})
+
+const enabledEditors = computed(() =>
+  (appConfig.value?.editors || []).filter(e => e.enabled)
+)
+
+const publishTargets = computed(() => appConfig.value?.publish_targets || [])
+const hasMultipleTargets = computed(() => publishTargets.value.length > 1)
+
+function getActiveTargetId(): string | undefined {
+  if (!hasMultipleTargets.value) return undefined
+  return selectedTargetId.value || undefined
+}
+
+function selectTarget(id: string) {
+  selectedTargetId.value = id
+  localStorage.setItem('dispatch-target', id)
+}
 
 interface GitStatus {
   ok: boolean
@@ -95,7 +127,10 @@ async function fetchAvailableTags() {
   if (Object.keys(availableTags.value).length > 0) return // Already loaded
   loadingTags.value = true
   try {
-    const res = await fetch('https://ejfox.com/content-tags.json')
+    // Use config domain for fetching tags
+    const defaultTarget = (appConfig.value as any)?.publish_targets?.find((t: any) => t.is_default)
+    const domain = defaultTarget?.domain || 'https://ejfox.com'
+    const res = await fetch(`${domain}/content-tags.json`)
     availableTags.value = await res.json()
   } catch (e) {
     console.log('Could not fetch tags:', e)
@@ -190,6 +225,7 @@ watch(() => props.file, async (file) => {
   justPublished.value = null
   backlinks.value = []
   localMedia.value = []
+  postStats.value = null
   showMediaFixer.value = false
 
   // Set this file as the preview target (Node server for accurate rendering)
@@ -218,9 +254,10 @@ watch(() => props.file, async (file) => {
     renderedContent.value = ''
   }
 
-  // Fetch backlinks + local media in parallel
+  // Fetch backlinks + local media + analytics in parallel
   loadingBacklinks.value = true
   loadingLocalMedia.value = true
+  loadingStats.value = !!file.published_url
   await Promise.all([
     invoke('get_backlinks', { filename: file.filename })
       .then((res) => { backlinks.value = res as Backlink[] })
@@ -230,6 +267,12 @@ watch(() => props.file, async (file) => {
       .then((res) => { localMedia.value = res as LocalMediaRef[] })
       .catch((e) => { console.log('Local media detection unavailable:', e) })
       .finally(() => { loadingLocalMedia.value = false }),
+    ...(file.published_url ? [
+      invoke('get_post_analytics', { url: file.published_url, days: 30 })
+        .then((res) => { postStats.value = res as PostAnalytics })
+        .catch(() => { postStats.value = null })
+        .finally(() => { loadingStats.value = false }),
+    ] : []),
   ])
 
   // Analyze content for tag suggestions
@@ -277,9 +320,12 @@ const titleIsDerived = computed(() => !props.file.title)
 
 const slug = computed(() => props.file.filename.replace('.md', ''))
 
-const targetUrl = computed(() =>
-  `ejfox.com/blog/${new Date().getFullYear()}/${slug.value}`
-)
+const targetUrl = computed(() => {
+  const targets = publishTargets.value
+  const target = targets.find(t => t.id === selectedTargetId.value) || targets.find(t => t.is_default) || targets[0]
+  const domain = target ? (appConfig.value as any)?.publish_targets?.find((t: any) => t.id === target.id)?.domain?.replace(/^https?:\/\//, '') || 'ejfox.com' : 'ejfox.com'
+  return `${domain}/blog/${new Date().getFullYear()}/${slug.value}`
+})
 
 const isLive = computed(() => !!props.file.published_url || !!justPublished.value)
 const liveUrl = computed(() => props.file.published_url || justPublished.value)
@@ -344,7 +390,8 @@ async function publish(isRepublish = false) {
   try {
     const url = await invoke<string>('publish_file', {
       sourcePath: props.file.path,
-      slug: slug.value
+      slug: slug.value,
+      targetId: getActiveTargetId() || null,
     })
     justPublished.value = url
 
@@ -371,7 +418,7 @@ async function unpublish() {
   if (!confirm(confirmText)) return
   unpublishing.value = true
   try {
-    await invoke('unpublish_file', { slug: slug.value })
+    await invoke('unpublish_file', { slug: slug.value, targetId: getActiveTargetId() || null })
     successMessage.value = 'Unpublished — moved to drafts'
     showSuccess.value = true
     setTimeout(() => { showSuccess.value = false }, 3000)
@@ -381,6 +428,57 @@ async function unpublish() {
     alert(`Failed: ${e}`)
   }
   unpublishing.value = false
+}
+
+// Analytics
+interface PostAnalytics {
+  pageviews: number
+  visitors: number
+  visits: number
+  bounces: number
+  totaltime: number
+}
+const postStats = ref<PostAnalytics | null>(null)
+const loadingStats = ref(false)
+
+// Scheduling
+const showSchedulePicker = ref(false)
+const scheduleDate = ref('')
+
+const isScheduled = computed(() => !!props.file.publish_at && !isLive.value)
+
+function formatScheduledTime(isoStr: string): string {
+  try {
+    const d = new Date(isoStr)
+    return d.toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit'
+    })
+  } catch { return isoStr }
+}
+
+async function schedulePublish() {
+  if (!scheduleDate.value) return
+  const isoDate = new Date(scheduleDate.value).toISOString()
+  try {
+    await invoke('schedule_publish', { path: props.file.path, publishAt: isoDate })
+    showSchedulePicker.value = false
+    scheduleDate.value = ''
+    showCopyFeedback('Scheduled!')
+    emit('published')
+  } catch (e) {
+    alert(`Schedule failed: ${e}`)
+  }
+}
+
+async function cancelSchedule() {
+  try {
+    await invoke('cancel_schedule', { path: props.file.path })
+    showCopyFeedback('Schedule cancelled')
+    emit('published')
+  } catch (e) {
+    alert(`Cancel failed: ${e}`)
+  }
 }
 
 function copyUrl() {
@@ -404,12 +502,11 @@ function showCopyFeedback(msg: string) {
 }
 
 async function openInObsidian() {
-  // Pass full path to backend which knows the vault path
   await invoke('open_in_obsidian', { path: props.file.path })
 }
 
-async function openInIAWriter() {
-  await invoke('open_in_app', { path: props.file.path, app: 'iA Writer' })
+async function openInEditor(appName: string) {
+  await invoke('open_in_app', { path: props.file.path, app: appName })
 }
 
 async function openPreview() {
@@ -455,6 +552,11 @@ async function openPreview() {
       <span class="banner-text">✓ LIVE</span>
       <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
       <button @click="copyUrl">Copy</button>
+    </div>
+    <div v-else-if="isScheduled" class="banner scheduled">
+      <span class="banner-text">⏱ SCHEDULED</span>
+      <span>{{ formatScheduledTime(file.publish_at!) }}</span>
+      <button @click="cancelSchedule">Cancel</button>
     </div>
     <div v-else-if="!file.is_safe" class="banner warn">
       {{ file.warnings.join(' · ') }}
@@ -529,6 +631,17 @@ async function openPreview() {
           </span>
           <span v-else class="git-warning" :title="gitStatus.error || ''">
             {{ gitStatus.error }}
+          </span>
+        </div>
+        <div v-if="postStats || loadingStats" class="row">
+          <span class="label">Analytics</span>
+          <span v-if="loadingStats" class="muted">loading...</span>
+          <span v-else-if="postStats" class="analytics-inline">
+            {{ postStats.pageviews }} views &middot;
+            {{ postStats.visitors }} visitors
+            <template v-if="postStats.totaltime > 0">
+              &middot; {{ Math.round(postStats.totaltime / Math.max(postStats.visits, 1)) }}s avg
+            </template>
           </span>
         </div>
         <div class="row">
@@ -634,17 +747,30 @@ async function openPreview() {
     <!-- Toolbar -->
     <div class="toolbar">
       <div class="toolbar-open">
-        <button @click="openInObsidian" class="tool-btn" title="Open in Obsidian">
-          <span class="tool-icon">Ob</span> Obsidian
-        </button>
-        <button @click="openInIAWriter" class="tool-btn" title="Open in iA Writer">
-          <span class="tool-icon">iA</span> iA Writer
+        <button
+          v-for="editor in enabledEditors"
+          :key="editor.app_name"
+          @click="editor.app_name === 'Obsidian' ? openInObsidian() : openInEditor(editor.app_name)"
+          class="tool-btn"
+          :title="`Open in ${editor.name}`"
+        >
+          <span class="tool-icon">{{ editor.name.slice(0, 2) }}</span> {{ editor.name }}
         </button>
         <button @click="openPreview" class="tool-btn" title="Live Preview">
           <span class="tool-icon">&#9654;</span> Preview
         </button>
       </div>
       <div class="toolbar-actions">
+        <select
+          v-if="hasMultipleTargets"
+          class="target-select"
+          :value="selectedTargetId || publishTargets.find(t => t.is_default)?.id"
+          @change="selectTarget(($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="t in publishTargets" :key="t.id" :value="t.id">
+            {{ t.name }}
+          </option>
+        </select>
         <template v-if="isLive">
           <a :href="liveUrl!" target="_blank" class="btn">View &rarr;</a>
           <button @click="unpublish" :disabled="unpublishing" class="btn">
@@ -656,10 +782,17 @@ async function openPreview() {
         </template>
         <template v-else>
           <button
+            v-if="file.is_safe && !isScheduled"
+            @click="showSchedulePicker = !showSchedulePicker"
+            class="btn"
+          >
+            ⏱ Schedule
+          </button>
+          <button
             @click="openPublishConfirm(false)"
             :disabled="!file.is_safe || publishing"
-            class="btn accent full publish-btn"
-            :class="{ disabled: !file.is_safe }"
+            class="btn accent publish-btn"
+            :class="{ disabled: !file.is_safe, full: !file.is_safe || isScheduled }"
           >
             <span>{{ publishing ? 'Publishing...' : file.is_safe ? 'Publish' : 'Fix issues to publish' }}</span>
             <kbd v-if="file.is_safe && !publishing" class="shortcut-hint">
@@ -668,6 +801,20 @@ async function openPreview() {
           </button>
         </template>
       </div>
+    </div>
+
+    <!-- Schedule Picker -->
+    <div v-if="showSchedulePicker" class="schedule-picker">
+      <input
+        type="datetime-local"
+        v-model="scheduleDate"
+        class="schedule-input"
+        :min="new Date().toISOString().slice(0, 16)"
+      />
+      <button @click="schedulePublish" :disabled="!scheduleDate" class="btn accent">
+        Confirm Schedule
+      </button>
+      <button @click="showSchedulePicker = false" class="btn">Cancel</button>
     </div>
 
     <!-- Publish Confirmation -->
@@ -802,6 +949,57 @@ async function openPreview() {
   border-radius: 3px;
   font-size: 10px;
   cursor: pointer;
+}
+
+.banner.scheduled {
+  background: rgba(255, 159, 10, 0.15);
+  color: var(--warning);
+}
+
+.banner.scheduled button {
+  background: rgba(255, 159, 10, 0.2);
+  border: none;
+  color: var(--warning);
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.banner.scheduled button:hover {
+  background: rgba(255, 159, 10, 0.35);
+}
+
+.analytics-inline {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  color: var(--text-secondary);
+}
+
+.schedule-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+.schedule-input {
+  font-size: 12px;
+  font-family: 'SF Mono', monospace;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--text-primary);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  .schedule-input {
+    color-scheme: light;
+  }
 }
 
 .banner.warn {
@@ -1558,6 +1756,18 @@ async function openPreview() {
 .toolbar-actions {
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+
+.target-select {
+  padding: 4px 8px;
+  font-size: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: 'SF Mono', monospace;
 }
 
 .btn {

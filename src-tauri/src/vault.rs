@@ -1,4 +1,4 @@
-use crate::{Config, MarkdownFile};
+use crate::{config, Config, MarkdownFile};
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
@@ -11,12 +11,12 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
     let mut files: Vec<MarkdownFile> = Vec::new();
 
     // Only scan publishable folders: blog/ and drafts/
-    let publishable_dirs = vec!["blog", "drafts"];
+    let publishable_dirs = ["blog", "drafts"];
 
     for entry in WalkDir::new(&config.vault_path)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
     {
         let path = entry.path();
         let path_str = path.to_string_lossy();
@@ -55,10 +55,12 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
             let (frontmatter, body) = parse_frontmatter(&content);
 
             // Prefer frontmatter dates over filesystem dates
-            let modified = frontmatter.get("modified")
+            let modified = frontmatter
+                .get("modified")
                 .and_then(|d| parse_iso_date(d))
                 .unwrap_or(fs_modified);
-            let created = frontmatter.get("date")
+            let created = frontmatter
+                .get("date")
                 .and_then(|d| parse_iso_date(d))
                 .unwrap_or(fs_created);
             let title = extract_h1_title(&body);
@@ -69,7 +71,8 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .to_string();
             let slug = filename.trim_end_matches(".md");
 
-            let (published_url, published_date, published_content) = find_published_info(&config.website_repo, slug);
+            let (published_url, published_date, published_content) =
+                find_published_info(&config.website_repo, slug);
             let source_dir = path
                 .parent()
                 .and_then(|p| p.strip_prefix(&config.vault_path).ok())
@@ -92,6 +95,7 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .unwrap_or(false);
             let password = frontmatter.get("password").cloned();
             let dek = frontmatter.get("dek").cloned();
+            let publish_at = frontmatter.get("publish_at").cloned();
 
             files.push(MarkdownFile {
                 path: path.to_string_lossy().to_string(),
@@ -110,6 +114,7 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 source_dir,
                 unlisted,
                 password,
+                publish_at,
             });
         }
     }
@@ -148,9 +153,18 @@ fn parse_iso_date(date_str: &str) -> Option<u64> {
     None
 }
 
-fn find_published_info(website_repo: &str, slug: &str) -> (Option<String>, Option<u64>, Option<String>) {
-    // Posts are in content/blog/{year}/
-    let blog_path = format!("{}/content/blog", website_repo);
+fn find_published_info(
+    website_repo: &str,
+    slug: &str,
+) -> (Option<String>, Option<u64>, Option<String>) {
+    let target = config::default_target();
+    // Derive blog content base from content_path_pattern (e.g. "content/blog/{year}" -> "content/blog")
+    let content_base = target
+        .content_path_pattern
+        .split("/{year}")
+        .next()
+        .unwrap_or("content/blog");
+    let blog_path = format!("{}/{}", website_repo, content_base);
 
     if let Ok(entries) = fs::read_dir(&blog_path) {
         for entry in entries.flatten() {
@@ -163,7 +177,7 @@ fn find_published_info(website_repo: &str, slug: &str) -> (Option<String>, Optio
                 let file_path = format!("{}/{}/{}.md", blog_path, dir_name, slug);
                 let path = Path::new(&file_path);
                 if path.exists() {
-                    let url = format!("https://ejfox.com/blog/{}/{}", dir_name, slug);
+                    let url = format!("{}/blog/{}/{}", target.domain, dir_name, slug);
                     let date = fs::metadata(path)
                         .and_then(|m| m.modified())
                         .map(|t| get_timestamp(Ok(t)))
@@ -179,9 +193,9 @@ fn find_published_info(website_repo: &str, slug: &str) -> (Option<String>, Optio
 
 fn normalize_content(content: &str) -> String {
     // Extract body after frontmatter and normalize whitespace
-    let body = if content.starts_with("---") {
-        if let Some(end) = content[3..].find("---") {
-            content[end + 6..].to_string()
+    let body = if let Some(after_start) = content.strip_prefix("---") {
+        if let Some(end) = after_start.find("---") {
+            after_start[end + 3..].to_string()
         } else {
             content.to_string()
         }
@@ -210,10 +224,10 @@ fn parse_frontmatter(content: &str) -> (HashMap<String, String>, String) {
     let mut frontmatter = HashMap::new();
     let mut body = content.to_string();
 
-    if content.starts_with("---") {
-        if let Some(end) = content[3..].find("---") {
-            let yaml = &content[3..end + 3];
-            body = content[end + 6..].to_string();
+    if let Some(after_start) = content.strip_prefix("---") {
+        if let Some(end) = after_start.find("---") {
+            let yaml = &after_start[..end];
+            body = after_start[end + 3..].to_string();
 
             for line in yaml.lines() {
                 if let Some((key, value)) = line.split_once(':') {
@@ -238,10 +252,12 @@ fn extract_h1_title(body: &str) -> Option<String> {
         })
         .map(|line| {
             let trimmed = line.trim();
-            if trimmed.starts_with("## ") {
-                trimmed[3..].trim().to_string()
+            if let Some(stripped) = trimmed.strip_prefix("## ") {
+                stripped.trim().to_string()
+            } else if let Some(stripped) = trimmed.strip_prefix("# ") {
+                stripped.trim().to_string()
             } else {
-                trimmed[2..].trim().to_string()
+                trimmed.to_string()
             }
         })
 }
@@ -329,7 +345,76 @@ pub fn add_tag_to_file(path: &str, tag: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn check_warnings(body: &str, frontmatter: &HashMap<String, String>, _has_title: bool) -> Vec<String> {
+pub fn set_frontmatter_field(path: &str, key: &str, value: &str) -> Result<(), String> {
+    let content = fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
+
+    if !content.starts_with("---") {
+        // No frontmatter - add it with the field
+        let new_content = format!("---\n{}: {}\n---\n{}", key, value, content);
+        fs::write(path, new_content).map_err(|e| format!("Failed to write file: {}", e))?;
+        return Ok(());
+    }
+
+    let end_pos = content[3..]
+        .find("---")
+        .ok_or("Invalid frontmatter: no closing ---")?;
+    let fm_content = &content[3..end_pos + 3];
+    let body = &content[end_pos + 6..];
+
+    let mut lines: Vec<String> = fm_content
+        .lines()
+        .map(|l| l.to_string())
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+
+    let mut found = false;
+    for line in lines.iter_mut() {
+        if line.starts_with(&format!("{}:", key)) {
+            *line = format!("{}: {}", key, value);
+            found = true;
+            break;
+        }
+    }
+
+    if !found {
+        lines.push(format!("{}: {}", key, value));
+    }
+
+    let new_content = format!("---\n{}\n---{}", lines.join("\n"), body);
+    fs::write(path, new_content).map_err(|e| format!("Failed to write file: {}", e))?;
+    Ok(())
+}
+
+pub fn remove_frontmatter_field(path: &str, key: &str) -> Result<(), String> {
+    let content = fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
+
+    if !content.starts_with("---") {
+        return Ok(()); // No frontmatter, nothing to remove
+    }
+
+    let end_pos = content[3..]
+        .find("---")
+        .ok_or("Invalid frontmatter: no closing ---")?;
+    let fm_content = &content[3..end_pos + 3];
+    let body = &content[end_pos + 6..];
+
+    let lines: Vec<String> = fm_content
+        .lines()
+        .map(|l| l.to_string())
+        .filter(|l| !l.trim().is_empty())
+        .filter(|l| !l.starts_with(&format!("{}:", key)))
+        .collect();
+
+    let new_content = format!("---\n{}\n---{}", lines.join("\n"), body);
+    fs::write(path, new_content).map_err(|e| format!("Failed to write file: {}", e))?;
+    Ok(())
+}
+
+fn check_warnings(
+    body: &str,
+    frontmatter: &HashMap<String, String>,
+    _has_title: bool,
+) -> Vec<String> {
     let mut warnings = Vec::new();
 
     // Title is now optional - website will derive from filename if missing
@@ -346,11 +431,11 @@ fn check_warnings(body: &str, frontmatter: &HashMap<String, String>, _has_title:
 
     // Check for broken/empty links
     let broken_link_patterns = [
-        "]()",           // Empty link
-        "](#)",          // Empty anchor
-        "](http)",       // Incomplete http
-        "[[]]",          // Empty wikilink
-        "![](",          // Image with no alt text (not critical but worth noting)
+        "]()",     // Empty link
+        "](#)",    // Empty anchor
+        "](http)", // Incomplete http
+        "[[]]",    // Empty wikilink
+        "![](",    // Image with no alt text (not critical but worth noting)
     ];
     for pattern in broken_link_patterns {
         if body.contains(pattern) {
@@ -361,17 +446,17 @@ fn check_warnings(body: &str, frontmatter: &HashMap<String, String>, _has_title:
 
     // Check for potentially broken image embeds
     let broken_image_patterns = [
-        "![]()",                    // Empty image
-        "src=\"\"",                 // Empty src in HTML
-        "src=''",                   // Empty src single quotes
-        ".png)",                    // Might be local
-        ".jpg)",                    // Might be local
-        ".jpeg)",                   // Might be local
-        ".gif)",                    // Might be local
-        "](attachments/",           // Obsidian attachments folder
-        "](Attachments/",           // Obsidian attachments (capitalized)
-        "](assets/",                // Common local assets folder
-        "](images/",                // Common local images folder
+        "![]()",          // Empty image
+        "src=\"\"",       // Empty src in HTML
+        "src=''",         // Empty src single quotes
+        ".png)",          // Might be local
+        ".jpg)",          // Might be local
+        ".jpeg)",         // Might be local
+        ".gif)",          // Might be local
+        "](attachments/", // Obsidian attachments folder
+        "](Attachments/", // Obsidian attachments (capitalized)
+        "](assets/",      // Common local assets folder
+        "](images/",      // Common local images folder
     ];
 
     let mut has_local_media = false;
@@ -390,17 +475,20 @@ fn check_warnings(body: &str, frontmatter: &HashMap<String, String>, _has_title:
     }
 
     // Check for broken HTML embeds
-    if body.contains("<img") && !body.contains("cloudinary") && !body.contains("https://") {
-        if !warnings.contains(&"Local media".to_string()) {
-            warnings.push("Local media".into());
-        }
+    if body.contains("<img")
+        && !body.contains("cloudinary")
+        && !body.contains("https://")
+        && !warnings.contains(&"Local media".to_string())
+    {
+        warnings.push("Local media".into());
     }
 
     // Check for video embeds that might be broken
-    if body.contains("<video") || body.contains(".mp4)") || body.contains(".webm)") {
-        if !body.contains("cloudinary") && !body.contains("https://") {
-            warnings.push("Local video".into());
-        }
+    if (body.contains("<video") || body.contains(".mp4)") || body.contains(".webm)"))
+        && !body.contains("cloudinary")
+        && !body.contains("https://")
+    {
+        warnings.push("Local video".into());
     }
 
     // Check for long link text (over 4 words)
@@ -433,27 +521,135 @@ mod tests {
     #[test]
     fn test_add_tag_to_file() {
         let test_file = "/tmp/test-tag.md";
-        
+
         // Create test file with frontmatter
         std::fs::write(test_file, "---\ndate: 2026-01-31\n---\n\n# Test\n").unwrap();
-        
+
         // Add a tag
         add_tag_to_file(test_file, "politics").unwrap();
-        
+
         let content = std::fs::read_to_string(test_file).unwrap();
-        assert!(content.contains("tags: [politics]"), "Should have tags: {}", content);
-        
+        assert!(
+            content.contains("tags: [politics]"),
+            "Should have tags: {}",
+            content
+        );
+
         // Add another tag
         add_tag_to_file(test_file, "coding").unwrap();
-        
+
         let content = std::fs::read_to_string(test_file).unwrap();
-        assert!(content.contains("politics") && content.contains("coding"), "Should have both tags: {}", content);
-        
+        assert!(
+            content.contains("politics") && content.contains("coding"),
+            "Should have both tags: {}",
+            content
+        );
+
         // Try adding duplicate (should not duplicate)
         add_tag_to_file(test_file, "politics").unwrap();
-        
+
         let content = std::fs::read_to_string(test_file).unwrap();
         let count = content.matches("politics").count();
         assert_eq!(count, 1, "Should not duplicate: {}", content);
+    }
+
+    #[test]
+    fn test_set_frontmatter_field() {
+        let test_file = "/tmp/test-set-field.md";
+
+        // Test adding field to existing frontmatter
+        std::fs::write(test_file, "---\ndate: 2026-01-31\n---\n\n# Test\n").unwrap();
+        set_frontmatter_field(test_file, "publish_at", "2026-03-01T09:00:00Z").unwrap();
+        let content = std::fs::read_to_string(test_file).unwrap();
+        assert!(
+            content.contains("publish_at: 2026-03-01T09:00:00Z"),
+            "Should have publish_at: {}",
+            content
+        );
+        assert!(
+            content.contains("date: 2026-01-31"),
+            "Should preserve existing fields: {}",
+            content
+        );
+
+        // Test overwriting existing field
+        set_frontmatter_field(test_file, "publish_at", "2026-04-01T12:00:00Z").unwrap();
+        let content = std::fs::read_to_string(test_file).unwrap();
+        assert!(
+            content.contains("publish_at: 2026-04-01T12:00:00Z"),
+            "Should overwrite: {}",
+            content
+        );
+        assert_eq!(
+            content.matches("publish_at").count(),
+            1,
+            "Should only have one publish_at: {}",
+            content
+        );
+
+        // Test adding field when no frontmatter exists
+        std::fs::write(test_file, "# Just a heading\n\nSome text.").unwrap();
+        set_frontmatter_field(test_file, "publish_at", "2026-05-01T00:00:00Z").unwrap();
+        let content = std::fs::read_to_string(test_file).unwrap();
+        assert!(
+            content.starts_with("---\npublish_at: 2026-05-01T00:00:00Z\n---\n"),
+            "Should create frontmatter: {}",
+            content
+        );
+        assert!(
+            content.contains("# Just a heading"),
+            "Should preserve body: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_remove_frontmatter_field() {
+        let test_file = "/tmp/test-remove-field.md";
+
+        // Test removing a field
+        std::fs::write(
+            test_file,
+            "---\ndate: 2026-01-31\npublish_at: 2026-03-01T09:00:00Z\ntags: [test]\n---\n\n# Test\n",
+        )
+        .unwrap();
+        remove_frontmatter_field(test_file, "publish_at").unwrap();
+        let content = std::fs::read_to_string(test_file).unwrap();
+        assert!(
+            !content.contains("publish_at"),
+            "Should remove publish_at: {}",
+            content
+        );
+        assert!(
+            content.contains("date: 2026-01-31"),
+            "Should preserve date: {}",
+            content
+        );
+        assert!(
+            content.contains("tags: [test]"),
+            "Should preserve tags: {}",
+            content
+        );
+
+        // Test removing non-existent field (should be no-op)
+        let before = std::fs::read_to_string(test_file).unwrap();
+        remove_frontmatter_field(test_file, "nonexistent").unwrap();
+        let after = std::fs::read_to_string(test_file).unwrap();
+        assert_eq!(before, after, "Removing non-existent field should be no-op");
+
+        // Test on file without frontmatter (should be no-op)
+        std::fs::write(test_file, "# No frontmatter\n").unwrap();
+        remove_frontmatter_field(test_file, "anything").unwrap();
+        let content = std::fs::read_to_string(test_file).unwrap();
+        assert_eq!(content, "# No frontmatter\n", "Should be unchanged");
+    }
+
+    #[test]
+    fn test_parse_frontmatter_with_publish_at() {
+        let content = "---\ndate: 2026-01-31\npublish_at: 2026-03-01T09:00:00Z\n---\n\n# Test\n";
+        let (fm, body) = parse_frontmatter(content);
+        assert_eq!(fm.get("publish_at").unwrap(), "2026-03-01T09:00:00Z");
+        assert_eq!(fm.get("date").unwrap(), "2026-01-31");
+        assert!(body.contains("# Test"));
     }
 }

@@ -18,6 +18,7 @@ interface MarkdownFile {
   source_dir: string
   unlisted: boolean
   password: string | null
+  publish_at: string | null
 }
 
 const props = defineProps<{
@@ -29,7 +30,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ select: [file: MarkdownFile] }>()
 
-const filter = ref<'all' | 'published' | 'drafts'>('all')
+const filter = ref<'all' | 'published' | 'drafts' | 'scheduled'>('all')
 const sort = ref<'recent' | 'created' | 'title' | 'words'>('recent')
 
 const filteredFiles = computed(() => {
@@ -40,6 +41,8 @@ const filteredFiles = computed(() => {
     result = result.filter(f => f.published_url)
   } else if (filter.value === 'drafts') {
     result = result.filter(f => !f.published_url)
+  } else if (filter.value === 'scheduled') {
+    result = result.filter(f => f.publish_at && !f.published_url)
   }
 
   // Sort
@@ -67,7 +70,8 @@ const filteredFiles = computed(() => {
 const counts = computed(() => ({
   all: props.files.length,
   published: props.files.filter(f => f.published_url).length,
-  drafts: props.files.filter(f => !f.published_url).length
+  drafts: props.files.filter(f => !f.published_url).length,
+  scheduled: props.files.filter(f => f.publish_at && !f.published_url).length
 }))
 
 // Group files by time period (only for 'recent' sort)
@@ -167,6 +171,11 @@ function getAgeColor(ts: number): string {
         :class="{ active: filter === 'drafts' }"
         @click="filter = 'drafts'"
       >Unpublished ({{ counts.drafts }})</button>
+      <button
+        v-if="counts.scheduled > 0"
+        :class="{ active: filter === 'scheduled' }"
+        @click="filter = 'scheduled'"
+      >Scheduled ({{ counts.scheduled }})</button>
     </div>
 
     <div class="sort-row">
@@ -205,6 +214,7 @@ function getAgeColor(ts: number): string {
               <span v-else-if="file.published_url && file.password" class="protected-badge">🔒 PROTECTED</span>
               <span v-else-if="file.published_url && file.unlisted" class="unlisted-badge">👁 UNLISTED</span>
               <span v-else-if="file.published_url" class="live-badge">✓ LIVE</span>
+              <span v-else-if="file.publish_at" class="scheduled-badge">⏱ SCHEDULED</span>
             </div>
             <div v-if="file.dek" class="dek">{{ file.dek }}</div>
             <div class="meta">
@@ -562,10 +572,20 @@ function getAgeColor(ts: number): string {
   color: #8b5cf6;
 }
 
+.scheduled-badge {
+  font-size: 8px;
+  font-weight: 500;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: rgba(255, 159, 10, 0.2);
+  color: var(--warning);
+}
+
 .item.selected .live-badge,
 .item.selected .modified-badge,
 .item.selected .unlisted-badge,
-.item.selected .protected-badge {
+.item.selected .protected-badge,
+.item.selected .scheduled-badge {
   background: #fff;
   color: #333;
 }
