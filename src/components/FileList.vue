@@ -210,14 +210,14 @@ function getAgeColor(ts: number): string {
           <div class="content">
             <div class="row">
               <span v-if="file.content_type === 'weeknote'" class="weeknote-badge">WEEK</span>
-              <span v-if="file.password && !file.published_url" class="protected-badge-draft" title="Will be password-protected">🔒</span>
-              <span v-else-if="file.unlisted && !file.published_url" class="unlisted-badge-draft" title="Will be unlisted">👁</span>
+              <span v-if="file.password && !file.published_url" class="protected-badge-draft" title="Will be password-protected"><svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1C5.79 1 4 2.79 4 5v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5c0-2.21-1.79-4-4-4zm2 6H6V5c0-1.1.9-2 2-2s2 .9 2 2v2z"/></svg></span>
+              <span v-else-if="file.unlisted && !file.published_url" class="unlisted-badge-draft" title="Will be unlisted"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
               <span class="title" :title="formatTitle(file)">{{ formatTitle(file) }}</span>
               <span v-if="file.published_url && file.warnings.includes('Modified since publish')" class="modified-badge">MODIFIED</span>
-              <span v-else-if="file.published_url && file.password" class="protected-badge">🔒 PROTECTED</span>
-              <span v-else-if="file.published_url && file.unlisted" class="unlisted-badge">👁 UNLISTED</span>
+              <span v-else-if="file.published_url && file.password" class="protected-badge"><svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1C5.79 1 4 2.79 4 5v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5c0-2.21-1.79-4-4-4zm2 6H6V5c0-1.1.9-2 2-2s2 .9 2 2v2z"/></svg> PROTECTED</span>
+              <span v-else-if="file.published_url && file.unlisted" class="unlisted-badge"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> UNLISTED</span>
               <span v-else-if="file.published_url" class="live-badge">✓ LIVE</span>
-              <span v-else-if="file.publish_at" class="scheduled-badge">⏱ SCHEDULED</span>
+              <span v-else-if="file.publish_at" class="scheduled-badge"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> SCHEDULED</span>
             </div>
             <div v-if="file.dek" class="dek">{{ file.dek }}</div>
             <div class="meta">

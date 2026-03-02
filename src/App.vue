@@ -495,8 +495,8 @@ onUnmounted(() => {
         <div class="help-section-title">Visibility Spectrum</div>
         <div class="visibility-spectrum">
           <div class="vis-row"><span class="vis-badge vis-public">✓ PUBLIC</span> <span class="vis-desc">Appears in listings, feeds, search</span></div>
-          <div class="vis-row"><span class="vis-badge vis-unlisted">👁 UNLISTED</span> <span class="vis-desc">Link only — add <code>unlisted: true</code></span></div>
-          <div class="vis-row"><span class="vis-badge vis-protected">🔒 PROTECTED</span> <span class="vis-desc">Link + password — add <code>password: xyz</code></span></div>
+          <div class="vis-row"><span class="vis-badge vis-unlisted">UNLISTED</span> <span class="vis-desc">Link only — add <code>unlisted: true</code></span></div>
+          <div class="vis-row"><span class="vis-badge vis-protected">PROTECTED</span> <span class="vis-desc">Link + password — add <code>password: xyz</code></span></div>
         </div>
         <div class="help-hint">Press <kbd>?</kbd> or <kbd>esc</kbd> to close</div>
       </div>
@@ -524,8 +524,8 @@ onUnmounted(() => {
             @click="selectResult(file)"
             @mouseenter="selectedIndex = i"
           >
-            <span v-if="file.password" class="result-badge protected">🔒</span>
-            <span v-else-if="file.unlisted" class="result-badge unlisted">👁</span>
+            <span v-if="file.password" class="result-badge protected"><svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1C5.79 1 4 2.79 4 5v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5c0-2.21-1.79-4-4-4zm2 6H6V5c0-1.1.9-2 2-2s2 .9 2 2v2z"/></svg></span>
+            <span v-else-if="file.unlisted" class="result-badge unlisted"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
             <span v-else-if="file.published_url" class="result-badge live">✓</span>
             <span class="result-title">{{ file.title || file.filename.replace('.md', '') }}</span>
             <span class="result-words">{{ file.word_count }}w</span>

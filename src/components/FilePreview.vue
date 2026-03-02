@@ -544,13 +544,13 @@ async function openPreview() {
       <button @click="publish(true)" :disabled="publishing">{{ publishing ? '...' : 'Republish' }}</button>
     </div>
     <div v-else-if="isLive && isPasswordProtected" class="banner protected">
-      <span class="banner-text">🔒 PROTECTED</span>
+      <span class="banner-text"><svg class="banner-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1C5.79 1 4 2.79 4 5v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5c0-2.21-1.79-4-4-4zm2 6H6V5c0-1.1.9-2 2-2s2 .9 2 2v2z"/></svg> PROTECTED</span>
       <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
       <button @click="copyUrlAndPassword" title="Copy URL + password to share">Copy + Pass</button>
       <button @click="copyUrl" title="Copy URL only">Copy URL</button>
     </div>
     <div v-else-if="isLive && isUnlisted" class="banner unlisted">
-      <span class="banner-text">👁 UNLISTED</span>
+      <span class="banner-text"><svg class="banner-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> UNLISTED</span>
       <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
       <button @click="copyUrl" title="Share this link — not indexed anywhere">Copy</button>
     </div>
@@ -560,7 +560,7 @@ async function openPreview() {
       <button @click="copyUrl">Copy</button>
     </div>
     <div v-else-if="isScheduled" class="banner scheduled">
-      <span class="banner-text">⏱ SCHEDULED</span>
+      <span class="banner-text"><svg class="banner-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> SCHEDULED</span>
       <span>{{ formatScheduledTime(file.publish_at!) }}</span>
       <button @click="cancelSchedule">Cancel</button>
     </div>
@@ -568,11 +568,11 @@ async function openPreview() {
       {{ file.warnings.join(' · ') }}
     </div>
     <div v-else-if="isPasswordProtected" class="banner ready protected-ready">
-      <span class="visibility-badge">🔒 PASSWORD</span>
+      <span class="visibility-badge"><svg class="vis-icon" width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1C5.79 1 4 2.79 4 5v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5c0-2.21-1.79-4-4-4zm2 6H6V5c0-1.1.9-2 2-2s2 .9 2 2v2z"/></svg> PASSWORD</span>
       <span class="visibility-hint">Link + password required to view</span>
     </div>
     <div v-else-if="isUnlisted" class="banner ready unlisted-ready">
-      <span class="visibility-badge">👁 UNLISTED</span>
+      <span class="visibility-badge"><svg class="vis-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> UNLISTED</span>
       <span class="visibility-hint">Link only — won't appear in listings or feeds</span>
     </div>
     <div v-else class="banner ready public-ready">
@@ -657,10 +657,10 @@ async function openPreview() {
         <div class="row">
           <span class="label">Visibility</span>
           <span v-if="isPasswordProtected" class="protected-text" :title="`Password: ${file.password}`">
-            🔒 Protected
+            <svg class="meta-icon" width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1C5.79 1 4 2.79 4 5v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5c0-2.21-1.79-4-4-4zm2 6H6V5c0-1.1.9-2 2-2s2 .9 2 2v2z"/></svg> Protected
           </span>
           <span v-else-if="isUnlisted" class="unlisted-text">
-            👁 Unlisted
+            <svg class="meta-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> Unlisted
           </span>
           <span v-else class="public-text">
             ✓ Public
@@ -700,9 +700,12 @@ async function openPreview() {
       </div>
       <div class="lint-receipt-divider"></div>
       <div class="lint-receipt-list">
-        <div v-for="warning in lintWarnings" :key="warning" class="lint-receipt-item" :class="{ privacy: warning.startsWith('🔒') }">
-          <span class="lint-receipt-bullet" :class="{ privacy: warning.startsWith('🔒') }">{{ warning.startsWith('🔒') ? '🔒' : '•' }}</span>
-          <span class="lint-receipt-text">{{ warning.startsWith('🔒') ? warning.slice(2).trim() : warning }}</span>
+        <div v-for="warning in lintWarnings" :key="warning" class="lint-receipt-item" :class="{ privacy: warning.startsWith('[privacy]') }">
+          <span class="lint-receipt-bullet" :class="{ privacy: warning.startsWith('[privacy]') }">
+            <svg v-if="warning.startsWith('[privacy]')" width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 1C5.79 1 4 2.79 4 5v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5c0-2.21-1.79-4-4-4zm2 6H6V5c0-1.1.9-2 2-2s2 .9 2 2v2z" fill="currentColor"/></svg>
+            <template v-else>&bull;</template>
+          </span>
+          <span class="lint-receipt-text">{{ warning.startsWith('[privacy]') ? warning.slice(9) : warning }}</span>
         </div>
       </div>
       <div class="lint-receipt-footer">Dispatch</div>
@@ -796,7 +799,7 @@ async function openPreview() {
             @click="showSchedulePicker = !showSchedulePicker"
             class="btn"
           >
-            ⏱ Schedule
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Schedule
           </button>
           <button
             @click="openPublishConfirm(false)"
@@ -844,7 +847,10 @@ async function openPreview() {
           </div>
 
           <div v-if="publishConfirmStep === 1" class="pub-modal-body">
-            <div class="pub-modal-icon">{{ publishConfirmRepublish ? '🔄' : '🚀' }}</div>
+            <div class="pub-modal-icon">
+              <svg v-if="publishConfirmRepublish" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6"/><path d="M2.5 11.5a10 10 0 0118.37-4M21.5 12.5a10 10 0 01-18.37 4"/></svg>
+              <svg v-else width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5m0 0l-5 5m5-5l5 5"/><path d="M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/></svg>
+            </div>
             <h2 class="pub-modal-title">{{ publishConfirmRepublish ? 'Republish' : 'Ready to publish?' }}</h2>
             <p class="pub-modal-subtitle">This will push to your live website.</p>
 
@@ -880,7 +886,9 @@ async function openPreview() {
           </div>
 
           <div v-else class="pub-modal-body">
-            <div class="pub-modal-icon">⌨️</div>
+            <div class="pub-modal-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M8 16h8"/></svg>
+            </div>
             <h2 class="pub-modal-title">Type slug to confirm</h2>
             <p class="pub-modal-subtitle">
               Type <code class="pub-slug-hint">{{ slug }}</code> to publish.
@@ -916,7 +924,7 @@ async function openPreview() {
               :disabled="publishConfirmText.trim() !== slug"
               @click="closePublishConfirm(); publish(publishConfirmRepublish)"
             >
-              {{ publishConfirmRepublish ? '🔄 Republish' : '🚀 Publish' }}
+              {{ publishConfirmRepublish ? 'Republish' : 'Publish' }}
             </button>
           </div>
         </div>
@@ -963,6 +971,12 @@ async function openPreview() {
   background: linear-gradient(180deg, color-mix(in srgb, var(--success) 8%, transparent) 0%, var(--bg-primary) 200px);
 }
 
+/* Inline icon alignment */
+.banner-icon, .vis-icon, .meta-icon {
+  vertical-align: -1px;
+  display: inline-block;
+}
+
 /* Banner */
 .banner {
   padding: 8px 16px;
@@ -971,6 +985,12 @@ async function openPreview() {
   align-items: center;
   gap: 12px;
   transition: all 0.2s ease;
+}
+
+.banner-text {
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .banner.live {
@@ -1467,8 +1487,15 @@ async function openPreview() {
 }
 
 .pub-modal-icon {
-  font-size: 32px;
   margin-bottom: 8px;
+  color: var(--success);
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .pub-modal-title {
