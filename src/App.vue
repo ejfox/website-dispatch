@@ -26,6 +26,7 @@ interface MarkdownFile {
   unlisted: boolean
   password: string | null
   publish_at: string | null
+  content_type: string
 }
 
 const files = ref<MarkdownFile[]>([])

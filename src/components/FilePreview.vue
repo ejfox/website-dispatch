@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed, onBeforeUnmount } from 'vue'
+import { ref, watch, computed, onBeforeUnmount, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { Command } from 'lucide-vue-next'
 import LocalMediaFixer from './LocalMediaFixer.vue'
@@ -35,6 +35,7 @@ interface MarkdownFile {
   unlisted: boolean
   password: string | null
   publish_at: string | null
+  content_type: string
 }
 
 interface Backlink {
@@ -222,6 +223,11 @@ async function addTag(tag: string) {
 fetchAvailableTags()
 
 watch(() => props.file, async (file) => {
+  if (!file) return
+
+  // Wait for next tick to ensure component is fully mounted before invoking Tauri
+  await nextTick()
+
   justPublished.value = null
   backlinks.value = []
   localMedia.value = []
@@ -601,6 +607,10 @@ async function openPreview() {
 
       <!-- Detail rows (collapsed by default) -->
       <div v-show="metadataExpanded" class="info-detail">
+        <div v-if="file.content_type === 'weeknote'" class="row">
+          <span class="label">Type</span>
+          <span class="weeknote-type">Week Note</span>
+        </div>
         <div class="row">
           <span class="label">Source</span>
           <code>{{ file.source_dir || '.' }}/{{ file.filename }}</code>
@@ -889,6 +899,8 @@ async function openPreview() {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   background: var(--bg-primary);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -1219,6 +1231,12 @@ async function openPreview() {
   width: 55px;
   color: var(--text-tertiary);
   flex-shrink: 0;
+}
+
+.weeknote-type {
+  color: #f59e0b;
+  font-weight: 600;
+  font-size: 10px;
 }
 
 /* Lint Receipt */

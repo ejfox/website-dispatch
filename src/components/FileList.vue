@@ -19,6 +19,7 @@ interface MarkdownFile {
   unlisted: boolean
   password: string | null
   publish_at: string | null
+  content_type: string
 }
 
 const props = defineProps<{
@@ -199,7 +200,8 @@ function getAgeColor(ts: number): string {
           class="item"
           :class="{
             selected: selected?.path === file.path,
-            published: !!file.published_url
+            published: !!file.published_url,
+            weeknote: file.content_type === 'weeknote'
           }"
           :style="{ '--age': getAgeColor(file.created) }"
           @click="emit('select', file)"
@@ -207,6 +209,7 @@ function getAgeColor(ts: number): string {
           <div class="age-bar"></div>
           <div class="content">
             <div class="row">
+              <span v-if="file.content_type === 'weeknote'" class="weeknote-badge">WEEK</span>
               <span v-if="file.password && !file.published_url" class="protected-badge-draft" title="Will be password-protected">🔒</span>
               <span v-else-if="file.unlisted && !file.published_url" class="unlisted-badge-draft" title="Will be unlisted">👁</span>
               <span class="title" :title="formatTitle(file)">{{ formatTitle(file) }}</span>
@@ -552,6 +555,27 @@ function getAgeColor(ts: number): string {
   padding: 1px 4px;
   border-radius: 2px;
   flex-shrink: 0;
+}
+
+.weeknote-badge {
+  font-size: 8px;
+  font-weight: 700;
+  background: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+  padding: 1px 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  letter-spacing: 0.5px;
+}
+
+.item.weeknote .age-bar {
+  background: #f59e0b !important;
+  opacity: 0.6;
+  display: block;
+}
+
+.item.weeknote.published .age-bar {
+  display: block;
 }
 
 .unlisted-badge-draft {

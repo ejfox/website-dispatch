@@ -75,6 +75,9 @@ pub struct MarkdownFile {
 
     // Scheduling
     pub publish_at: Option<String>, // ISO 8601 datetime for scheduled publishing
+
+    // Content type: "post" or "weeknote"
+    pub content_type: String,
 }
 
 // Configuration for where to find things on this computer
@@ -654,12 +657,12 @@ pub fn run() {
 
             // Start schedule checker background task
             let handle = app.handle().clone();
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 publish::run_schedule_checker(handle).await;
             });
 
             // Start companion web server
-            tokio::spawn(async {
+            tauri::async_runtime::spawn(async {
                 companion::start_server().await;
             });
 

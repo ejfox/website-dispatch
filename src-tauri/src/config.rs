@@ -56,14 +56,13 @@ impl Default for AppConfig {
                 ),
                 name: "ejfox".into(),
                 excluded_dirs: vec![
-                    "week-notes".into(),
                     "robot-notes".into(),
                     "private".into(),
                     "templates".into(),
                     "attachments".into(),
                     "drafts".into(),
                 ],
-                publishable_dirs: vec!["blog".into(), "drafts".into()],
+                publishable_dirs: vec!["blog".into(), "drafts".into(), "week-notes".into()],
             },
             publish_targets: vec![PublishTarget {
                 name: "Website".into(),

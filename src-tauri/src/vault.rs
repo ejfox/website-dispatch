@@ -10,8 +10,9 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
     let config = Config::default();
     let mut files: Vec<MarkdownFile> = Vec::new();
 
-    // Only scan publishable folders: blog/ and drafts/
-    let publishable_dirs = ["blog", "drafts"];
+    // Use publishable dirs from config
+    let app_config = config::get();
+    let publishable_dirs = app_config.vault.publishable_dirs.clone();
 
     for entry in WalkDir::new(&config.vault_path)
         .into_iter()
@@ -25,6 +26,13 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
         let in_publishable = publishable_dirs
             .iter()
             .any(|dir| path_str.contains(&format!("/{}/", dir)));
+
+        // Determine content type from path
+        let content_type = if path_str.contains("/week-notes/") {
+            "weeknote"
+        } else {
+            "post"
+        };
 
         if !in_publishable {
             continue;
@@ -44,6 +52,11 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
             continue;
         }
 
+        // Skip week-notes nested inside blog/ (stray copies) — week-notes/ is its own publishable dir
+        if path_str.contains("/blog/week-notes/") {
+            continue;
+        }
+
         if let Ok(metadata) = fs::metadata(path) {
             let fs_modified = get_timestamp(metadata.modified());
             let fs_created = metadata
@@ -55,6 +68,26 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
             let (frontmatter, body) = parse_frontmatter(&content);
 
             // Prefer frontmatter dates over filesystem dates
+            // For week notes, derive date from filename (e.g. "2025-37.md" = week 37 of 2025)
+            let filename_date = if content_type == "weeknote" {
+                parse_weeknote_filename(path)
+            } else {
+                None
+            };
+            // For week notes: skip old ones (>8 weeks by filename date)
+            if content_type == "weeknote" {
+                if let Some(fn_date) = filename_date {
+                    let eight_weeks_ago = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0)
+                        .saturating_sub(86400 * 56);
+                    if fn_date < eight_weeks_ago {
+                        continue;
+                    }
+                }
+            }
+
             let modified = frontmatter
                 .get("modified")
                 .and_then(|d| parse_iso_date(d))
@@ -62,6 +95,7 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
             let created = frontmatter
                 .get("date")
                 .and_then(|d| parse_iso_date(d))
+                .or(filename_date)
                 .unwrap_or(fs_created);
             let title = extract_h1_title(&body);
             let filename = path
@@ -115,6 +149,7 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 unlisted,
                 password,
                 publish_at,
+                content_type: content_type.into(),
             });
         }
     }
@@ -129,6 +164,24 @@ fn get_timestamp(time: std::io::Result<SystemTime>) -> u64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Parse a week note filename like "2025-37.md" or "2025-52-raw.md" into a timestamp
+fn parse_weeknote_filename(path: &Path) -> Option<u64> {
+    let stem = path.file_stem()?.to_str()?;
+    let mut parts = stem.split('-');
+    let year: i32 = parts.next()?.parse().ok()?;
+    let week_str = parts.next()?;
+    // Extract leading digits from week part (handles "52-raw" → "52")
+    let week_digits: String = week_str.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let week: u32 = week_digits.parse().ok()?;
+    if !(2000..=2100).contains(&year) || week == 0 || week > 53 {
+        return None;
+    }
+    use chrono::NaiveDate;
+    let date = NaiveDate::from_isoywd_opt(year, week, chrono::Weekday::Mon)?;
+    let dt = date.and_hms_opt(0, 0, 0)?;
+    Some(dt.and_utc().timestamp() as u64)
 }
 
 fn parse_iso_date(date_str: &str) -> Option<u64> {
@@ -229,13 +282,38 @@ fn parse_frontmatter(content: &str) -> (HashMap<String, String>, String) {
             let yaml = &after_start[..end];
             body = after_start[end + 3..].to_string();
 
-            for line in yaml.lines() {
+            let lines: Vec<&str> = yaml.lines().collect();
+            let mut i = 0;
+            while i < lines.len() {
+                let line = lines[i];
                 if let Some((key, value)) = line.split_once(':') {
-                    frontmatter.insert(
-                        key.trim().to_string(),
-                        value.trim().trim_matches('"').to_string(),
-                    );
+                    let key = key.trim().to_string();
+                    let value = value.trim().trim_matches('"').to_string();
+
+                    // Handle YAML block scalar indicators (>-, >, |-, |)
+                    if value == ">-" || value == ">" || value == "|-" || value == "|" {
+                        // Read indented continuation lines
+                        let mut block_lines = Vec::new();
+                        while i + 1 < lines.len() {
+                            let next = lines[i + 1];
+                            if next.starts_with(' ') || next.starts_with('\t') {
+                                block_lines.push(next.trim());
+                                i += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        let joined = if value.starts_with('>') {
+                            block_lines.join(" ") // folded: join with spaces
+                        } else {
+                            block_lines.join("\n") // literal: preserve newlines
+                        };
+                        frontmatter.insert(key, joined);
+                    } else {
+                        frontmatter.insert(key, value);
+                    }
                 }
+                i += 1;
             }
         }
     }
@@ -642,6 +720,18 @@ mod tests {
         remove_frontmatter_field(test_file, "anything").unwrap();
         let content = std::fs::read_to_string(test_file).unwrap();
         assert_eq!(content, "# No frontmatter\n", "Should be unchanged");
+    }
+
+    #[test]
+    fn test_parse_frontmatter_multiline_tags() {
+        let content = "---\ntags:\n  - weekly-notes\n  - reflections\n  - progress\ndate: 2026-03-01T16:00:00-05:00\nmodified: 2026-03-01T19:04:57-05:00\n---\n## Week 2026-W09\n";
+        let (fm, body) = parse_frontmatter(content);
+        assert_eq!(fm.get("date").unwrap(), "2026-03-01T16:00:00-05:00", "date should be parsed");
+        assert_eq!(fm.get("modified").unwrap(), "2026-03-01T19:04:57-05:00", "modified should be parsed");
+        assert!(body.contains("## Week 2026-W09"), "body should contain heading");
+        // Verify date actually parses to a timestamp
+        assert!(parse_iso_date("2026-03-01T16:00:00-05:00").is_some(), "date should parse to timestamp");
+        assert!(parse_iso_date("2026-03-01T19:04:57-05:00").is_some(), "modified should parse to timestamp");
     }
 
     #[test]
