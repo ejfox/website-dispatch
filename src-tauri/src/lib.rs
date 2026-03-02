@@ -312,6 +312,48 @@ fn validate_repo_path(path: String) -> bool {
     p.exists() && p.is_dir() && p.join(".git").exists()
 }
 
+// --- NEW POST CREATION ---
+
+#[tauri::command]
+fn create_new_post(title: String) -> Result<String, String> {
+    let app_config = config::get();
+    let vault_path = &app_config.vault.path;
+
+    // Generate slug from title
+    let slug: String = title
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == ' ' { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-");
+
+    // Use current year
+    let year = chrono::Utc::now().format("%Y").to_string();
+    let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    // Create blog/year directory if needed
+    let dir = format!("{}/blog/{}", vault_path, year);
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create directory: {}", e))?;
+
+    let file_path = format!("{}/{}.md", dir, slug);
+
+    // Don't overwrite existing files
+    if std::path::Path::new(&file_path).exists() {
+        return Err(format!("File already exists: {}", slug));
+    }
+
+    let content = format!(
+        "---\ndate: {}\n---\n\n# {}\n\n",
+        date, title
+    );
+
+    fs::write(&file_path, content).map_err(|e| format!("Failed to create file: {}", e))?;
+
+    Ok(file_path)
+}
+
 // --- COMPANION COMMANDS ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -745,6 +787,7 @@ pub fn run() {
             get_config_path,
             validate_vault_path,
             validate_repo_path,
+            create_new_post,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

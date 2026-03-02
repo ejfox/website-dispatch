@@ -113,7 +113,7 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
 
-            let mut warnings = check_warnings(&body, &frontmatter, title.is_some());
+            let mut warnings = check_warnings(&body, &frontmatter, title.is_some(), content_type);
 
             // Check if content actually differs from published version
             if let Some(ref pub_content) = published_content {
@@ -492,6 +492,7 @@ fn check_warnings(
     body: &str,
     frontmatter: &HashMap<String, String>,
     _has_title: bool,
+    content_type: &str,
 ) -> Vec<String> {
     let mut warnings = Vec::new();
 
@@ -505,6 +506,12 @@ fn check_warnings(
     }
     if body.contains("](./") || body.contains("](/attachments") {
         warnings.push("Local images".into());
+    }
+
+    // Privacy linter for weeknotes — flag PII before publishing
+    if content_type == "weeknote" {
+        let privacy_warnings = check_privacy(body);
+        warnings.extend(privacy_warnings);
     }
 
     // Check for broken/empty links
@@ -590,6 +597,58 @@ fn has_long_link_text(body: &str, max_words: usize) -> bool {
         }
     }
     false
+}
+
+/// Privacy linter for weeknotes — flags content that might be too personal for public publishing.
+/// Uses regex patterns to detect PII: phone numbers, emails, dollar amounts, SSNs,
+/// addresses, and references to specific people by name.
+fn check_privacy(body: &str) -> Vec<String> {
+    let mut warnings = Vec::new();
+
+    // Phone numbers (US formats: 555-123-4567, (555) 123-4567, +1 555 123 4567)
+    let phone_re = Regex::new(r"(?:\+1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}").unwrap();
+    if phone_re.is_match(body) {
+        warnings.push("🔒 Phone number detected".into());
+    }
+
+    // Email addresses
+    let email_re = Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").unwrap();
+    if email_re.is_match(body) {
+        warnings.push("🔒 Email address detected".into());
+    }
+
+    // Dollar amounts ($X,XXX or $XX,XXX+ — flag larger amounts as financial info)
+    let money_re = Regex::new(r"\$\d{1,3}(?:,\d{3})+(?:\.\d{2})?|\$\d{4,}(?:\.\d{2})?").unwrap();
+    if money_re.is_match(body) {
+        warnings.push("🔒 Financial amount detected".into());
+    }
+
+    // SSN patterns (XXX-XX-XXXX)
+    let ssn_re = Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap();
+    if ssn_re.is_match(body) {
+        warnings.push("🔒 Possible SSN detected".into());
+    }
+
+    // Street addresses (number + street name + type)
+    let addr_re = Regex::new(r"\b\d{1,5}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:St|Ave|Blvd|Dr|Rd|Ln|Ct|Way|Pl|Circle|Terrace|Court)\b").unwrap();
+    if addr_re.is_match(body) {
+        warnings.push("🔒 Street address detected".into());
+    }
+
+    // "Met with [Name]" / "talked to [Name]" / "called [Name]" patterns
+    // Catches "met with John Smith", "called Sarah", "lunch with Mike", etc.
+    let people_re = Regex::new(r"(?i)\b(?:met with|talked to|called|lunch with|dinner with|coffee with|meeting with|spoke with|visited|hanging out with|texted|emailed|DMed)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)").unwrap();
+    if people_re.is_match(body) {
+        warnings.push("🔒 Named person reference".into());
+    }
+
+    // Health/medical terms
+    let health_re = Regex::new(r"(?i)\b(?:diagnosis|prescribed|medication|therapist|therapy session|doctor(?:'s)? appointment|blood (?:test|pressure|work)|symptoms?|mg\s+(?:of|daily)|medical|hospital|surgery|prescription)\b").unwrap();
+    if health_re.is_match(body) {
+        warnings.push("🔒 Health/medical info".into());
+    }
+
+    warnings
 }
 
 #[cfg(test)]
@@ -732,6 +791,33 @@ mod tests {
         // Verify date actually parses to a timestamp
         assert!(parse_iso_date("2026-03-01T16:00:00-05:00").is_some(), "date should parse to timestamp");
         assert!(parse_iso_date("2026-03-01T19:04:57-05:00").is_some(), "modified should parse to timestamp");
+    }
+
+    #[test]
+    fn test_privacy_linter() {
+        // Phone number
+        let warnings = check_privacy("Called them at 555-123-4567 today");
+        assert!(warnings.iter().any(|w| w.contains("Phone")), "Should detect phone: {:?}", warnings);
+
+        // Email
+        let warnings = check_privacy("Emailed john@example.com about the project");
+        assert!(warnings.iter().any(|w| w.contains("Email")), "Should detect email: {:?}", warnings);
+
+        // Money
+        let warnings = check_privacy("Got paid $12,500 for the project");
+        assert!(warnings.iter().any(|w| w.contains("Financial")), "Should detect money: {:?}", warnings);
+
+        // Named person
+        let warnings = check_privacy("Met with Sarah Johnson for coffee");
+        assert!(warnings.iter().any(|w| w.contains("Named person")), "Should detect person: {:?}", warnings);
+
+        // Health
+        let warnings = check_privacy("Had my therapy session on Tuesday");
+        assert!(warnings.iter().any(|w| w.contains("Health")), "Should detect health: {:?}", warnings);
+
+        // Clean content
+        let warnings = check_privacy("This week I worked on the website redesign and wrote some code.");
+        assert!(warnings.is_empty(), "Should be clean: {:?}", warnings);
     }
 
     #[test]

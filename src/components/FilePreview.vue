@@ -700,9 +700,9 @@ async function openPreview() {
       </div>
       <div class="lint-receipt-divider"></div>
       <div class="lint-receipt-list">
-        <div v-for="warning in lintWarnings" :key="warning" class="lint-receipt-item">
-          <span class="lint-receipt-bullet">•</span>
-          <span class="lint-receipt-text">{{ warning }}</span>
+        <div v-for="warning in lintWarnings" :key="warning" class="lint-receipt-item" :class="{ privacy: warning.startsWith('🔒') }">
+          <span class="lint-receipt-bullet" :class="{ privacy: warning.startsWith('🔒') }">{{ warning.startsWith('🔒') ? '🔒' : '•' }}</span>
+          <span class="lint-receipt-text">{{ warning.startsWith('🔒') ? warning.slice(2).trim() : warning }}</span>
         </div>
       </div>
       <div class="lint-receipt-footer">Dispatch</div>
@@ -1293,6 +1293,23 @@ async function openPreview() {
 
 .lint-receipt-text {
   color: var(--text-primary);
+}
+
+.lint-receipt-item.privacy {
+  background: rgba(239, 68, 68, 0.1);
+  padding: 2px 6px;
+  border-radius: 3px;
+  border-left: 2px solid #ef4444;
+}
+
+.lint-receipt-bullet.privacy {
+  color: #ef4444;
+  font-size: 10px;
+}
+
+.lint-receipt-item.privacy .lint-receipt-text {
+  color: #ef4444;
+  font-weight: 500;
 }
 
 .lint-receipt-footer {

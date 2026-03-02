@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { FileText, Search, RefreshCw, Image, GitBranch, Circle, Zap, Settings } from 'lucide-vue-next'
+import { FileText, Search, RefreshCw, Image, GitBranch, Circle, Zap, Settings, Plus } from 'lucide-vue-next'
 import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
 import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
@@ -38,6 +38,12 @@ const searchOpen = ref(false)
 const searchQuery = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
 const selectedIndex = ref(0)
+
+// New Post state
+const newPostOpen = ref(false)
+const newPostTitle = ref('')
+const newPostInput = ref<HTMLInputElement | null>(null)
+const newPostCreating = ref(false)
 
 // Help & keyboard state
 const showHelp = ref(false)
@@ -117,6 +123,35 @@ function closeSearch() {
   searchQuery.value = ''
 }
 
+function openNewPost() {
+  newPostOpen.value = true
+  newPostTitle.value = ''
+  setTimeout(() => newPostInput.value?.focus(), 10)
+}
+
+function closeNewPost() {
+  newPostOpen.value = false
+  newPostTitle.value = ''
+}
+
+async function createNewPost() {
+  if (!newPostTitle.value.trim() || newPostCreating.value) return
+  newPostCreating.value = true
+  try {
+    const path: string = await invoke('create_new_post', { title: newPostTitle.value.trim() })
+    closeNewPost()
+    await loadFiles()
+    // Select the new file
+    const newFile = files.value.find(f => f.path === path)
+    if (newFile) selectedFile.value = newFile
+    // Open in default editor
+    const editor = appConfig.value?.default_editor || 'iA Writer'
+    invoke('open_in_app', { path, app: editor })
+  } catch (e) {
+    console.error('Failed to create post:', e)
+  }
+  newPostCreating.value = false
+}
 
 function copyToClipboard(text: string) {
   navigator.clipboard.writeText(text)
@@ -185,6 +220,12 @@ function handleGlobalKey(e: KeyboardEvent) {
 
   if (showSettings.value) {
     if (e.key === 'Escape') showSettings.value = false
+    return
+  }
+
+  // Don't handle when new post dialog is open
+  if (newPostOpen.value) {
+    if (e.key === 'Escape') closeNewPost()
     return
   }
 
@@ -293,6 +334,13 @@ function handleGlobalKey(e: KeyboardEvent) {
     navigator.clipboard.writeText(selectedFile.value.published_url)
   }
 
+  // n - new post
+  if (e.key === 'n' && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault()
+    openNewPost()
+    return
+  }
+
   // r - refresh
   if (e.key === 'r' && !e.metaKey && !e.ctrlKey) {
     loadFiles()
@@ -396,6 +444,9 @@ onUnmounted(() => {
         <span>{{ stats.weekPublished }} this week</span>
       </div>
       <div class="titlebar-btns">
+        <button @click="openNewPost" class="titlebar-btn" title="New Post (n)">
+          <Plus :size="14" />
+        </button>
         <button @click="rightTab = rightTab === 'media' ? 'preview' : 'media'" class="titlebar-btn" :class="{ active: rightTab === 'media' }" title="Media Library (m)">
           <Image :size="14" />
         </button>
@@ -433,6 +484,7 @@ onUnmounted(() => {
             <div class="help-row"><kbd>p</kbd> <span>preview</span></div>
             <div class="help-row"><kbd>v</kbd> <span>view on site</span></div>
             <div class="help-row"><kbd>c</kbd> <span>copy URL</span></div>
+            <div class="help-row"><kbd>n</kbd> <span>new post</span></div>
             <div class="help-row"><kbd>r</kbd> <span>refresh</span></div>
             <div class="help-row"><kbd>m</kbd> <span>media library</span></div>
             <div class="help-row"><kbd>⌘</kbd><kbd>↵</kbd> <span>publish</span></div>
@@ -488,6 +540,35 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+    </Transition>
+
+    <!-- New Post Modal -->
+    <Transition name="modal">
+      <div v-if="newPostOpen" class="search-overlay" @click.self="closeNewPost">
+        <div class="search-modal new-post-modal">
+          <div class="new-post-header">New Post</div>
+          <input
+            ref="newPostInput"
+            v-model="newPostTitle"
+            type="text"
+            placeholder="Post title..."
+            class="search-input"
+            @keydown.enter="createNewPost"
+            @keydown.escape="closeNewPost"
+          />
+          <div class="new-post-footer">
+            <span class="new-post-slug" v-if="newPostTitle.trim()">
+              blog/{{ new Date().getFullYear() }}/{{ newPostTitle.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-') }}.md
+            </span>
+            <div class="new-post-actions">
+              <button @click="closeNewPost" class="np-btn">Cancel</button>
+              <button @click="createNewPost" class="np-btn accent" :disabled="!newPostTitle.trim() || newPostCreating">
+                {{ newPostCreating ? 'Creating...' : 'Create & Open' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </Transition>
 
     <main class="main">
@@ -1274,6 +1355,73 @@ kbd {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
+}
+
+/* New Post Modal */
+.new-post-header {
+  padding: 12px 16px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.new-post-footer {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.new-post-slug {
+  font-size: 10px;
+  font-family: 'SF Mono', monospace;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 250px;
+}
+
+.new-post-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.np-btn {
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.np-btn:hover {
+  background: var(--accent);
+  color: var(--text-primary);
+}
+
+.np-btn.accent {
+  background: var(--selection-bg);
+  color: #fff;
+  border-color: transparent;
+}
+
+.np-btn.accent:hover {
+  filter: brightness(1.1);
+}
+
+.np-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 </style>

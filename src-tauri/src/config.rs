@@ -225,7 +225,6 @@ mod tests {
         assert_eq!(
             config.vault.excluded_dirs,
             vec![
-                "week-notes",
                 "robot-notes",
                 "private",
                 "templates",
