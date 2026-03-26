@@ -27,7 +27,14 @@
         "height": 600,
         "resizable": true,
         "visible": true,
-        "useHttpsScheme": true
+        "useHttpsScheme": true,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": {
+          "x": 12,
+          "y": 12
+        }
       }
     ],
     "trayIcon": {
