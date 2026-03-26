@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { PhLockSimple, PhEye, PhClock } from '@phosphor-icons/vue'
+import { PhLockSimple, PhEye, PhClock, PhCheckCircle, PhFolderOpen, PhPencilSimple, PhTextAa, PhCalendarBlank, PhTextAlignLeft, PhListNumbers, PhStack, PhBroadcast, PhFileText, PhClockCounterClockwise, PhNotebook } from '@phosphor-icons/vue'
 
 interface MarkdownFile {
   path: string
@@ -34,6 +34,7 @@ const emit = defineEmits<{ select: [file: MarkdownFile] }>()
 
 const filter = ref<'all' | 'published' | 'drafts' | 'scheduled'>('all')
 const sort = ref<'recent' | 'created' | 'title' | 'words'>('recent')
+const showWeeknotes = ref(true)
 
 const filteredFiles = computed(() => {
   let result = props.files
@@ -47,6 +48,11 @@ const filteredFiles = computed(() => {
     result = result.filter(f => f.publish_at && !f.published_url)
   }
 
+  // Hide weeknotes if toggled off
+  if (!showWeeknotes.value) {
+    result = result.filter(f => f.content_type !== 'weeknote')
+  }
+
   // Sort
   result = [...result].sort((a, b) => {
     switch (sort.value) {
@@ -56,7 +62,9 @@ const filteredFiles = computed(() => {
         const bRecent = b.published_date || b.modified
         return bRecent - aRecent
       case 'created':
-        return b.created - a.created
+        const aDate = a.date ? new Date(a.date).getTime() / 1000 : a.created
+        const bDate = b.date ? new Date(b.date).getTime() / 1000 : b.created
+        return bDate - aDate
       case 'title':
         return formatTitle(a).localeCompare(formatTitle(b))
       case 'words':
@@ -155,36 +163,35 @@ function getAgeColor(ts: number): string {
 
 <template>
   <aside class="sidebar" :class="{ compact }">
-    <div class="header">
-      {{ files.length }} files
-      <span class="live">{{ files.filter(f => f.published_url).length }} LIVE</span>
-    </div>
-
-    <div class="filters">
-      <button
-        :class="{ active: filter === 'all' }"
-        @click="filter = 'all'"
-      >All ({{ counts.all }})</button>
-      <button
-        :class="{ active: filter === 'published' }"
-        @click="filter = 'published'"
-      >Live ({{ counts.published }})</button>
-      <button
-        :class="{ active: filter === 'drafts' }"
-        @click="filter = 'drafts'"
-      >Unpublished ({{ counts.drafts }})</button>
-      <button
-        v-if="counts.scheduled > 0"
-        :class="{ active: filter === 'scheduled' }"
-        @click="filter = 'scheduled'"
-      >Scheduled ({{ counts.scheduled }})</button>
-    </div>
-
-    <div class="sort-row">
-      <button :class="{ active: sort === 'recent' }" @click="sort = 'recent'">Recent</button>
-      <button :class="{ active: sort === 'created' }" @click="sort = 'created'">Created</button>
-      <button :class="{ active: sort === 'title' }" @click="sort = 'title'">Title</button>
-      <button :class="{ active: sort === 'words' }" @click="sort = 'words'">Words</button>
+    <div class="control-bar" data-tauri-drag-region>
+      <div class="filters">
+        <button
+          :class="{ active: filter === 'all' }"
+          @click="filter = 'all'"
+        ><PhStack :size="9" weight="bold" /> {{ counts.all }}</button>
+        <button
+          :class="{ active: filter === 'published' }"
+          @click="filter = 'published'"
+        ><PhBroadcast :size="9" weight="bold" /> {{ counts.published }}</button>
+        <button
+          :class="{ active: filter === 'drafts' }"
+          @click="filter = 'drafts'"
+        ><PhFileText :size="9" weight="bold" /> {{ counts.drafts }}</button>
+        <button
+          v-if="counts.scheduled > 0"
+          :class="{ active: filter === 'scheduled' }"
+          @click="filter = 'scheduled'"
+        ><PhClock :size="9" weight="bold" /> {{ counts.scheduled }}</button>
+      </div>
+      <div class="sort-divider"></div>
+      <div class="sort-row">
+        <button :class="{ active: sort === 'recent' }" @click="sort = 'recent'" data-tip="Recent"><PhClockCounterClockwise :size="9" weight="bold" /></button>
+        <button :class="{ active: sort === 'created' }" @click="sort = 'created'" data-tip="Created"><PhCalendarBlank :size="9" weight="bold" /></button>
+        <button :class="{ active: sort === 'title' }" @click="sort = 'title'" data-tip="Title"><PhTextAlignLeft :size="9" weight="bold" /></button>
+        <button :class="{ active: sort === 'words' }" @click="sort = 'words'" data-tip="Words"><PhListNumbers :size="9" weight="bold" /></button>
+        <div class="sort-divider"></div>
+        <button :class="{ active: showWeeknotes }" class="weeknote-toggle" @click="showWeeknotes = !showWeeknotes" data-tip="Week Notes"><PhNotebook :size="9" weight="bold" /></button>
+      </div>
     </div>
 
     <div v-if="loading" class="loading">Loading...</div>
@@ -211,27 +218,28 @@ function getAgeColor(ts: number): string {
           <div class="content">
             <div class="row">
               <span v-if="file.content_type === 'weeknote'" class="weeknote-badge">WEEK</span>
-              <span v-if="file.password && !file.published_url" class="protected-badge-draft" title="Will be password-protected"><PhLockSimple :size="10" weight="fill" /></span>
-              <span v-else-if="file.unlisted && !file.published_url" class="unlisted-badge-draft" title="Will be unlisted"><PhEye :size="10" weight="fill" /></span>
+              <span v-if="file.password && !file.published_url" class="protected-badge-draft" data-tip="Will be password-protected"><PhLockSimple :size="10" weight="fill" /></span>
+              <span v-else-if="file.unlisted && !file.published_url" class="unlisted-badge-draft" data-tip="Will be unlisted"><PhEye :size="10" weight="fill" /></span>
               <span class="title" :title="formatTitle(file)">{{ formatTitle(file) }}</span>
               <span v-if="file.published_url && file.warnings.includes('Modified since publish')" class="modified-badge">MODIFIED</span>
               <span v-else-if="file.published_url && file.password" class="protected-badge"><PhLockSimple :size="9" weight="bold" /> PROTECTED</span>
               <span v-else-if="file.published_url && file.unlisted" class="unlisted-badge"><PhEye :size="9" weight="bold" /> UNLISTED</span>
-              <span v-else-if="file.published_url" class="live-badge">✓ LIVE</span>
+              <span v-else-if="file.published_url" class="live-badge"><PhCheckCircle :size="9" weight="fill" /> LIVE</span>
               <span v-else-if="file.publish_at" class="scheduled-badge"><PhClock :size="9" weight="bold" /> SCHEDULED</span>
             </div>
             <div v-if="file.dek" class="dek">{{ file.dek }}</div>
+            <div class="filename">{{ file.source_dir ? file.source_dir + '/' : '' }}{{ file.filename }}</div>
             <div class="meta">
-              <span v-if="file.source_dir" class="dir">{{ file.source_dir }}/</span>
+              <span v-if="file.source_dir" class="dir"><PhFolderOpen :size="8" weight="duotone" /> {{ file.source_dir }}/</span>
               <template v-if="file.published_date">
-                <span class="pub-date">published {{ formatAge(file.published_date) }}</span>
-                <span v-if="file.warnings.includes('Modified since publish')" class="edit-date">edited {{ formatAge(file.modified) }}</span>
+                <span class="pub-date"><PhBroadcast :size="8" weight="fill" /> {{ formatAge(file.published_date) }}</span>
+                <span v-if="file.warnings.includes('Modified since publish')" class="edit-date"><PhPencilSimple :size="8" weight="fill" /> {{ formatAge(file.modified) }}</span>
               </template>
               <template v-else>
-                <span class="create-date">created {{ formatAge(file.created) }}</span>
-                <span class="edit-date">edited {{ formatAge(file.modified) }}</span>
+                <span class="create-date"><PhCalendarBlank :size="8" weight="duotone" /> {{ formatAge(file.created) }}</span>
+                <span class="edit-date"><PhPencilSimple :size="8" weight="duotone" /> {{ formatAge(file.modified) }}</span>
               </template>
-              <span class="word-count">{{ formatWordCount(file.word_count) }}w</span>
+              <span class="word-count"><PhTextAa :size="8" weight="duotone" /> {{ formatWordCount(file.word_count) }}w</span>
             </div>
           </div>
         </button>
@@ -258,126 +266,107 @@ function getAgeColor(ts: number): string {
   flex-direction: column;
 }
 
-.header {
-  padding: 8px 12px;
-  font-size: 10px;
-  color: var(--text-tertiary);
+/* Unified control bar: filters + sort in one row */
+.control-bar {
+  display: flex;
+  align-items: flex-end;
   border-bottom: 1px solid var(--border);
-  display: flex;
-  justify-content: space-between;
-}
-
-.header .live {
-  color: var(--success);
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.header .live::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  background: var(--success);
-  border-radius: 50%;
-  animation: pulse 2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(0.8); }
+  background: var(--bg-tertiary);
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  /* Traffic light inset: 12px position + 54px buttons + 12px margin */
+  padding-left: 78px;
+  height: 44px;
+  padding-top: 8px;
+  padding-bottom: 4px;
 }
 
 .filters {
   display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
+  flex: 1;
 }
 
 .filters button {
-  flex: 1;
-  padding: 6px 8px;
+  padding: 5px 8px;
   font-size: 9px;
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.75px;
   background: transparent;
   border: none;
-  border-right: 1px solid var(--border);
   color: var(--text-tertiary);
   cursor: pointer;
   transition: all var(--transition-fast, 0.15s cubic-bezier(0.34, 1.56, 0.64, 1));
-  position: relative;
-}
-
-.filters button::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  width: 0;
-  height: 2px;
-  background: var(--text-primary);
-  transition: all 0.2s ease;
-  transform: translateX(-50%);
-}
-
-.filters button.active::after {
-  width: 60%;
-}
-
-.filters button:last-child {
-  border-right: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+  -webkit-app-region: no-drag;
 }
 
 .filters button:hover {
-  background: var(--accent);
   color: var(--text-secondary);
 }
 
 .filters button.active {
-  background: var(--bg-tertiary);
   color: var(--text-primary);
   font-weight: 600;
+}
+
+.sort-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--border-light);
+  flex-shrink: 0;
 }
 
 .sort-row {
   display: flex;
   gap: 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-tertiary);
 }
 
 .sort-row button {
-  flex: 1;
-  padding: 4px 6px;
-  font-size: 8px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  padding: 5px 6px;
   background: transparent;
   border: none;
-  border-right: 1px solid var(--border);
   color: var(--text-tertiary);
   cursor: pointer;
   transition: all var(--transition-fast, 0.15s cubic-bezier(0.34, 1.56, 0.64, 1));
-}
-
-.sort-row button:last-child {
-  border-right: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  -webkit-app-region: no-drag;
 }
 
 .sort-row button:hover {
-  background: var(--accent);
+  opacity: 1;
   color: var(--text-secondary);
 }
 
 .sort-row button.active {
-  background: var(--accent);
+  opacity: 1;
   color: var(--text-primary);
-  font-weight: 600;
-  border-bottom: 2px solid var(--text-primary);
+}
+
+.sort-row .sort-divider {
+  width: 1px;
+  height: 10px;
+  background: var(--border-light);
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.weeknote-toggle.active {
+  color: #f59e0b !important;
+}
+
+.weeknote-toggle[data-tip]::after {
+  left: auto;
+  right: 0;
+  transform: translateX(0) translateY(-2px);
+}
+
+.weeknote-toggle[data-tip]:hover::after {
+  transform: translateX(0) translateY(0);
 }
 
 .loading {
@@ -410,13 +399,15 @@ function getAgeColor(ts: number): string {
 }
 
 .group-header {
-  padding: 6px 12px;
+  padding: 5px 12px;
   font-size: 9px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.75px;
+  letter-spacing: 0.6px;
   color: var(--text-tertiary);
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--bg-tertiary) 80%, var(--bg-secondary));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
@@ -428,11 +419,13 @@ function getAgeColor(ts: number): string {
 
 .group-count {
   font-weight: 400;
-  opacity: 0.7;
+  opacity: 0.5;
+  font-family: 'SF Mono', monospace;
+  font-size: 8px;
 }
 
 .list::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
 }
 
 .list::-webkit-scrollbar-track {
@@ -454,37 +447,42 @@ function getAgeColor(ts: number): string {
   gap: 0;
   padding: 0;
   border: none;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   background: transparent;
   cursor: pointer;
   text-align: left;
-  transition: all var(--transition-fast, 0.15s cubic-bezier(0.34, 1.56, 0.64, 1));
+  transition: background 0.1s ease;
 }
 
 .item:hover {
-  background: var(--accent);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .item:active {
-  transform: scale(0.995);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .item.selected {
-  background: var(--selection-bg);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  box-shadow: var(--shadow-glow, 0 0 0 1px var(--selection-bg), 0 2px 8px color-mix(in srgb, var(--selection-bg) 30%, transparent));
-  border-left: 2px solid var(--selection-text, #fff);
+  background: rgba(255, 255, 255, 0.06);
+  border-left: 2px solid rgba(10, 132, 255, 0.6);
+  border-bottom-color: rgba(255, 255, 255, 0.04);
 }
 
 .item.selected .content {
   padding-left: 8px;
 }
 
-.item.selected .title,
+.item.selected .title {
+  color: #fff;
+}
+
+.item.selected .filename {
+  opacity: 0.35;
+}
+
 .item.selected .meta,
 .item.selected .dir {
-  color: var(--selection-text, #fff);
+  color: var(--text-tertiary);
 }
 
 .item.published {
@@ -492,13 +490,14 @@ function getAgeColor(ts: number): string {
 }
 
 .item.published.selected {
-  border-left-color: #fff;
+  border-left-color: var(--success);
 }
 
 .age-bar {
-  width: 4px;
+  width: 3px;
   background: var(--age);
   flex-shrink: 0;
+  opacity: 0.8;
 }
 
 .item.published .age-bar {
@@ -507,7 +506,7 @@ function getAgeColor(ts: number): string {
 
 .content {
   flex: 1;
-  padding: 6px 10px;
+  padding: 7px 10px;
   min-width: 0;
 }
 
@@ -518,53 +517,65 @@ function getAgeColor(ts: number): string {
 }
 
 .live-badge {
-  font-size: 8px;
-  font-weight: 500;
-  background: transparent;
+  font-size: 7.5px;
+  font-weight: 600;
+  background: rgba(48, 209, 88, 0.12);
   color: var(--success);
-  padding: 1px 4px;
-  border-radius: 2px;
+  padding: 1px 5px;
+  border-radius: 8px;
   flex-shrink: 0;
-  opacity: 0.7;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  letter-spacing: 0.3px;
 }
 
 .modified-badge {
-  font-size: 8px;
-  font-weight: 700;
-  background: var(--warning);
-  color: #000;
-  padding: 1px 4px;
-  border-radius: 2px;
+  font-size: 7.5px;
+  font-weight: 600;
+  background: rgba(255, 159, 10, 0.15);
+  color: var(--warning);
+  padding: 1px 5px;
+  border-radius: 8px;
   flex-shrink: 0;
+  letter-spacing: 0.3px;
 }
 
 .unlisted-badge {
-  font-size: 8px;
-  font-weight: 700;
-  background: #6366f1;
-  color: #fff;
-  padding: 1px 4px;
-  border-radius: 2px;
+  font-size: 7.5px;
+  font-weight: 600;
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  padding: 1px 5px;
+  border-radius: 8px;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  letter-spacing: 0.3px;
 }
 
 .protected-badge {
-  font-size: 8px;
-  font-weight: 700;
-  background: #8b5cf6;
-  color: #fff;
-  padding: 1px 4px;
-  border-radius: 2px;
+  font-size: 7.5px;
+  font-weight: 600;
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  padding: 1px 5px;
+  border-radius: 8px;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  letter-spacing: 0.3px;
 }
 
 .weeknote-badge {
-  font-size: 8px;
-  font-weight: 700;
-  background: rgba(245, 158, 11, 0.2);
+  font-size: 7.5px;
+  font-weight: 600;
+  background: rgba(245, 158, 11, 0.12);
   color: #f59e0b;
-  padding: 1px 4px;
-  border-radius: 2px;
+  padding: 1px 5px;
+  border-radius: 8px;
   flex-shrink: 0;
   letter-spacing: 0.5px;
 }
@@ -606,30 +617,37 @@ function getAgeColor(ts: number): string {
   color: var(--warning);
 }
 
-.item.selected .live-badge,
-.item.selected .modified-badge,
-.item.selected .unlisted-badge,
-.item.selected .protected-badge,
-.item.selected .scheduled-badge {
-  background: #fff;
-  color: #333;
+/* Badges keep their own colors when selected — row is subtle now */
+
+.filename {
+  font-size: 8.5px;
+  font-family: 'SF Mono', monospace;
+  color: var(--text-tertiary);
+  opacity: 0.45;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.01em;
 }
+
+/* .item.selected .filename inherits from the rule above */
 
 .dek {
   font-size: 9px;
   color: var(--text-tertiary);
-  margin-top: 3px;
-  line-height: 1.4;
+  margin-top: 2px;
+  line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   font-style: italic;
-  opacity: 0.8;
+  opacity: 0.65;
 }
 
 .item.selected .dek {
-  color: color-mix(in srgb, var(--selection-text) 70%, transparent);
+  color: var(--text-tertiary);
 }
 
 .title {
@@ -641,6 +659,7 @@ function getAgeColor(ts: number): string {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  letter-spacing: -0.01em;
 }
 
 .meta {
@@ -650,36 +669,56 @@ function getAgeColor(ts: number): string {
   color: var(--text-tertiary);
   display: flex;
   gap: 8px;
+  align-items: center;
 }
 
 .dir {
   color: var(--text-tertiary);
-  max-width: 60px;
+  max-width: 80px;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .pub-date {
   color: var(--success);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .create-date {
   color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .edit-date {
   color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .word-count {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
   opacity: 0.7;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 /* Compact Mode */
 .sidebar.compact .item .content {
   padding: 4px 10px;
+}
+
+.sidebar.compact .filename {
+  display: none;
 }
 
 .sidebar.compact .dek {
