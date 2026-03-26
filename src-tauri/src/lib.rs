@@ -24,6 +24,9 @@ mod obsidian; // Talks to Obsidian's Local REST API for backlinks
 mod preview; // Manages a local Node.js server for previewing posts
 mod publish; // Handles git operations to publish posts to your website
 mod vault; // Scans your Obsidian vault for markdown files
+mod webmention; // IndieWeb webmention sending
+mod journal; // Publishing journal, streaks, milestones
+mod vault_pulse; // Read-only vault intelligence (never publishes)
 
 // --- DATA STRUCTURES ---
 // These structs define the shape of data we pass between Rust and the Vue frontend.
@@ -160,13 +163,59 @@ fn publish_file(
     slug: String,
     target_id: Option<String>,
 ) -> Result<String, String> {
-    publish::publish_file(&source_path, &slug, target_id.as_deref())
+    // Check if this is a republish (file already exists in website repo)
+    let target = config::resolve_target(target_id.as_deref())?;
+    let is_republish = vault::find_published_info_for_target(&target, &slug).0.is_some();
+
+    let url = publish::publish_file(&source_path, &slug, target_id.as_deref())?;
+
+    // Record in journal — read source file metadata
+    if let Ok(files) = vault::get_recent_files(9999) {
+        if let Some(file) = files.iter().find(|f| f.path == source_path) {
+            let event = if is_republish { "republish" } else { "publish" };
+            let visibility = if file.password.is_some() {
+                "protected"
+            } else if file.unlisted {
+                "unlisted"
+            } else {
+                "public"
+            };
+            let _ = journal::record_event(
+                event,
+                &slug,
+                file.title.as_deref(),
+                file.word_count,
+                &file.tags,
+                &file.content_type,
+                Some(&url),
+                target_id.as_deref(),
+                visibility,
+            );
+        }
+    }
+
+    Ok(url)
 }
 
 // Unpublish a file (move from blog/ to drafts/ in the website repo)
 #[tauri::command]
 fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), String> {
-    publish::unpublish_file(&slug, target_id.as_deref())
+    publish::unpublish_file(&slug, target_id.as_deref())?;
+
+    // Record in journal
+    let _ = journal::record_event(
+        "unpublish",
+        &slug,
+        None,
+        0,
+        &[],
+        "post",
+        None,
+        target_id.as_deref(),
+        "public",
+    );
+
+    Ok(())
 }
 
 // Get the current git status of the website repo
@@ -410,6 +459,66 @@ fn schedule_publish(path: String, publish_at: String) -> Result<(), String> {
 #[tauri::command]
 fn cancel_schedule(path: String) -> Result<(), String> {
     vault::remove_frontmatter_field(&path, "publish_at")
+}
+
+#[tauri::command]
+fn set_frontmatter(path: String, key: String, value: String) -> Result<(), String> {
+    vault::set_frontmatter_field(&path, &key, &value)
+}
+
+// --- WEBMENTION COMMANDS ---
+
+#[tauri::command]
+async fn send_webmentions(
+    post_url: String,
+    bridgy_fed: Option<bool>,
+    target_id: Option<String>,
+) -> Result<webmention::WebmentionReport, String> {
+    let target = config::resolve_target(target_id.as_deref())?;
+    let domain = target.domain.replace("https://", "").replace("http://", "");
+    let bridgy = bridgy_fed.unwrap_or(false);
+
+    // Run in blocking thread since we use reqwest::blocking
+    tokio::task::spawn_blocking(move || {
+        webmention::send_webmentions_for_post(&post_url, &domain, bridgy)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))
+}
+
+// --- JOURNAL COMMANDS ---
+
+#[tauri::command]
+fn get_journal_stats() -> Result<journal::JournalStats, String> {
+    journal::get_stats()
+}
+
+#[tauri::command]
+fn get_journal_entries(limit: Option<usize>) -> Result<Vec<journal::JournalEntry>, String> {
+    journal::get_recent_entries(limit.unwrap_or(50))
+}
+
+#[tauri::command]
+fn get_journal_nudge() -> Result<Option<journal::Nudge>, String> {
+    journal::get_nudge()
+}
+
+#[tauri::command]
+fn get_journal_heatmap(days: Option<u32>) -> Result<Vec<(String, u32)>, String> {
+    journal::get_heatmap(days.unwrap_or(91)) // ~13 weeks
+}
+
+#[tauri::command]
+fn backfill_journal() -> Result<u32, String> {
+    let target = config::default_target();
+    journal::backfill_from_git(&target.repo_path, &target.domain)
+}
+
+// --- VAULT PULSE ---
+
+#[tauri::command]
+fn get_vault_pulse() -> Result<vault_pulse::VaultPulse, String> {
+    vault_pulse::scan_vault()
 }
 
 // Tell the preview server which file to display
@@ -777,6 +886,14 @@ pub fn run() {
             get_post_assets,
             schedule_publish,
             cancel_schedule,
+            set_frontmatter,
+            send_webmentions,
+            get_journal_stats,
+            get_journal_entries,
+            get_journal_nudge,
+            backfill_journal,
+            get_journal_heatmap,
+            get_vault_pulse,
             check_analytics_status,
             get_post_analytics,
             get_site_analytics,

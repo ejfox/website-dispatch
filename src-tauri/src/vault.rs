@@ -206,11 +206,27 @@ fn parse_iso_date(date_str: &str) -> Option<u64> {
     None
 }
 
+/// Public version that accepts an explicit target (used by journal)
+pub fn find_published_info_for_target(
+    target: &config::PublishTarget,
+    slug: &str,
+) -> (Option<String>, Option<u64>, Option<String>) {
+    find_published_info_inner(target, &target.repo_path, slug)
+}
+
 fn find_published_info(
     website_repo: &str,
     slug: &str,
 ) -> (Option<String>, Option<u64>, Option<String>) {
     let target = config::default_target();
+    find_published_info_inner(&target, website_repo, slug)
+}
+
+fn find_published_info_inner(
+    target: &config::PublishTarget,
+    website_repo: &str,
+    slug: &str,
+) -> (Option<String>, Option<u64>, Option<String>) {
     // Derive blog content base from content_path_pattern (e.g. "content/blog/{year}" -> "content/blog")
     let content_base = target
         .content_path_pattern
