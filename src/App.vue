@@ -2,11 +2,12 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { FileText, Search, RefreshCw, Image, GitBranch, Circle, Zap, Settings, Plus } from 'lucide-vue-next'
-import { PhLockSimple, PhEye } from '@phosphor-icons/vue'
+import { FileText, Search, RefreshCw, Zap, Settings, Plus } from 'lucide-vue-next'
+import { PhLockSimple, PhEye, PhCheckCircle, PhRows, PhSquaresFour, PhKeyboard, PhCursor, PhCircleWavy, PhChartBar, PhDeviceMobile, PhFolder, PhTextAa, PhGitBranch, PhImageSquare, PhFlame } from '@phosphor-icons/vue'
 import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
 import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
+import PublishingJournal from './components/PublishingJournal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 
 interface MarkdownFile {
@@ -51,7 +52,7 @@ const showHelp = ref(false)
 const lastGPress = ref(0)
 
 // Right panel tab state
-const rightTab = ref<'preview' | 'media'>('preview')
+const rightTab = ref<'preview' | 'media' | 'journal'>('preview')
 const cloudinaryConnected = ref(false)
 const obsidianConnected = ref(false)
 const analyticsConnected = ref(false)
@@ -59,8 +60,20 @@ const companionUrl = ref<string | null>(null)
 const companionPin = ref('')
 const gitBranch = ref<string | null>(null)
 
+// Journal stats (for status bar / titlebar)
+const journalStats = ref<any>(null)
+
+async function refreshJournalStats() {
+  try {
+    journalStats.value = await invoke('get_journal_stats')
+  } catch (_) { /* journal may not be ready yet */ }
+}
+
 // Settings modal
 const showSettings = ref(false)
+
+// FilePreview ref for Cmd+Enter publish
+const filePreviewRef = ref<InstanceType<typeof FilePreview> | null>(null)
 
 // App config
 interface EditorConfig { name: string; app_name: string; enabled: boolean }
@@ -353,13 +366,17 @@ function handleGlobalKey(e: KeyboardEvent) {
     rightTab.value = rightTab.value === 'media' ? 'preview' : 'media'
   }
 
-  // ⌘Enter to publish
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && selectedFile.value?.is_safe) {
+  // J - toggle journal tab
+  if (e.key === 'J' && !e.metaKey && !e.ctrlKey) {
     e.preventDefault()
-    invoke('publish_file', {
-      sourcePath: selectedFile.value.path,
-      slug: selectedFile.value.filename.replace('.md', '')
-    }).then(() => loadFiles())
+    rightTab.value = rightTab.value === 'journal' ? 'preview' : 'journal'
+  }
+
+  // ⌘Enter to publish (opens confirmation modal)
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && selectedFile.value) {
+    e.preventDefault()
+    const isRepublish = !!selectedFile.value.published_url
+    filePreviewRef.value?.openPublishConfirm(isRepublish)
   }
 }
 
@@ -371,6 +388,8 @@ async function loadFiles() {
     console.error('Failed to load files:', e)
   }
   loading.value = false
+  // Refresh journal stats (publish may have just happened)
+  refreshJournalStats()
 }
 
 let unlistenSchedule: (() => void) | null = null
@@ -391,6 +410,7 @@ function onSettingsSaved() {
 onMounted(async () => {
   loadConfig()
   loadFiles()
+  refreshJournalStats()
   window.addEventListener('keydown', handleGlobalKey)
 
   // Listen for scheduled publish events from backend
@@ -438,30 +458,6 @@ onUnmounted(() => {
 
 <template>
   <div class="app">
-    <div class="titlebar" data-tauri-drag-region>
-      <div class="titlebar-spacer"></div>
-      <div class="titlebar-stats" v-if="stats.weekPublished > 0">
-        <Zap :size="10" />
-        <span>{{ stats.weekPublished }} this week</span>
-      </div>
-      <div class="titlebar-btns">
-        <button @click="openNewPost" class="titlebar-btn" title="New Post (n)">
-          <Plus :size="14" />
-        </button>
-        <button @click="rightTab = rightTab === 'media' ? 'preview' : 'media'" class="titlebar-btn" :class="{ active: rightTab === 'media' }" title="Media Library (m)">
-          <Image :size="14" />
-        </button>
-        <button @click="openSearch" class="titlebar-btn" title="Search (⌘K)">
-          <Search :size="14" />
-        </button>
-        <button @click="loadFiles" class="titlebar-btn" :class="{ spinning: loading }" title="Refresh (r)">
-          <RefreshCw :size="14" />
-        </button>
-        <button @click="showSettings = true" class="titlebar-btn" title="Settings (,)">
-          <Settings :size="14" />
-        </button>
-      </div>
-    </div>
 
     <!-- Help Modal -->
     <div v-if="showHelp" class="search-overlay" @click.self="showHelp = false">
@@ -469,7 +465,7 @@ onUnmounted(() => {
         <div class="help-title">Keyboard Shortcuts</div>
         <div class="help-grid">
           <div class="help-section">
-            <div class="help-section-title">Navigation</div>
+            <div class="help-section-title"><PhCursor :size="10" weight="duotone" /> Navigation</div>
             <div class="help-row"><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> <span>move up/down</span></div>
             <div class="help-row"><kbd>g</kbd><kbd>g</kbd> <span>go to top</span></div>
             <div class="help-row"><kbd>G</kbd> <span>go to bottom</span></div>
@@ -478,7 +474,7 @@ onUnmounted(() => {
             <div class="help-row"><kbd>esc</kbd> <span>deselect</span></div>
           </div>
           <div class="help-section">
-            <div class="help-section-title">Actions</div>
+            <div class="help-section-title"><PhKeyboard :size="10" weight="duotone" /> Actions</div>
             <div class="help-row"><kbd>⌘</kbd><kbd>K</kbd> or <kbd>/</kbd> <span>search</span></div>
             <div class="help-row"><kbd>o</kbd> <span>open in Obsidian</span></div>
             <div class="help-row"><kbd>i</kbd> <span>open in iA Writer</span></div>
@@ -493,9 +489,9 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="help-divider"></div>
-        <div class="help-section-title">Visibility Spectrum</div>
+        <div class="help-section-title"><PhEye :size="10" weight="duotone" /> Visibility Spectrum</div>
         <div class="visibility-spectrum">
-          <div class="vis-row"><span class="vis-badge vis-public">✓ PUBLIC</span> <span class="vis-desc">Appears in listings, feeds, search</span></div>
+          <div class="vis-row"><span class="vis-badge vis-public"><PhCheckCircle :size="9" weight="fill" /> PUBLIC</span> <span class="vis-desc">Appears in listings, feeds, search</span></div>
           <div class="vis-row"><span class="vis-badge vis-unlisted">UNLISTED</span> <span class="vis-desc">Link only — add <code>unlisted: true</code></span></div>
           <div class="vis-row"><span class="vis-badge vis-protected">PROTECTED</span> <span class="vis-desc">Link + password — add <code>password: xyz</code></span></div>
         </div>
@@ -527,7 +523,7 @@ onUnmounted(() => {
           >
             <span v-if="file.password" class="result-badge protected"><PhLockSimple :size="10" weight="fill" /></span>
             <span v-else-if="file.unlisted" class="result-badge unlisted"><PhEye :size="10" weight="fill" /></span>
-            <span v-else-if="file.published_url" class="result-badge live">✓</span>
+            <span v-else-if="file.published_url" class="result-badge live"><PhCheckCircle :size="10" weight="fill" /></span>
             <span class="result-title">{{ file.title || file.filename.replace('.md', '') }}</span>
             <span class="result-words">{{ file.word_count }}w</span>
             <span class="result-dir">{{ file.source_dir }}</span>
@@ -583,7 +579,7 @@ onUnmounted(() => {
       />
 
       <div class="right-panel">
-        <div class="panel-tabs">
+        <div class="panel-tabs" data-tauri-drag-region>
           <button
             :class="{ active: rightTab === 'preview' }"
             @click="rightTab = 'preview'"
@@ -596,11 +592,45 @@ onUnmounted(() => {
           >
             Media
           </button>
+          <button
+            :class="{ active: rightTab === 'journal' }"
+            @click="rightTab = 'journal'"
+          >
+            Journal
+          </button>
+          <div class="titlebar-stats" v-if="journalStats" data-tauri-drag-region>
+            <span v-if="journalStats.current_streak_days >= 2" class="streak-pill">
+              <PhFlame :size="9" weight="fill" />
+              {{ journalStats.current_streak_days }}d
+            </span>
+            <Zap :size="10" />
+            <span>{{ journalStats.publishes_this_week || stats.weekPublished }} this week</span>
+          </div>
+          <div class="titlebar-stats" v-else-if="stats.weekPublished > 0" data-tauri-drag-region>
+            <Zap :size="10" />
+            <span>{{ stats.weekPublished }} this week</span>
+          </div>
+          <div class="panel-tabs-spacer" data-tauri-drag-region></div>
+          <div class="titlebar-btns">
+            <button @click="openNewPost" class="titlebar-btn" title="New Post (n)">
+              <Plus :size="13" />
+            </button>
+            <button @click="openSearch" class="titlebar-btn" title="Search (⌘K)">
+              <Search :size="13" />
+            </button>
+            <button @click="loadFiles" class="titlebar-btn" :class="{ spinning: loading }" title="Refresh (r)">
+              <RefreshCw :size="13" />
+            </button>
+            <button @click="showSettings = true" class="titlebar-btn" title="Settings (,)">
+              <Settings :size="13" />
+            </button>
+          </div>
         </div>
 
         <div class="panel-content">
           <FilePreview
             v-if="rightTab === 'preview' && selectedFile"
+            ref="filePreviewRef"
             :file="selectedFile"
             @published="loadFiles"
           />
@@ -625,6 +655,10 @@ onUnmounted(() => {
             @select="(asset) => copyToClipboard(asset.secure_url)"
             @insert="handleInsertMedia"
           />
+
+          <PublishingJournal
+            v-else-if="rightTab === 'journal'"
+          />
         </div>
       </div>
     </main>
@@ -639,36 +673,43 @@ onUnmounted(() => {
     <!-- Status Bar -->
     <div class="statusbar">
       <div class="status-left">
-        <span v-if="selectedFile" class="status-item file-path">
+        <span v-if="selectedFile" class="status-item file-path" :data-tip="selectedFile.source_dir + '/' + selectedFile.filename">
+          <PhFolder :size="10" weight="duotone" />
           {{ selectedFile.source_dir }}/{{ selectedFile.filename }}
         </span>
         <span v-else class="status-item muted">No file selected</span>
-        <span v-if="selectedFile" class="status-item muted tabular">
-          {{ selectedFile.word_count.toLocaleString() }} words
+        <span v-if="selectedFile" class="status-item muted tabular" :data-tip="selectedFile.word_count.toLocaleString() + ' words'">
+          <PhTextAa :size="10" weight="duotone" />
+          {{ selectedFile.word_count.toLocaleString() }}
+        </span>
+        <span v-if="journalStats && journalStats.words_this_month > 0" class="status-item muted tabular" :data-tip="`${journalStats.words_this_month.toLocaleString()} words published this month`">
+          {{ (journalStats.words_this_month / 1000).toFixed(1) }}k/mo
         </span>
       </div>
       <div class="status-right">
-        <button @click="toggleCompactMode" class="status-btn" :class="{ active: compactMode }" title="Toggle compact view">
-          {{ compactMode ? '⊟' : '⊞' }}
+        <button @click="toggleCompactMode" class="status-btn" :class="{ active: compactMode }" data-tip="Toggle compact view">
+          <PhRows v-if="compactMode" :size="11" weight="bold" />
+          <PhSquaresFour v-else :size="11" weight="bold" />
         </button>
-        <span class="status-item" :class="gitBranch ? 'connected' : 'muted'" :title="gitBranch ? `Branch: ${gitBranch}` : 'Git not connected'">
-          <GitBranch :size="10" />
-          {{ gitBranch || 'git' }}
+        <span class="status-divider"></span>
+        <span class="status-item" :class="gitBranch ? 'connected' : 'muted'" :data-tip="gitBranch ? `Branch: ${gitBranch}` : 'Git not connected'">
+          <PhGitBranch :size="11" weight="bold" />
+          {{ gitBranch || '---' }}
         </span>
-        <span class="status-item" :class="obsidianConnected ? 'connected' : 'muted'" title="Obsidian API">
-          <Circle :size="6" :fill="obsidianConnected ? 'currentColor' : 'none'" />
-          obsidian
+        <span class="status-item" :class="obsidianConnected ? 'connected' : 'muted'" :data-tip="obsidianConnected ? 'Obsidian vault connected' : 'Obsidian not detected'">
+          <PhCircleWavy :size="10" :weight="obsidianConnected ? 'fill' : 'light'" />
+          vault
         </span>
-        <span class="status-item" :class="cloudinaryConnected ? 'connected' : 'muted'" title="Cloudinary">
-          <Circle :size="6" :fill="cloudinaryConnected ? 'currentColor' : 'none'" />
+        <span class="status-item" :class="cloudinaryConnected ? 'connected' : 'muted'" :data-tip="cloudinaryConnected ? 'Cloudinary media connected' : 'Cloudinary not configured'">
+          <PhImageSquare :size="10" :weight="cloudinaryConnected ? 'fill' : 'light'" />
           media
         </span>
-        <span class="status-item" :class="analyticsConnected ? 'connected' : 'muted'" title="Umami Analytics">
-          <Circle :size="6" :fill="analyticsConnected ? 'currentColor' : 'none'" />
+        <span class="status-item" :class="analyticsConnected ? 'connected' : 'muted'" :data-tip="analyticsConnected ? 'Umami analytics connected' : 'Analytics not configured'">
+          <PhChartBar :size="10" :weight="analyticsConnected ? 'fill' : 'light'" />
           analytics
         </span>
-        <span v-if="companionUrl" class="status-item connected" :title="`PIN: ${companionPin}`">
-          <Circle :size="6" fill="currentColor" />
+        <span v-if="companionUrl" class="status-item connected" :data-tip="`Companion connected · PIN: ${companionPin}`">
+          <PhDeviceMobile :size="10" weight="fill" />
           {{ companionUrl.replace('http://', '') }}
         </span>
       </div>
@@ -785,62 +826,6 @@ button:focus:not(:focus-visible) {
   flex-direction: column;
 }
 
-.titlebar {
-  height: 36px;
-  background: var(--bg-secondary);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 1px solid var(--border-light);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  -webkit-app-region: drag;
-  position: relative;
-}
-
-.titlebar-spacer { width: 70px; }
-
-.titlebar-btns {
-  -webkit-app-region: no-drag;
-  position: absolute;
-  right: 10px;
-  display: flex;
-  gap: 4px;
-}
-
-.titlebar-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--transition-fast);
-}
-
-.titlebar-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  transform: scale(1.1);
-}
-
-.titlebar-btn:active {
-  transform: scale(0.95);
-}
-
-.titlebar-btn.active {
-  color: var(--text-primary);
-  background: var(--accent);
-}
-
-.titlebar-btn.connected {
-  color: var(--success);
-}
-
 .main {
   flex: 1;
   display: flex;
@@ -856,21 +841,28 @@ button:focus:not(:focus-visible) {
 
 .panel-tabs {
   display: flex;
+  align-items: flex-end;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   flex-shrink: 0;
+  -webkit-app-region: drag;
+  height: 44px;
+  padding-top: 8px;
 }
 
 .panel-tabs button {
-  padding: 8px 16px;
+  padding: 6px 12px;
   font-size: 11px;
   font-weight: 500;
   background: transparent;
   border: none;
   color: var(--text-tertiary);
   cursor: pointer;
-  border-bottom: 2px solid transparent;
+  border-bottom: 1.5px solid transparent;
   margin-bottom: -1px;
+  -webkit-app-region: no-drag;
+  align-self: flex-end;
+  transition: color 0.15s ease;
 }
 
 .panel-tabs button:hover {
@@ -880,6 +872,54 @@ button:focus:not(:focus-visible) {
 .panel-tabs button.active {
   color: var(--text-primary);
   border-bottom-color: var(--text-primary);
+  font-weight: 600;
+}
+
+.panel-tabs-spacer {
+  flex: 1;
+}
+
+.titlebar-btns {
+  -webkit-app-region: no-drag;
+  display: flex;
+  gap: 2px;
+  margin-right: 8px;
+  align-self: center;
+  margin-top: auto;
+  margin-bottom: 4px;
+}
+
+.titlebar-btn {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.titlebar-btn:active {
+  transform: scale(0.92);
+}
+
+.titlebar-btn.active {
+  color: var(--text-primary);
+  background: var(--accent);
+}
+
+.titlebar-btn.spinning svg {
+  animation: spin 1s linear infinite;
 }
 
 .panel-content {
@@ -929,10 +969,6 @@ button:focus:not(:focus-visible) {
 .shortcut-row span {
   margin-left: 4px;
   opacity: 0.7;
-}
-
-.titlebar-btn.spinning svg {
-  animation: spin 1s linear infinite;
 }
 
 /* Spring animations */
@@ -1169,6 +1205,9 @@ button:focus:not(:focus-visible) {
   text-transform: uppercase;
   letter-spacing: 0.75px;
   margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .help-row {
@@ -1236,6 +1275,10 @@ kbd {
   border-radius: 3px;
   min-width: 80px;
   text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
 }
 
 .vis-public {
@@ -1273,7 +1316,7 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px;
+  padding: 0 10px;
   font-size: 10px;
   font-family: 'SF Mono', monospace;
   color: var(--text-tertiary);
@@ -1284,25 +1327,17 @@ kbd {
 .status-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .status-item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
 }
 
 .status-item.connected {
   color: var(--success);
-}
-
-.status-item.connected::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  background: var(--success);
-  border-radius: 50%;
 }
 
 .status-item.muted {
@@ -1322,13 +1357,28 @@ kbd {
   font-feature-settings: 'tnum';
 }
 
+.status-divider {
+  width: 1px;
+  height: 10px;
+  background: var(--border-light);
+}
+
+.status-item.connected svg {
+  color: var(--success);
+}
+
+.status-item.muted svg {
+  opacity: 0.4;
+}
+
 .status-btn {
   background: none;
   border: none;
   color: var(--text-tertiary);
   cursor: pointer;
-  padding: 0 4px;
-  font-size: 12px;
+  padding: 0 2px;
+  display: flex;
+  align-items: center;
   transition: all var(--transition-fast);
   border-radius: 3px;
 }
@@ -1342,6 +1392,61 @@ kbd {
   color: var(--text-primary);
 }
 
+/* Native-feeling tooltips (macOS HUD style) */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-2px);
+  padding: 2px 7px;
+  background: color-mix(in srgb, var(--bg-solid, #1a1a1e) 92%, white);
+  border: 0.5px solid color-mix(in srgb, var(--border-light) 60%, transparent);
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  font-weight: 400;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 1000;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+  -webkit-font-smoothing: antialiased;
+}
+
+[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  transition-delay: 0.6s;
+}
+
+/* Keep tooltips from overflowing left edge */
+.status-left [data-tip]::after {
+  left: 0;
+  transform: translateX(0) translateY(-2px);
+}
+
+.status-left [data-tip]:hover::after {
+  transform: translateX(0) translateY(0);
+}
+
+/* Keep tooltips from overflowing right edge */
+.status-right [data-tip]::after {
+  left: auto;
+  right: 0;
+  transform: translateX(0) translateY(-2px);
+}
+
+.status-right [data-tip]:hover::after {
+  transform: translateX(0) translateY(0);
+}
+
 /* Titlebar Stats */
 .titlebar-stats {
   -webkit-app-region: no-drag;
@@ -1353,9 +1458,17 @@ kbd {
   background: color-mix(in srgb, var(--success) 15%, transparent);
   padding: 2px 8px;
   border-radius: 10px;
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  margin-left: 8px;
+}
+
+.streak-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #f59e0b;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-right: 2px;
 }
 
 /* New Post Modal */

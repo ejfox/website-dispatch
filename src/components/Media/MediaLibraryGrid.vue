@@ -92,7 +92,7 @@ const emit = defineEmits<{
   overflow-y: auto;
   padding: 8px;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
   gap: 6px;
   align-content: start;
 }
