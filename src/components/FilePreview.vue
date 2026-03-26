@@ -2,7 +2,7 @@
 import { ref, watch, computed, onBeforeUnmount, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { Command } from 'lucide-vue-next'
-import { PhLockSimple, PhEye, PhClock, PhArrowSquareUpRight, PhArrowsClockwise, PhKeyboard, PhShieldWarning, PhCheck } from '@phosphor-icons/vue'
+import { PhLockSimple, PhEye, PhEyeSlash, PhClock, PhArrowSquareUpRight, PhArrowsClockwise, PhKeyboard, PhShieldWarning, PhCheck, PhCheckCircle, PhFolder, PhCalendarBlank, PhGitBranch, PhCircleWavy, PhChartBar, PhGlobe, PhTag, PhLinkSimple, PhImageSquare, PhFilmSlate, PhWarningCircle, PhTextAa, PhPlay, PhArrowSquareOut, PhNotePencil, PhTrash, PhTrophy } from '@phosphor-icons/vue'
 import LocalMediaFixer from './LocalMediaFixer.vue'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
@@ -106,6 +106,7 @@ const obsidianConnected = ref(false)
 const gitStatus = ref<GitStatus | null>(null)
 const showSuccess = ref(false)
 const successMessage = ref('')
+const isMilestoneToast = ref(false)
 const copyFeedback = ref<string | null>(null)
 const unpublishing = ref(false)
 const showPublishConfirm = ref(false)
@@ -118,6 +119,24 @@ const loadingLocalMedia = ref(false)
 const showMediaFixer = ref(false)
 const justPublishedGlow = ref(false)
 const metadataExpanded = ref(false)
+
+// Webmentions
+interface WebmentionResult {
+  target: string
+  endpoint: string | null
+  status: string
+  message: string | null
+}
+interface WebmentionReport {
+  source: string
+  results: WebmentionResult[]
+  total_links: number
+  sent: number
+  no_endpoint: number
+  errors: number
+}
+const sendingWebmentions = ref(false)
+const webmentionReport = ref<WebmentionReport | null>(null)
 
 // Tag suggestions
 const availableTags = ref<Record<string, number>>({})
@@ -234,6 +253,7 @@ watch(() => props.file, async (file) => {
   localMedia.value = []
   postStats.value = null
   showMediaFixer.value = false
+  webmentionReport.value = null
 
   // Set this file as the preview target (Node server for accurate rendering)
   fetch('http://127.0.0.1:6419/set-file', {
@@ -378,12 +398,16 @@ function formatDateCompact(ts: number): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function openPublishConfirm(isRepublish = false) {
+async function openPublishConfirm(isRepublish = false) {
   publishConfirmRepublish.value = isRepublish
   publishConfirmStep.value = 1
   publishConfirmChecked.value = false
   publishConfirmText.value = ''
   showPublishConfirm.value = true
+  // Fetch journal stats for context line
+  try {
+    journalStatsCache.value = await invoke('get_journal_stats')
+  } catch (_) { /* ok */ }
 }
 
 function closePublishConfirm() {
@@ -395,6 +419,15 @@ async function publish(isRepublish = false) {
   if (!isRepublish && !props.file.is_safe) return
   publishing.value = true
   try {
+    // Snapshot milestones before publish
+    let milestonesBefore: string[] = []
+    try {
+      const statsBefore = await invoke<any>('get_journal_stats')
+      milestonesBefore = (statsBefore.milestones || [])
+        .filter((m: any) => m.achieved_at)
+        .map((m: any) => m.id)
+    } catch (_) { /* journal may not be ready */ }
+
     const url = await invoke<string>('publish_file', {
       sourcePath: props.file.path,
       slug: slug.value,
@@ -402,13 +435,27 @@ async function publish(isRepublish = false) {
     })
     justPublished.value = url
 
-    // Show success toast with visibility context
-    const visibilityContext = isPasswordProtected.value ? ' (protected)' :
-                              isUnlisted.value ? ' (unlisted)' : ''
-    successMessage.value = isRepublish ? 'Republished!' : `Published${visibilityContext}!`
+    // Check for newly earned milestones
+    let newMilestone: { label: string; description: string } | null = null
+    try {
+      const statsAfter = await invoke<any>('get_journal_stats')
+      const earned = (statsAfter.milestones || []).filter((m: any) => m.achieved_at)
+      const fresh = earned.find((m: any) => !milestonesBefore.includes(m.id))
+      if (fresh) newMilestone = { label: fresh.label, description: fresh.description }
+    } catch (_) { /* ok */ }
+
+    // Show success toast — milestone takes priority
+    isMilestoneToast.value = !!newMilestone
+    if (newMilestone) {
+      successMessage.value = `${newMilestone.label}! ${newMilestone.description}`
+    } else {
+      const visibilityContext = isPasswordProtected.value ? ' (protected)' :
+                                isUnlisted.value ? ' (unlisted)' : ''
+      successMessage.value = isRepublish ? 'Republished!' : `Published${visibilityContext}!`
+    }
     showSuccess.value = true
     justPublishedGlow.value = true
-    setTimeout(() => { showSuccess.value = false }, 3000)
+    setTimeout(() => { showSuccess.value = false }, newMilestone ? 5000 : 3000)
     setTimeout(() => { justPublishedGlow.value = false }, 1500)
 
     // Delay refresh slightly to let filesystem settle
@@ -417,6 +464,39 @@ async function publish(isRepublish = false) {
     alert(`Failed: ${e}`)
   }
   publishing.value = false
+}
+
+async function publishUnlisted() {
+  if (!props.file.is_safe) return
+  try {
+    await invoke('set_frontmatter', { path: props.file.path, key: 'unlisted', value: 'true' })
+    await publish(false)
+  } catch (e) {
+    alert(`Failed to set unlisted: ${e}`)
+  }
+}
+
+async function triggerWebmentions(bridgyFed = false) {
+  const url = liveUrl.value
+  if (!url || sendingWebmentions.value) return
+  sendingWebmentions.value = true
+  webmentionReport.value = null
+  try {
+    const report = await invoke<WebmentionReport>('send_webmentions', {
+      postUrl: url,
+      bridgyFed,
+      targetId: getActiveTargetId() || null,
+    })
+    webmentionReport.value = report
+    if (report.sent > 0) {
+      successMessage.value = `Sent ${report.sent} webmention${report.sent > 1 ? 's' : ''}!`
+      showSuccess.value = true
+      setTimeout(() => { showSuccess.value = false }, 3000)
+    }
+  } catch (e) {
+    alert(`Webmention error: ${e}`)
+  }
+  sendingWebmentions.value = false
 }
 
 async function unpublish() {
@@ -453,6 +533,19 @@ const showSchedulePicker = ref(false)
 const scheduleDate = ref('')
 
 const isScheduled = computed(() => !!props.file.publish_at && !isLive.value)
+
+// Journal context for publish confirmation
+const journalStatsCache = ref<any>(null)
+const publishContext = computed(() => {
+  const s = journalStatsCache.value
+  if (!s) return null
+  const parts: string[] = []
+  const nth = s.total_publishes + 1
+  if (nth > 1) parts.push(`This will be publish #${nth}`)
+  if (s.current_streak_days >= 2) parts.push(`${s.current_streak_days}-day streak`)
+  if (s.words_this_month > 1000) parts.push(`${(s.words_this_month / 1000).toFixed(1)}k words this month`)
+  return parts.length > 0 ? parts.join(' · ') : null
+})
 
 function formatScheduledTime(isoStr: string): string {
   try {
@@ -508,6 +601,9 @@ function showCopyFeedback(msg: string) {
   setTimeout(() => { copyFeedback.value = null }, 1500)
 }
 
+// Expose methods for parent component
+defineExpose({ openPublishConfirm })
+
 async function openInObsidian() {
   await invoke('open_in_obsidian', { path: props.file.path })
 }
@@ -525,8 +621,10 @@ async function openPreview() {
   <div class="panel" :class="{ live: isLive, 'just-published': justPublishedGlow }">
     <!-- Success Toast -->
     <Transition name="toast">
-      <div v-if="showSuccess" class="success-toast">
-        {{ successMessage }}
+      <div v-if="showSuccess" class="success-toast" :class="{ milestone: isMilestoneToast }">
+        <PhCheckCircle v-if="!isMilestoneToast" :size="13" weight="fill" />
+        <PhTrophy v-else :size="15" weight="fill" />
+        <span>{{ successMessage }}</span>
       </div>
     </Transition>
 
@@ -547,16 +645,16 @@ async function openPreview() {
     <div v-else-if="isLive && isPasswordProtected" class="banner protected">
       <span class="banner-text"><PhLockSimple :size="13" weight="bold" /> PROTECTED</span>
       <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
-      <button @click="copyUrlAndPassword" title="Copy URL + password to share">Copy + Pass</button>
-      <button @click="copyUrl" title="Copy URL only">Copy URL</button>
+      <button @click="copyUrlAndPassword" data-tip="Copy URL + password to share">Copy + Pass</button>
+      <button @click="copyUrl" data-tip="Copy URL only">Copy URL</button>
     </div>
     <div v-else-if="isLive && isUnlisted" class="banner unlisted">
       <span class="banner-text"><PhEye :size="13" weight="bold" /> UNLISTED</span>
       <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
-      <button @click="copyUrl" title="Share this link — not indexed anywhere">Copy</button>
+      <button @click="copyUrl" data-tip="Share this link — not indexed anywhere">Copy</button>
     </div>
     <div v-else-if="isLive" class="banner live">
-      <span class="banner-text">✓ LIVE</span>
+      <span class="banner-text"><PhCheckCircle :size="13" weight="fill" /> LIVE</span>
       <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
       <button @click="copyUrl">Copy</button>
     </div>
@@ -577,7 +675,7 @@ async function openPreview() {
       <span class="visibility-hint">Link only — won't appear in listings or feeds</span>
     </div>
     <div v-else class="banner ready public-ready">
-      <span class="visibility-badge">✓ PUBLIC</span>
+      <span class="visibility-badge"><PhCheckCircle :size="10" weight="fill" /> PUBLIC</span>
       <span class="visibility-hint">Will appear in listings, feeds, and search</span>
     </div>
 
@@ -599,11 +697,11 @@ async function openPreview() {
       <!-- Summary bar (always visible, clickable) -->
       <div class="info-summary" @click="metadataExpanded = !metadataExpanded">
         <span class="info-toggle" :class="{ expanded: metadataExpanded }">&#9654;</span>
-        <span>{{ file.word_count }}w</span>
+        <span class="info-chip"><PhTextAa :size="9" weight="duotone" /> {{ file.word_count }}w</span>
         <span class="date-sep">&middot;</span>
-        <span>{{ file.tags.length }} tags</span>
+        <span class="info-chip"><PhTag :size="9" weight="duotone" /> {{ file.tags.length }} tags</span>
         <span class="date-sep">&middot;</span>
-        <span>{{ file.date ? formatDate(file.date) : formatDateCompact(file.created) }}</span>
+        <span class="info-chip"><PhCalendarBlank :size="9" weight="duotone" /> {{ file.date ? formatDate(file.date) : formatDateCompact(file.created) }}</span>
       </div>
 
       <!-- Detail rows (collapsed by default) -->
@@ -613,11 +711,11 @@ async function openPreview() {
           <span class="weeknote-type">Week Note</span>
         </div>
         <div class="row">
-          <span class="label">Source</span>
+          <span class="label"><PhFolder :size="10" weight="duotone" /> Source</span>
           <code>{{ file.source_dir || '.' }}/{{ file.filename }}</code>
         </div>
         <div class="row">
-          <span class="label">Dates</span>
+          <span class="label"><PhCalendarBlank :size="10" weight="duotone" /> Dates</span>
           <span class="dates-compact">
             <span>c: {{ formatAgeShort(file.created) }}</span>
             <span class="date-sep">&middot;</span>
@@ -629,23 +727,23 @@ async function openPreview() {
           </span>
         </div>
         <div class="row">
-          <span class="label">Obsidian</span>
+          <span class="label"><PhCircleWavy :size="10" weight="duotone" /> Obsidian</span>
           <span :class="obsidianConnected ? 'connected' : 'disconnected'">
             {{ obsidianConnected ? 'connected' : 'not connected' }}
           </span>
         </div>
         <div class="row">
-          <span class="label">Git</span>
+          <span class="label"><PhGitBranch :size="10" weight="duotone" /> Git</span>
           <span v-if="!gitStatus">checking...</span>
           <span v-else-if="gitStatus.ok" class="connected">
-            {{ gitStatus.branch }} ✓
+            {{ gitStatus.branch }}
           </span>
           <span v-else class="git-warning" :title="gitStatus.error || ''">
             {{ gitStatus.error }}
           </span>
         </div>
         <div v-if="postStats || loadingStats" class="row">
-          <span class="label">Analytics</span>
+          <span class="label"><PhChartBar :size="10" weight="duotone" /> Analytics</span>
           <span v-if="loadingStats" class="muted">loading...</span>
           <span v-else-if="postStats" class="analytics-inline">
             {{ postStats.pageviews }} views &middot;
@@ -656,7 +754,7 @@ async function openPreview() {
           </span>
         </div>
         <div class="row">
-          <span class="label">Visibility</span>
+          <span class="label"><PhGlobe :size="10" weight="duotone" /> Visibility</span>
           <span v-if="isPasswordProtected" class="protected-text" :title="`Password: ${file.password}`">
             <PhLockSimple :size="11" weight="bold" /> Protected
           </span>
@@ -664,18 +762,18 @@ async function openPreview() {
             <PhEye :size="11" weight="bold" /> Unlisted
           </span>
           <span v-else class="public-text">
-            ✓ Public
+            Public
           </span>
         </div>
       </div>
 
       <!-- Always visible: actionable metadata -->
       <div v-if="file.tags.length" class="row">
-        <span class="label">Tags</span>
+        <span class="label"><PhTag :size="10" weight="duotone" /> Tags</span>
         <span class="tags-list">{{ file.tags.join(', ') }}</span>
       </div>
       <div v-if="suggestedTags.length > 0" class="row suggested-tags-row">
-        <span class="label">Suggest</span>
+        <span class="label"><PhTag :size="10" weight="duotone" /> Suggest</span>
         <div class="suggested-tags">
           <button
             v-for="tag in suggestedTags"
@@ -715,7 +813,7 @@ async function openPreview() {
     <!-- Backlinks -->
     <div v-if="backlinks.length || loadingBacklinks" class="backlinks">
       <div class="backlinks-header">
-        <span class="label">Backlinks</span>
+        <span class="label"><PhLinkSimple :size="10" weight="duotone" /> Backlinks</span>
         <span class="count">{{ loadingBacklinks ? '...' : backlinks.length }}</span>
       </div>
       <div v-if="loadingBacklinks" class="backlinks-loading">Loading...</div>
@@ -730,7 +828,7 @@ async function openPreview() {
     <!-- Local Media -->
     <div v-if="localMedia.length > 0 || loadingLocalMedia" class="local-media-section">
       <div class="local-media-header">
-        <span class="label">Local Media</span>
+        <span class="label"><PhImageSquare :size="10" weight="duotone" /> Media</span>
         <span class="count warning">{{ loadingLocalMedia ? '...' : localMedia.length }}</span>
         <button v-if="localMedia.length > 0" @click="showMediaFixer = true" class="fix-btn">
           Fix
@@ -739,9 +837,9 @@ async function openPreview() {
       <div v-if="loadingLocalMedia" class="local-media-loading">Scanning...</div>
       <div v-else class="local-media-list">
         <div v-for="media in localMedia.slice(0, 3)" :key="media.path + media.line_number" class="local-media-item">
-          <span class="media-type">{{ media.media_type === 'video' ? '🎬' : '🖼' }}</span>
+          <span class="media-type"><PhFilmSlate v-if="media.media_type === 'video'" :size="12" weight="duotone" /><PhImageSquare v-else :size="12" weight="duotone" /></span>
           <span class="media-path">{{ media.path }}</span>
-          <span v-if="!media.resolved_path" class="missing">not found</span>
+          <span v-if="!media.resolved_path" class="missing"><PhWarningCircle :size="10" weight="fill" /> not found</span>
         </div>
         <div v-if="localMedia.length > 3" class="local-media-more">
           +{{ localMedia.length - 3 }} more
@@ -766,12 +864,12 @@ async function openPreview() {
           :key="editor.app_name"
           @click="editor.app_name === 'Obsidian' ? openInObsidian() : openInEditor(editor.app_name)"
           class="tool-btn"
-          :title="`Open in ${editor.name}`"
+          :data-tip="`Open in ${editor.name}`"
         >
-          <span class="tool-icon">{{ editor.name.slice(0, 2) }}</span> {{ editor.name }}
+          <PhNotePencil :size="12" weight="duotone" /> {{ editor.name }}
         </button>
-        <button @click="openPreview" class="tool-btn" title="Live Preview">
-          <span class="tool-icon">&#9654;</span> Preview
+        <button @click="openPreview" class="tool-btn" data-tip="Open local preview server">
+          <PhPlay :size="12" weight="fill" /> Preview
         </button>
       </div>
       <div class="toolbar-actions">
@@ -786,12 +884,20 @@ async function openPreview() {
           </option>
         </select>
         <template v-if="isLive">
-          <a :href="liveUrl!" target="_blank" class="btn">View &rarr;</a>
+          <a :href="liveUrl!" target="_blank" class="btn"><PhArrowSquareOut :size="12" weight="bold" /> View</a>
+          <button
+            @click="triggerWebmentions(false)"
+            :disabled="sendingWebmentions"
+            class="btn webmention-btn"
+            data-tip="Send webmentions to linked sites"
+          >
+            <PhGlobe :size="12" weight="bold" /> {{ sendingWebmentions ? 'Sending...' : 'Webmention' }}
+          </button>
           <button @click="unpublish" :disabled="unpublishing" class="btn">
-            {{ unpublishing ? '...' : 'Unpublish' }}
+            <PhTrash :size="12" weight="bold" /> {{ unpublishing ? '...' : 'Unpublish' }}
           </button>
           <button @click="openPublishConfirm(true)" :disabled="publishing" class="btn accent">
-            {{ publishing ? '...' : 'Republish' }}
+            <PhArrowsClockwise :size="12" weight="bold" /> {{ publishing ? '...' : 'Republish' }}
           </button>
         </template>
         <template v-else>
@@ -801,6 +907,13 @@ async function openPreview() {
             class="btn"
           >
             <PhClock :size="12" weight="bold" /> Schedule
+          </button>
+          <button
+            v-if="file.is_safe && !isUnlisted && !publishing"
+            @click="publishUnlisted"
+            class="btn publish-unlisted-btn"
+          >
+            <PhEyeSlash :size="12" weight="bold" /> Unlisted
           </button>
           <button
             @click="openPublishConfirm(false)"
@@ -831,6 +944,39 @@ async function openPreview() {
       <button @click="showSchedulePicker = false" class="btn">Cancel</button>
     </div>
 
+    <!-- Webmention Results -->
+    <div v-if="webmentionReport" class="webmention-report">
+      <div class="webmention-header">
+        <span class="webmention-title"><PhGlobe :size="12" weight="bold" /> Webmentions</span>
+        <span class="webmention-stats">
+          <span v-if="webmentionReport.sent" class="wm-sent">{{ webmentionReport.sent }} sent</span>
+          <span v-if="webmentionReport.no_endpoint" class="wm-none">{{ webmentionReport.no_endpoint }} no endpoint</span>
+          <span v-if="webmentionReport.errors" class="wm-err">{{ webmentionReport.errors }} failed</span>
+        </span>
+        <button class="wm-close" @click="webmentionReport = null">&times;</button>
+      </div>
+      <div class="webmention-list">
+        <div
+          v-for="r in webmentionReport.results"
+          :key="r.target"
+          class="wm-item"
+          :class="r.status"
+        >
+          <span class="wm-status-dot"></span>
+          <a :href="r.target" target="_blank" class="wm-target">{{ r.target.replace(/^https?:\/\//, '').split('/').slice(0, 2).join('/') }}</a>
+          <span v-if="r.message" class="wm-msg">{{ r.message }}</span>
+        </div>
+      </div>
+      <button
+        v-if="!sendingWebmentions"
+        class="btn webmention-btn wm-bridgy"
+        @click="triggerWebmentions(true)"
+        data-tip="Also send to Bridgy Fed for fediverse"
+      >
+        <PhGlobe :size="11" weight="bold" /> Resend + Bridgy Fed
+      </button>
+    </div>
+
     <!-- Publish Confirmation -->
     <Transition name="pub-modal">
       <div v-if="showPublishConfirm" class="pub-overlay" @click.self="closePublishConfirm" @keydown.escape="closePublishConfirm" tabindex="-1">
@@ -854,6 +1000,7 @@ async function openPreview() {
             </div>
             <h2 class="pub-modal-title">{{ publishConfirmRepublish ? 'Republish' : 'Ready to publish?' }}</h2>
             <p class="pub-modal-subtitle">This will push to your live website.</p>
+            <p v-if="publishContext" class="pub-modal-context">{{ publishContext }}</p>
 
             <div class="pub-detail-card">
               <div class="pub-detail-row">
@@ -933,7 +1080,7 @@ async function openPreview() {
     </Transition>
 
     <!-- Content Divider -->
-    <div class="content-divider"><span>CONTENT</span></div>
+    <div class="content-divider"><span><PhTextAa :size="10" weight="duotone" /> CONTENT</span></div>
 
     <!-- Preview -->
     <div class="preview">
@@ -1167,6 +1314,9 @@ async function openPreview() {
   padding: 2px 5px;
   border-radius: 3px;
   background: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 
 .unlisted-ready .visibility-badge {
@@ -1257,6 +1407,12 @@ async function openPreview() {
   color: var(--text-primary);
 }
 
+.info-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
 .info-toggle {
   font-size: 8px;
   color: var(--text-tertiary);
@@ -1284,9 +1440,12 @@ async function openPreview() {
 }
 
 .label {
-  width: 55px;
+  width: 68px;
   color: var(--text-tertiary);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
 }
 
 .weeknote-type {
@@ -1504,6 +1663,15 @@ async function openPreview() {
   margin: 4px 0 16px;
   font-size: 12px;
   color: var(--text-tertiary);
+}
+
+.pub-modal-context {
+  margin: -10px 0 14px;
+  font-size: 10px;
+  font-family: 'SF Mono', monospace;
+  color: var(--success);
+  opacity: 0.8;
+  letter-spacing: 0.01em;
 }
 
 /* Detail card */
@@ -1836,6 +2004,9 @@ async function openPreview() {
 
 .missing {
   color: var(--warning);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .connected, .published {
@@ -1857,7 +2028,7 @@ async function openPreview() {
   font-size: 10px;
 }
 
-/* Success Toast - Enhanced celebration */
+/* Success Toast */
 .success-toast {
   position: absolute;
   top: 50%;
@@ -1865,13 +2036,28 @@ async function openPreview() {
   transform: translate(-50%, -50%);
   background: var(--success);
   color: #000;
-  padding: 20px 40px;
-  border-radius: 16px;
-  font-size: 20px;
+  padding: 16px 32px;
+  border-radius: 12px;
+  font-size: 16px;
   font-weight: 600;
   z-index: 100;
   box-shadow: 0 8px 32px rgba(48, 209, 88, 0.4),
               0 0 0 1px rgba(48, 209, 88, 0.2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.success-toast.milestone {
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+  color: #000;
+  padding: 20px 36px;
+  border-radius: 14px;
+  font-size: 17px;
+  box-shadow: 0 8px 40px rgba(245, 158, 11, 0.45),
+              0 0 0 1px rgba(245, 158, 11, 0.3),
+              0 0 80px rgba(245, 158, 11, 0.1);
 }
 
 .toast-enter-active {
@@ -2110,10 +2296,10 @@ async function openPreview() {
 
 .tool-btn {
   flex: 1;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 5px;
   padding: 4px 6px;
   height: 26px;
   font-size: 10px;
@@ -2136,11 +2322,8 @@ async function openPreview() {
   transform: scale(0.97);
 }
 
-.tool-icon {
-  font-size: 10px;
-  font-weight: 700;
-  font-family: 'SF Mono', 'Menlo', monospace;
-  letter-spacing: -0.5px;
+.tool-btn svg {
+  flex-shrink: 0;
 }
 
 .toolbar-actions {
@@ -2172,6 +2355,9 @@ async function openPreview() {
   color: var(--text-primary);
   transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
   min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .btn:hover {
@@ -2219,6 +2405,16 @@ async function openPreview() {
   color: var(--text-tertiary) !important;
 }
 
+.publish-unlisted-btn {
+  background: rgba(99, 102, 241, 0.15) !important;
+  color: #818cf8 !important;
+  border: 1px solid rgba(99, 102, 241, 0.3) !important;
+}
+
+.publish-unlisted-btn:hover {
+  background: rgba(99, 102, 241, 0.25) !important;
+}
+
 .shortcut-hint {
   display: inline-flex;
   align-items: center;
@@ -2246,6 +2442,9 @@ async function openPreview() {
   text-transform: uppercase;
   letter-spacing: 0.75px;
   color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* Preview */
@@ -2409,5 +2608,112 @@ async function openPreview() {
 .rendered-content :deep(th) {
   background: var(--bg-tertiary);
   font-weight: 600;
+}
+
+/* Webmention styles */
+.webmention-btn {
+  background: rgba(99, 102, 241, 0.15) !important;
+  color: #818cf8 !important;
+  border: 1px solid rgba(99, 102, 241, 0.2) !important;
+}
+
+.webmention-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.25) !important;
+}
+
+.webmention-report {
+  margin: 0 16px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.webmention-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+}
+
+.webmention-title {
+  font-weight: 600;
+  color: #818cf8;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.webmention-stats {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  font-family: 'SF Mono', monospace;
+  font-size: 9px;
+}
+
+.wm-sent { color: var(--success); }
+.wm-none { color: var(--text-tertiary); }
+.wm-err { color: var(--error, #ef4444); }
+
+.wm-close {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.webmention-list {
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.wm-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 9px;
+  font-family: 'SF Mono', monospace;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.wm-item:last-child { border-bottom: none; }
+
+.wm-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.wm-item.sent .wm-status-dot { background: var(--success); }
+.wm-item.no_endpoint .wm-status-dot { background: var(--text-tertiary); }
+.wm-item.error .wm-status-dot { background: var(--error, #ef4444); }
+
+.wm-target {
+  color: var(--text-secondary);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.wm-target:hover { color: var(--text-primary); }
+
+.wm-msg {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.wm-bridgy {
+  margin: 6px 10px;
+  font-size: 9px;
 }
 </style>
