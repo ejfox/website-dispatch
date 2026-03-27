@@ -138,6 +138,11 @@ interface WebmentionReport {
 const sendingWebmentions = ref(false)
 const webmentionReport = ref<WebmentionReport | null>(null)
 
+// Crown
+const isCrowned = ref(false)
+const crowning = ref(false)
+const crownHue = ref(220)
+
 // Tag suggestions
 const availableTags = ref<Record<string, number>>({})
 const suggestedTags = ref<string[]>([])
@@ -474,6 +479,29 @@ async function publishUnlisted() {
   } catch (e) {
     alert(`Failed to set unlisted: ${e}`)
   }
+}
+
+// Check crown status when slug changes
+watch(slug, async (s) => {
+  if (!s) { isCrowned.value = false; return }
+  try {
+    isCrowned.value = await invoke<boolean>('is_post_crowned', { slug: s })
+  } catch { isCrowned.value = false }
+}, { immediate: true })
+
+async function crownPost() {
+  if (!slug.value || crowning.value) return
+  crowning.value = true
+  try {
+    const path = await invoke<string>('crown_post', { slug: slug.value, hue: crownHue.value })
+    isCrowned.value = true
+    successMessage.value = `Crowned! Edit ${path.split('/').slice(-3).join('/')}`
+    showSuccess.value = true
+    setTimeout(() => { showSuccess.value = false }, 5000)
+  } catch (e) {
+    alert(`Crown failed: ${e}`)
+  }
+  crowning.value = false
 }
 
 async function triggerWebmentions(bridgyFed = false) {
@@ -893,6 +921,18 @@ async function openPreview() {
           >
             <PhGlobe :size="12" weight="bold" /> {{ sendingWebmentions ? 'Sending...' : 'Webmention' }}
           </button>
+          <button
+            v-if="!isCrowned"
+            @click="crownPost"
+            :disabled="crowning"
+            class="btn crown-btn"
+            data-tip="Create interactive Vue page takeover"
+          >
+            <PhTrophy :size="12" weight="bold" /> {{ crowning ? 'Crowning...' : 'Crown' }}
+          </button>
+          <span v-else class="crowned-badge" data-tip="This post has a Vue page takeover">
+            <PhTrophy :size="10" weight="fill" /> Crowned
+          </span>
           <button @click="unpublish" :disabled="unpublishing" class="btn">
             <PhTrash :size="12" weight="bold" /> {{ unpublishing ? '...' : 'Unpublish' }}
           </button>
@@ -2608,6 +2648,29 @@ async function openPreview() {
 .rendered-content :deep(th) {
   background: var(--bg-tertiary);
   font-weight: 600;
+}
+
+/* Crown button */
+.crown-btn {
+  background: rgba(245, 158, 11, 0.15) !important;
+  color: #f59e0b !important;
+  border: 1px solid rgba(245, 158, 11, 0.2) !important;
+}
+.crown-btn:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.25) !important;
+}
+
+.crowned-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  color: #f59e0b;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.1);
+  letter-spacing: 0.03em;
 }
 
 /* Webmention styles */
