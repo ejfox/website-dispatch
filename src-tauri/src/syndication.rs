@@ -145,6 +145,65 @@ pub fn post_to_mastodon(post: &PostContent) -> SyndicationResult {
     }
 }
 
+/// Post to Mastodon with pre-composed text (from the queue, user-edited).
+pub fn post_to_mastodon_with_text(status_text: &str) -> SyndicationResult {
+    let (instance, token) = match get_mastodon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return SyndicationResult {
+                platform: "mastodon".into(),
+                success: false,
+                url: None,
+                error: Some(e),
+            }
+        }
+    };
+
+    let url = format!("https://{}/api/v1/statuses", instance);
+    let body = serde_json::json!({
+        "status": status_text,
+        "visibility": "public",
+    });
+
+    let client = reqwest::blocking::Client::new();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+    match client.post(&url).headers(headers).json(&body).send() {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                let data: serde_json::Value = resp.json().unwrap_or_default();
+                let toot_url = data["url"].as_str().map(|s| s.to_string());
+                SyndicationResult {
+                    platform: "mastodon".into(),
+                    success: true,
+                    url: toot_url,
+                    error: None,
+                }
+            } else {
+                let status = resp.status();
+                let text = resp.text().unwrap_or_default();
+                SyndicationResult {
+                    platform: "mastodon".into(),
+                    success: false,
+                    url: None,
+                    error: Some(format!("Mastodon {} — {}", status, text)),
+                }
+            }
+        }
+        Err(e) => SyndicationResult {
+            platform: "mastodon".into(),
+            success: false,
+            url: None,
+            error: Some(format!("Request failed: {}", e)),
+        },
+    }
+}
+
 /// Validate that the Mastodon config works (verifies token).
 pub fn verify_mastodon() -> Result<String, String> {
     let (instance, token) = get_mastodon_config()?;

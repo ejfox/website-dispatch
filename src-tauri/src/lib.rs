@@ -25,6 +25,7 @@ mod obsidian; // Talks to Obsidian's Local REST API for backlinks
 mod preview; // Manages a local Node.js server for previewing posts
 mod publish; // Handles git operations to publish posts to your website
 mod syndication; // Post-publish social distribution (Mastodon, etc.)
+mod syndication_queue; // Scheduled syndication queue with background sender
 mod vault; // Scans your Obsidian vault for markdown files
 mod webmention; // IndieWeb webmention sending
 mod journal; // Publishing journal, streaks, milestones
@@ -1001,6 +1002,55 @@ fn verify_mastodon() -> Result<String, String> {
     syndication::verify_mastodon()
 }
 
+// Queue posts for syndication (from the wizard)
+#[tauri::command]
+fn queue_syndication(items: Vec<syndication_queue::NewQueueItem>) -> Result<Vec<i64>, String> {
+    syndication_queue::queue_items(&items)
+}
+
+// Get syndication queue items
+#[tauri::command]
+fn get_syndication_queue(
+    status: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<syndication_queue::QueueItem>, String> {
+    syndication_queue::get_queue(status.as_deref(), limit.unwrap_or(50))
+}
+
+// Get syndication queue for a specific post
+#[tauri::command]
+fn get_post_syndication(slug: String) -> Result<Vec<syndication_queue::QueueItem>, String> {
+    syndication_queue::get_queue_for_post(&slug)
+}
+
+// Update a queue item (text, schedule, media)
+#[tauri::command]
+fn update_syndication_item(
+    id: i64,
+    platform_text: Option<String>,
+    scheduled_at: Option<String>,
+    media_url: Option<String>,
+) -> Result<(), String> {
+    syndication_queue::update_item(
+        id,
+        platform_text.as_deref(),
+        scheduled_at.as_deref(),
+        media_url.as_deref(),
+    )
+}
+
+// Delete a queue item
+#[tauri::command]
+fn delete_syndication_item(id: i64) -> Result<(), String> {
+    syndication_queue::delete_item(id)
+}
+
+// Send a queue item immediately
+#[tauri::command]
+fn send_syndication_now(id: i64) -> Result<syndication::SyndicationResult, String> {
+    syndication_queue::send_item(id)
+}
+
 // List all folders in Cloudinary (for folder picker UI)
 #[tauri::command]
 async fn cloudinary_list_folders() -> Result<Vec<String>, String> {
@@ -1110,6 +1160,12 @@ pub fn run() {
                 publish::run_schedule_checker(handle).await;
             });
 
+            // Start syndication scheduler background task
+            let syndication_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                syndication_queue::run_syndication_scheduler(syndication_handle).await;
+            });
+
             // Start companion web server
             tauri::async_runtime::spawn(async {
                 companion::start_server().await;
@@ -1209,6 +1265,12 @@ pub fn run() {
             apply_alt_text,
             syndicate_post,
             verify_mastodon,
+            queue_syndication,
+            get_syndication_queue,
+            get_post_syndication,
+            update_syndication_item,
+            delete_syndication_item,
+            send_syndication_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
