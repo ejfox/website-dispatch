@@ -227,7 +227,47 @@ pub fn verify_mastodon() -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Future platforms go here
+// Promo image generation via Cloudinary text overlays
+// ---------------------------------------------------------------------------
+
+/// Generate a promo card image URL using Cloudinary text overlays.
+/// Returns a Cloudinary URL that renders a 1200x630 card with title + URL.
+/// No upload needed — Cloudinary generates it on the fly from URL params.
+pub fn generate_promo_image_url(title: &str, url: &str) -> Result<String, String> {
+    let config = crate::cloudinary::get_config()?;
+
+    // URL-encode the title for Cloudinary text overlay
+    let safe_title = title
+        .replace('%', "%25")
+        .replace('/', "%2F")
+        .replace('#', "%23")
+        .replace('?', "%3F")
+        .replace('&', "%26")
+        .replace(',', "%252C")
+        .replace(' ', "%20");
+
+    let safe_url = url
+        .replace('%', "%25")
+        .replace('/', "%2F")
+        .replace('#', "%23")
+        .replace(':', "%3A");
+
+    // Cloudinary text overlay URL — generates a 1200x630 OG card
+    // Dark zinc background, white Georgia title, gray monospace URL
+    Ok(format!(
+        "https://res.cloudinary.com/{cloud}/image/upload/\
+         w_1200,h_630,c_fill,b_rgb:18181b/\
+         l_text:Georgia_44_bold_line_spacing_8:{title},co_rgb:e4e4e7,g_north_west,x_60,y_80,w_1000,c_fit/\
+         l_text:courier_20:{url},co_rgb:71717a,g_south_west,x_60,y_60,w_1000/\
+         v1/blank_og.png",
+        cloud = config.cloud_name,
+        title = safe_title,
+        url = safe_url,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Future platforms
 // ---------------------------------------------------------------------------
 // pub fn post_to_bluesky(post: &PostContent) -> SyndicationResult { ... }
 // pub fn post_to_linkedin(post: &PostContent) -> SyndicationResult { ... }

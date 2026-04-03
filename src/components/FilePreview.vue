@@ -5,6 +5,7 @@ import { Command } from 'lucide-vue-next'
 import { PhLockSimple, PhEye, PhEyeSlash, PhClock, PhArrowSquareUpRight, PhArrowsClockwise, PhKeyboard, PhShieldWarning, PhCheck, PhCheckCircle, PhFolder, PhCalendarBlank, PhGitBranch, PhCircleWavy, PhChartBar, PhGlobe, PhTag, PhLinkSimple, PhImageSquare, PhFilmSlate, PhWarningCircle, PhTextAa, PhPlay, PhArrowSquareOut, PhNotePencil, PhTrash, PhTrophy } from '@phosphor-icons/vue'
 import LocalMediaFixer from './LocalMediaFixer.vue'
 import AltTextReviewer from './AltTextReviewer.vue'
+import SyndicationWizard from './SyndicationWizard.vue'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
@@ -124,15 +125,8 @@ const metadataExpanded = ref(false)
 // Alt text review modal
 const showAltTextReviewer = ref(false)
 
-// Syndication (Mastodon, etc.)
-interface SyndicationResult {
-  platform: string
-  success: boolean
-  url: string | null
-  error: string | null
-}
-const syndicating = ref(false)
-const syndicationResults = ref<SyndicationResult[]>([])
+// Syndication wizard
+const showSyndicationWizard = ref(false)
 
 // Webmentions
 interface WebmentionResult {
@@ -493,30 +487,11 @@ async function publish(isRepublish = false) {
   publishing.value = false
 }
 
-async function syndicatePost() {
-  if (!liveUrl.value) return
-  syndicating.value = true
-  try {
-    const results = await invoke<SyndicationResult[]>('syndicate_post', {
-      postUrl: liveUrl.value,
-      title: title.value,
-      slug: slug.value,
-      tags: props.file.tags,
-      dek: props.file.dek || null,
-      contentType: props.file.content_type,
-      visibility: isPasswordProtected.value ? 'protected' : isUnlisted.value ? 'unlisted' : 'public',
-    })
-    syndicationResults.value = results
-    const success = results.filter(r => r.success)
-    if (success.length > 0) {
-      successMessage.value = `Shared to ${success.map(r => r.platform).join(', ')}!`
-      showSuccess.value = true
-      setTimeout(() => { showSuccess.value = false }, 3000)
-    }
-  } catch (e) {
-    syndicationResults.value = [{ platform: 'error', success: false, url: null, error: `${e}` }]
-  }
-  syndicating.value = false
+function onSyndicationQueued() {
+  showSyndicationWizard.value = false
+  successMessage.value = 'Posts queued for syndication!'
+  showSuccess.value = true
+  setTimeout(() => { showSuccess.value = false }, 3000)
 }
 
 function onAltTextApplied() {
@@ -1001,12 +976,11 @@ async function openPreview() {
             <PhGlobe :size="12" weight="bold" /> {{ sendingWebmentions ? 'Sending...' : 'Webmention' }}
           </button>
           <button
-            @click="syndicatePost"
-            :disabled="syndicating || syndicationResults.some(r => r.success)"
+            @click="showSyndicationWizard = true"
             class="btn syndicate-btn"
-            data-tip="Share to Mastodon"
+            data-tip="Share to social platforms"
           >
-            <PhArrowSquareUpRight :size="12" weight="bold" /> {{ syndicating ? 'Posting...' : syndicationResults.some(r => r.success) ? 'Shared' : 'Share' }}
+            <PhArrowSquareUpRight :size="12" weight="bold" /> Syndicate
           </button>
           <button
             v-if="!isCrowned"
@@ -1072,16 +1046,19 @@ async function openPreview() {
     </div>
 
     <!-- Webmention Results -->
-    <!-- Syndication results -->
-    <div v-if="syndicationResults.length > 0" class="syndication-report">
-      <div v-for="r in syndicationResults" :key="r.platform" class="syndication-item" :class="{ success: r.success, error: !r.success }">
-        <span v-if="r.success" class="syndication-icon">&#10003;</span>
-        <span v-else class="syndication-icon">&#10007;</span>
-        <span class="syndication-platform">{{ r.platform }}</span>
-        <a v-if="r.url" :href="r.url" target="_blank" class="syndication-link">view</a>
-        <span v-if="r.error" class="syndication-error">{{ r.error }}</span>
-      </div>
-    </div>
+    <!-- Syndication Wizard Modal -->
+    <SyndicationWizard
+      v-if="showSyndicationWizard && liveUrl"
+      :post-url="liveUrl"
+      :title="title"
+      :slug="slug"
+      :dek="file.dek"
+      :tags="file.tags"
+      :content-type="file.content_type"
+      :visibility="isPasswordProtected ? 'protected' : isUnlisted ? 'unlisted' : 'public'"
+      @close="showSyndicationWizard = false"
+      @queued="onSyndicationQueued"
+    />
 
     <div v-if="webmentionReport" class="webmention-report">
       <div class="webmention-header">

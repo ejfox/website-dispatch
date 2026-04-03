@@ -1051,6 +1051,12 @@ fn send_syndication_now(id: i64) -> Result<syndication::SyndicationResult, Strin
     syndication_queue::send_item(id)
 }
 
+// Generate a promo card image URL via Cloudinary text overlays
+#[tauri::command]
+fn generate_promo_image(title: String, url: String) -> Result<String, String> {
+    syndication::generate_promo_image_url(&title, &url)
+}
+
 // List all folders in Cloudinary (for folder picker UI)
 #[tauri::command]
 async fn cloudinary_list_folders() -> Result<Vec<String>, String> {
@@ -1271,6 +1277,7 @@ pub fn run() {
             update_syndication_item,
             delete_syndication_item,
             send_syndication_now,
+            generate_promo_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
