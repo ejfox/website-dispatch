@@ -49,6 +49,22 @@ const saveMessage = ref('')
 const vaultPathValid = ref<boolean | null>(null)
 const repoPathValid = ref<Record<number, boolean | null>>({})
 
+// Mastodon verification
+const verifyingMastodon = ref(false)
+const mastodonStatus = ref<string | null>(null)
+
+async function verifyMastodon() {
+  verifyingMastodon.value = true
+  mastodonStatus.value = null
+  try {
+    const result = await invoke<string>('verify_mastodon')
+    mastodonStatus.value = result
+  } catch (e) {
+    mastodonStatus.value = `${e}`
+  }
+  verifyingMastodon.value = false
+}
+
 // New dir input
 const newExcludedDir = ref('')
 const newPublishableDir = ref('')
@@ -339,6 +355,19 @@ async function save() {
               <label>Analytics URL</label>
               <input v-model="config.analytics_url" placeholder="https://analytics.example.com" />
               <span class="hint">Umami instance URL. Credentials via .env</span>
+            </div>
+
+            <div class="field-divider"></div>
+            <div class="field">
+              <label>Mastodon Instance</label>
+              <input v-model="config.mastodon_instance" placeholder="mastodon.social" />
+              <span class="hint">Access token via MASTODON_ACCESS_TOKEN in .env</span>
+            </div>
+
+            <div class="field">
+              <button @click="verifyMastodon" class="verify-btn" :disabled="verifyingMastodon">
+                {{ verifyingMastodon ? 'Checking...' : mastodonStatus || 'Verify connection' }}
+              </button>
             </div>
 
             <div class="config-path">

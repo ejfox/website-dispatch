@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { Command } from 'lucide-vue-next'
 import { PhLockSimple, PhEye, PhEyeSlash, PhClock, PhArrowSquareUpRight, PhArrowsClockwise, PhKeyboard, PhShieldWarning, PhCheck, PhCheckCircle, PhFolder, PhCalendarBlank, PhGitBranch, PhCircleWavy, PhChartBar, PhGlobe, PhTag, PhLinkSimple, PhImageSquare, PhFilmSlate, PhWarningCircle, PhTextAa, PhPlay, PhArrowSquareOut, PhNotePencil, PhTrash, PhTrophy } from '@phosphor-icons/vue'
 import LocalMediaFixer from './LocalMediaFixer.vue'
+import AltTextReviewer from './AltTextReviewer.vue'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
@@ -119,6 +120,19 @@ const loadingLocalMedia = ref(false)
 const showMediaFixer = ref(false)
 const justPublishedGlow = ref(false)
 const metadataExpanded = ref(false)
+
+// Alt text review modal
+const showAltTextReviewer = ref(false)
+
+// Syndication (Mastodon, etc.)
+interface SyndicationResult {
+  platform: string
+  success: boolean
+  url: string | null
+  error: string | null
+}
+const syndicating = ref(false)
+const syndicationResults = ref<SyndicationResult[]>([])
 
 // Webmentions
 interface WebmentionResult {
@@ -366,6 +380,14 @@ const lintWarnings = computed(() =>
   props.file.warnings.filter(w => w !== 'Modified since publish')
 )
 
+// Alt text detection
+const missingAltTextCount = computed(() => {
+  const w = props.file.warnings.find(w => w.startsWith('Missing alt text'))
+  if (!w) return 0
+  const match = w.match(/\((\d+)\)/)
+  return match ? parseInt(match[1]) : 0
+})
+
 // Visibility states
 const isUnlisted = computed(() => props.file.unlisted || !!props.file.password)
 const isPasswordProtected = computed(() => !!props.file.password)
@@ -469,6 +491,40 @@ async function publish(isRepublish = false) {
     alert(`Failed: ${e}`)
   }
   publishing.value = false
+}
+
+async function syndicatePost() {
+  if (!liveUrl.value) return
+  syndicating.value = true
+  try {
+    const results = await invoke<SyndicationResult[]>('syndicate_post', {
+      postUrl: liveUrl.value,
+      title: title.value,
+      slug: slug.value,
+      tags: props.file.tags,
+      dek: props.file.dek || null,
+      contentType: props.file.content_type,
+      visibility: isPasswordProtected.value ? 'protected' : isUnlisted.value ? 'unlisted' : 'public',
+    })
+    syndicationResults.value = results
+    const success = results.filter(r => r.success)
+    if (success.length > 0) {
+      successMessage.value = `Shared to ${success.map(r => r.platform).join(', ')}!`
+      showSuccess.value = true
+      setTimeout(() => { showSuccess.value = false }, 3000)
+    }
+  } catch (e) {
+    syndicationResults.value = [{ platform: 'error', success: false, url: null, error: `${e}` }]
+  }
+  syndicating.value = false
+}
+
+function onAltTextApplied() {
+  showAltTextReviewer.value = false
+  successMessage.value = 'Alt text applied!'
+  showSuccess.value = true
+  setTimeout(() => { showSuccess.value = false }, 3000)
+  setTimeout(() => emit('published'), 500)
 }
 
 async function publishUnlisted() {
@@ -838,6 +894,29 @@ async function openPreview() {
       <div class="lint-receipt-footer">Dispatch</div>
     </div>
 
+    <!-- Alt Text -->
+    <div v-if="missingAltTextCount > 0" class="alt-text-section">
+      <div class="alt-text-header">
+        <span class="label"><PhImageSquare :size="10" weight="duotone" /> Alt Text</span>
+        <span class="count warning">{{ missingAltTextCount }}</span>
+        <button @click="showAltTextReviewer = true" class="fix-btn">
+          Describe
+        </button>
+      </div>
+      <div class="alt-text-hint">
+        {{ missingAltTextCount }} image(s) need descriptions
+      </div>
+    </div>
+
+    <!-- Alt Text Reviewer Modal -->
+    <AltTextReviewer
+      v-if="showAltTextReviewer"
+      :file-path="file.path"
+      :count="missingAltTextCount"
+      @close="showAltTextReviewer = false"
+      @applied="onAltTextApplied"
+    />
+
     <!-- Backlinks -->
     <div v-if="backlinks.length || loadingBacklinks" class="backlinks">
       <div class="backlinks-header">
@@ -922,6 +1001,14 @@ async function openPreview() {
             <PhGlobe :size="12" weight="bold" /> {{ sendingWebmentions ? 'Sending...' : 'Webmention' }}
           </button>
           <button
+            @click="syndicatePost"
+            :disabled="syndicating || syndicationResults.some(r => r.success)"
+            class="btn syndicate-btn"
+            data-tip="Share to Mastodon"
+          >
+            <PhArrowSquareUpRight :size="12" weight="bold" /> {{ syndicating ? 'Posting...' : syndicationResults.some(r => r.success) ? 'Shared' : 'Share' }}
+          </button>
+          <button
             v-if="!isCrowned"
             @click="crownPost"
             :disabled="crowning"
@@ -985,6 +1072,17 @@ async function openPreview() {
     </div>
 
     <!-- Webmention Results -->
+    <!-- Syndication results -->
+    <div v-if="syndicationResults.length > 0" class="syndication-report">
+      <div v-for="r in syndicationResults" :key="r.platform" class="syndication-item" :class="{ success: r.success, error: !r.success }">
+        <span v-if="r.success" class="syndication-icon">&#10003;</span>
+        <span v-else class="syndication-icon">&#10007;</span>
+        <span class="syndication-platform">{{ r.platform }}</span>
+        <a v-if="r.url" :href="r.url" target="_blank" class="syndication-link">view</a>
+        <span v-if="r.error" class="syndication-error">{{ r.error }}</span>
+      </div>
+    </div>
+
     <div v-if="webmentionReport" class="webmention-report">
       <div class="webmention-header">
         <span class="webmention-title"><PhGlobe :size="12" weight="bold" /> Webmentions</span>
@@ -2228,7 +2326,41 @@ async function openPreview() {
   text-overflow: ellipsis;
 }
 
-/* Local Media */
+/* Alt Text */
+.alt-text-section {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.alt-text-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.alt-text-header .label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.75px;
+}
+
+.alt-text-header .count {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.alt-text-header .count.warning {
+  color: var(--warning);
+}
+
+.alt-text-hint {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
 .local-media-section {
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
@@ -2683,6 +2815,27 @@ async function openPreview() {
 .webmention-btn:hover:not(:disabled) {
   background: rgba(99, 102, 241, 0.25) !important;
 }
+
+/* Syndication */
+.syndication-report {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.syndication-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.syndication-item.success .syndication-icon { color: #22c55e; }
+.syndication-item.error .syndication-icon { color: #ef4444; }
+.syndication-platform { font-weight: 600; text-transform: capitalize; }
+.syndication-link { color: var(--text-tertiary); text-decoration: underline; }
+.syndication-error { color: var(--warning); }
+
+.syndicate-btn { color: #a78bfa !important; }
 
 .webmention-report {
   margin: 0 16px 8px;

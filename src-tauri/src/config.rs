@@ -16,6 +16,8 @@ pub struct AppConfig {
     pub cloudinary_cloud_name: Option<String>,
     #[serde(default)]
     pub analytics_url: Option<String>,
+    #[serde(default)]
+    pub mastodon_instance: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +95,7 @@ impl Default for AppConfig {
             default_editor: "iA Writer".into(),
             cloudinary_cloud_name: None,
             analytics_url: None,
+            mastodon_instance: None,
         }
     }
 }

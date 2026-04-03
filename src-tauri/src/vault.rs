@@ -536,13 +536,25 @@ fn check_warnings(
         "](#)",    // Empty anchor
         "](http)", // Incomplete http
         "[[]]",    // Empty wikilink
-        "![](",    // Image with no alt text (not critical but worth noting)
     ];
     for pattern in broken_link_patterns {
         if body.contains(pattern) {
             warnings.push("Broken link".into());
             break;
         }
+    }
+
+    // Check for images with missing or junk alt text
+    let bad_alt_re = Regex::new(r"!\[([^\]]*)\]\([^)]+\)").unwrap();
+    let mut bad_alt_count = 0;
+    for caps in bad_alt_re.captures_iter(body) {
+        let alt = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        if is_junk_alt(alt) {
+            bad_alt_count += 1;
+        }
+    }
+    if bad_alt_count > 0 {
+        warnings.push(format!("Missing alt text ({})", bad_alt_count));
     }
 
     // Check for potentially broken image embeds
@@ -598,6 +610,36 @@ fn check_warnings(
     }
 
     warnings
+}
+
+/// Returns true if alt text is empty or junk (filenames, timestamps, UUIDs).
+fn is_junk_alt(alt: &str) -> bool {
+    let alt = alt.trim();
+    if alt.is_empty() {
+        return true;
+    }
+    let junk_re = Regex::new(
+        r"(?i)^(Screenshot|Screen Shot|Pasted image|IMG_|DSC|DJI_|DSCF|CleanShot|Untitled|image\d*)"
+    ).unwrap();
+    if junk_re.is_match(alt) {
+        return true;
+    }
+    // UUID-like: 8hex-4hex...
+    let uuid_re = Regex::new(r"^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}").unwrap();
+    if uuid_re.is_match(alt) {
+        return true;
+    }
+    // Bare filename with extension
+    let filename_re = Regex::new(r"(?i)^[A-Za-z0-9_.-]+\.(png|jpe?g|gif|webp|svg|tiff?)$").unwrap();
+    if filename_re.is_match(alt) {
+        return true;
+    }
+    // Date-prefixed junk
+    let date_re = Regex::new(r"^\d{4}-\d{2}-\d{2}").unwrap();
+    if date_re.is_match(alt) {
+        return true;
+    }
+    false
 }
 
 fn has_long_link_text(body: &str, max_words: usize) -> bool {

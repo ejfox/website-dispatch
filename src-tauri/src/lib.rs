@@ -15,6 +15,7 @@ use tauri::Manager;
 // `mod X` tells Rust "there's a file called X.rs in this folder - include it"
 // This is how Rust organizes code into separate files.
 // Each module becomes accessible as `module_name::function_name()`
+mod alttext; // AI-powered alt text generation for images
 mod analytics; // Umami analytics integration
 mod asset_usage; // Tracks which Cloudinary images are used in which posts
 mod cloudinary; // Uploads images/videos to Cloudinary CDN
@@ -23,6 +24,7 @@ pub mod config; // App configuration (vault path, publish targets, editors)
 mod obsidian; // Talks to Obsidian's Local REST API for backlinks
 mod preview; // Manages a local Node.js server for previewing posts
 mod publish; // Handles git operations to publish posts to your website
+mod syndication; // Post-publish social distribution (Mastodon, etc.)
 mod vault; // Scans your Obsidian vault for markdown files
 mod webmention; // IndieWeb webmention sending
 mod journal; // Publishing journal, streaks, milestones
@@ -955,6 +957,50 @@ fn get_post_assets(post_path: String) -> Result<Vec<String>, String> {
     asset_usage::get_post_assets(&post_path)
 }
 
+// Generate alt text suggestions for images missing alt text in a file
+#[tauri::command]
+async fn generate_alt_text(file_path: String) -> Result<alttext::AltTextResult, String> {
+    alttext::generate_suggestions(&file_path).await
+}
+
+// Apply generated alt text suggestions to a markdown file
+#[tauri::command]
+fn apply_alt_text(
+    file_path: String,
+    suggestions: Vec<alttext::AltTextSuggestion>,
+) -> Result<usize, String> {
+    alttext::apply_suggestions(&file_path, &suggestions)
+}
+
+// Syndicate a published post to social platforms (Mastodon, etc.)
+#[tauri::command]
+fn syndicate_post(
+    post_url: String,
+    title: String,
+    slug: String,
+    tags: Vec<String>,
+    dek: Option<String>,
+    content_type: String,
+    visibility: String,
+) -> Vec<syndication::SyndicationResult> {
+    let post = syndication::PostContent {
+        title,
+        url: post_url,
+        slug,
+        tags,
+        dek,
+        content_type,
+        visibility,
+    };
+    syndication::syndicate_post(&post)
+}
+
+// Verify Mastodon connection
+#[tauri::command]
+fn verify_mastodon() -> Result<String, String> {
+    syndication::verify_mastodon()
+}
+
 // List all folders in Cloudinary (for folder picker UI)
 #[tauri::command]
 async fn cloudinary_list_folders() -> Result<Vec<String>, String> {
@@ -1159,6 +1205,10 @@ pub fn run() {
             create_new_post,
             crown_post,
             is_post_crowned,
+            generate_alt_text,
+            apply_alt_text,
+            syndicate_post,
+            verify_mastodon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
