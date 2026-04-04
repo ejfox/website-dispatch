@@ -6,6 +6,7 @@ import { PhLockSimple, PhEye, PhEyeSlash, PhClock, PhArrowSquareUpRight, PhArrow
 import LocalMediaFixer from './LocalMediaFixer.vue'
 import AltTextReviewer from './AltTextReviewer.vue'
 import SyndicationWizard from './SyndicationWizard.vue'
+import OgImagePicker from './OgImagePicker.vue'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
@@ -906,6 +907,9 @@ async function openPreview() {
         </div>
       </div>
     </div>
+
+    <!-- OG Image (only after publish) -->
+    <OgImagePicker v-if="isLive" :slug="slug" @picked="() => {}" />
 
     <!-- Local Media -->
     <div v-if="localMedia.length > 0 || loadingLocalMedia" class="local-media-section">

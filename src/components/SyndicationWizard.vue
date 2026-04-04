@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { PhCheck, PhX, PhClock, PhPaperPlaneTilt, PhArrowRight, PhArrowLeft, PhImage } from '@phosphor-icons/vue'
+import OgImagePicker from './OgImagePicker.vue'
 
 interface NewQueueItem {
   post_slug: string
@@ -101,20 +102,10 @@ watch(selectedPlatforms, (plats) => {
 
 // Step 3: Media
 const promoImageUrl = ref<string | null>(null)
-const mediaOption = ref<'auto' | 'first' | 'custom'>('auto')
 
-async function generatePromoImage() {
-  try {
-    const url = await invoke<string>('generate_promo_image', {
-      title: props.title,
-      url: props.postUrl,
-    })
-    promoImageUrl.value = url
-  } catch (e) {
-    error.value = `Promo image failed: ${e}`
-  }
+function onOgPicked(url: string) {
+  promoImageUrl.value = url
 }
-generatePromoImage()
 
 // Step 4: Schedule
 const DRIP_PRESETS: Record<string, Record<string, string>> = {
@@ -236,23 +227,10 @@ async function queueAll() {
         </div>
       </div>
 
-      <!-- Step 3: Media -->
+      <!-- Step 3: Media — generative OG image picker -->
       <div v-if="step === 3" class="step-content">
-        <div class="step-title">Promo image</div>
-        <div class="media-options">
-          <label class="media-option" :class="{ active: mediaOption === 'auto' }">
-            <input type="radio" v-model="mediaOption" value="auto" />
-            Auto-generate card
-          </label>
-          <label class="media-option" :class="{ active: mediaOption === 'first' }">
-            <input type="radio" v-model="mediaOption" value="first" />
-            Use first post image
-          </label>
-        </div>
-        <div v-if="promoImageUrl" class="promo-preview">
-          <img :src="promoImageUrl" alt="Promo card preview" />
-        </div>
-        <div v-else class="promo-loading">Generating preview...</div>
+        <div class="step-title">Pick an OG image</div>
+        <OgImagePicker :slug="slug" @picked="onOgPicked" />
       </div>
 
       <!-- Step 4: Schedule -->

@@ -267,6 +267,119 @@ pub fn generate_promo_image_url(title: &str, url: &str) -> Result<String, String
 }
 
 // ---------------------------------------------------------------------------
+// OG Image generation — calls the Node script in the website repo
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OgImageVariants {
+    pub slug: String,
+    pub paths: Vec<String>,
+    pub preview_html: String,
+}
+
+/// Generate 4 OG image variants by calling the Node script in the website repo.
+/// Returns file paths to the generated PNGs.
+pub fn generate_og_variants(slug: &str, batch: u32) -> Result<OgImageVariants, String> {
+    let config = crate::config::get();
+    let target = crate::config::default_target();
+    let repo_path = &target.repo_path;
+    let script = format!("{}/scripts/og-image/index.mjs", repo_path);
+
+    // Check script exists
+    if !std::path::Path::new(&script).exists() {
+        return Err(format!("OG script not found at {}", script));
+    }
+
+    // The batch number offsets the variant seeds so rerolls produce new images
+    // We pass it by modifying the slug: "2025/post:batch3"
+    let batch_slug = if batch > 0 {
+        format!("{}:batch{}", slug, batch)
+    } else {
+        slug.to_string()
+    };
+
+    // Call: node scripts/og-image/index.mjs --slug {slug}
+    // This generates 4 variants to data/og-previews/{slug}/
+    let output = std::process::Command::new("node")
+        .arg(&script)
+        .arg("--slug")
+        .arg(&batch_slug)
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to run OG script: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("OG script failed: {}", stderr));
+    }
+
+    // Find the generated files
+    let safe_slug = slug.replace('/', "-");
+    let preview_dir = format!("{}/data/og-previews/{}", repo_path, safe_slug);
+    let mut paths = Vec::new();
+    for i in 0..4 {
+        let path = format!("{}/variant-{}.png", preview_dir, i);
+        if std::path::Path::new(&path).exists() {
+            paths.push(path);
+        }
+    }
+
+    let preview_html = format!("{}/preview.html", preview_dir);
+
+    Ok(OgImageVariants {
+        slug: slug.to_string(),
+        paths,
+        preview_html,
+    })
+}
+
+/// Upload a specific variant PNG to Cloudinary. Returns the URL.
+pub fn upload_og_image(file_path: &str, slug: &str) -> Result<String, String> {
+    let config = crate::cloudinary::get_config()?;
+    let public_id = format!("og/{}", slug.replace('/', "-"));
+
+    // Read file
+    let data = std::fs::read(file_path)
+        .map_err(|e| format!("Failed to read {}: {}", file_path, e))?;
+
+    // Upload via multipart
+    let ts = chrono::Utc::now().timestamp().to_string();
+    let to_sign = format!("public_id={}&timestamp={}{}", public_id, ts, config.api_secret);
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(to_sign.as_bytes());
+    let signature = format!("{:x}", hasher.finalize());
+
+    let form = reqwest::blocking::multipart::Form::new()
+        .part("file", reqwest::blocking::multipart::Part::bytes(data).file_name("og.png"))
+        .text("public_id", public_id.clone())
+        .text("timestamp", ts)
+        .text("api_key", config.api_key.clone())
+        .text("signature", signature)
+        .text("overwrite", "true");
+
+    let url = format!(
+        "https://api.cloudinary.com/v1_1/{}/image/upload",
+        config.cloud_name
+    );
+
+    let client = reqwest::blocking::Client::new();
+    let resp = client.post(&url).multipart(form).send()
+        .map_err(|e| format!("Upload failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let text = resp.text().unwrap_or_default();
+        return Err(format!("Cloudinary error: {}", text));
+    }
+
+    let json: serde_json::Value = resp.json().unwrap_or_default();
+    json["secure_url"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "No URL in Cloudinary response".into())
+}
+
+// ---------------------------------------------------------------------------
 // Future platforms
 // ---------------------------------------------------------------------------
 // pub fn post_to_bluesky(post: &PostContent) -> SyndicationResult { ... }

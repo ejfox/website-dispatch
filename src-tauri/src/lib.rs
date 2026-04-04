@@ -1051,10 +1051,22 @@ fn send_syndication_now(id: i64) -> Result<syndication::SyndicationResult, Strin
     syndication_queue::send_item(id)
 }
 
-// Generate a promo card image URL via Cloudinary text overlays
+// Generate a promo card image URL via Cloudinary text overlays (legacy)
 #[tauri::command]
 fn generate_promo_image(title: String, url: String) -> Result<String, String> {
     syndication::generate_promo_image_url(&title, &url)
+}
+
+// Generate 4 OG image variants for a post
+#[tauri::command]
+fn generate_og_variants(slug: String, batch: Option<u32>) -> Result<syndication::OgImageVariants, String> {
+    syndication::generate_og_variants(&slug, batch.unwrap_or(0))
+}
+
+// Upload a picked OG image variant to Cloudinary
+#[tauri::command]
+fn upload_og_image(file_path: String, slug: String) -> Result<String, String> {
+    syndication::upload_og_image(&file_path, &slug)
 }
 
 // List all folders in Cloudinary (for folder picker UI)
@@ -1278,6 +1290,8 @@ pub fn run() {
             delete_syndication_item,
             send_syndication_now,
             generate_promo_image,
+            generate_og_variants,
+            upload_og_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
