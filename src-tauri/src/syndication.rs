@@ -373,10 +373,22 @@ pub fn upload_og_image(file_path: &str, slug: &str) -> Result<String, String> {
     }
 
     let json: serde_json::Value = resp.json().unwrap_or_default();
-    json["secure_url"]
+    let secure_url = json["secure_url"]
         .as_str()
         .map(|s| s.to_string())
-        .ok_or_else(|| "No URL in Cloudinary response".into())
+        .ok_or_else(|| "No URL in Cloudinary response".to_string())?;
+
+    // Write to data/og-images.json in the website repo so blog:process picks it up
+    let target = crate::config::default_target();
+    let og_map_path = format!("{}/data/og-images.json", target.repo_path);
+    if let Ok(mut map) = std::fs::read_to_string(&og_map_path)
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)))
+    {
+        map[slug] = serde_json::Value::String(secure_url.clone());
+        let _ = std::fs::write(&og_map_path, serde_json::to_string_pretty(&map).unwrap_or_default());
+    }
+
+    Ok(secure_url)
 }
 
 // ---------------------------------------------------------------------------
