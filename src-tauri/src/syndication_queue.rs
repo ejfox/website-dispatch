@@ -48,7 +48,7 @@ pub struct NewQueueItem {
 // Database
 // ---------------------------------------------------------------------------
 
-static DB: OnceLock<Mutex<Connection>> = OnceLock::new();
+static DB: OnceLock<Result<Mutex<Connection>, String>> = OnceLock::new();
 
 fn db_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
@@ -57,21 +57,26 @@ fn db_path() -> PathBuf {
         .join("syndication.db")
 }
 
-fn get_db() -> &'static Mutex<Connection> {
-    DB.get_or_init(|| {
-        let path = db_path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let conn = Connection::open(&path).expect("Failed to open syndication database");
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-            .expect("Failed to set pragmas");
-        init_schema(&conn);
-        Mutex::new(conn)
-    })
+fn init_db() -> Result<Mutex<Connection>, String> {
+    let path = db_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let conn = Connection::open(&path)
+        .map_err(|e| format!("Failed to open syndication database: {}", e))?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+        .map_err(|e| format!("Failed to set pragmas: {}", e))?;
+    init_schema(&conn)?;
+    Ok(Mutex::new(conn))
 }
 
-fn init_schema(conn: &Connection) {
+fn get_db() -> Result<&'static Mutex<Connection>, String> {
+    DB.get_or_init(|| init_db())
+        .as_ref()
+        .map_err(|e| e.clone())
+}
+
+fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS syndication_queue (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,7 +99,8 @@ fn init_schema(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_queue_scheduled ON syndication_queue(scheduled_at);
         CREATE INDEX IF NOT EXISTS idx_queue_slug ON syndication_queue(post_slug);",
     )
-    .expect("Failed to create syndication schema");
+    .map_err(|e| format!("Failed to create syndication schema: {}", e))?;
+    Ok(())
 }
 
 fn now_iso() -> String {
@@ -107,7 +113,7 @@ fn now_iso() -> String {
 
 /// Add an item to the queue. Returns the new row ID.
 pub fn queue_item(item: &NewQueueItem) -> Result<i64, String> {
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
     let now = now_iso();
     let status = if item.scheduled_at.is_some() {
         "scheduled"
@@ -142,7 +148,7 @@ pub fn queue_items(items: &[NewQueueItem]) -> Result<Vec<i64>, String> {
 
 /// Get queue items, optionally filtered by status.
 pub fn get_queue(status_filter: Option<&str>, limit: usize) -> Result<Vec<QueueItem>, String> {
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
     let (sql, filter_params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match status_filter {
         Some(status) => (
             format!(
@@ -192,7 +198,7 @@ pub fn get_queue(status_filter: Option<&str>, limit: usize) -> Result<Vec<QueueI
 
 /// Get items for a specific post slug.
 pub fn get_queue_for_post(slug: &str) -> Result<Vec<QueueItem>, String> {
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
     let mut stmt = db
         .prepare("SELECT * FROM syndication_queue WHERE post_slug = ?1 ORDER BY created_at DESC")
         .map_err(|e| format!("Query: {}", e))?;
@@ -228,7 +234,7 @@ pub fn update_item(
     scheduled_at: Option<&str>,
     media_url: Option<&str>,
 ) -> Result<(), String> {
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
     let now = now_iso();
 
     if let Some(text) = platform_text {
@@ -257,7 +263,7 @@ pub fn update_item(
 
 /// Delete a queue item.
 pub fn delete_item(id: i64) -> Result<(), String> {
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
     db.execute("DELETE FROM syndication_queue WHERE id = ?1", params![id])
         .map_err(|e| format!("Delete: {}", e))?;
     Ok(())
@@ -265,7 +271,7 @@ pub fn delete_item(id: i64) -> Result<(), String> {
 
 /// Mark an item as sent.
 fn mark_sent(id: i64, platform_url: &str) -> Result<(), String> {
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
     let now = now_iso();
     db.execute(
         "UPDATE syndication_queue SET status = 'sent', sent_at = ?1, platform_url = ?2, updated_at = ?3 WHERE id = ?4",
@@ -277,7 +283,7 @@ fn mark_sent(id: i64, platform_url: &str) -> Result<(), String> {
 
 /// Mark an item as failed.
 fn mark_failed(id: i64, error: &str) -> Result<(), String> {
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
     let now = now_iso();
     db.execute(
         "UPDATE syndication_queue SET status = 'failed', error_message = ?1, attempt_count = attempt_count + 1, updated_at = ?2 WHERE id = ?3",
@@ -299,7 +305,7 @@ pub fn send_item(id: i64) -> Result<SyndicationResult, String> {
         .find(|i| i.id == id)
         .ok_or_else(|| format!("Queue item {} not found", id))?;
 
-    let post = PostContent {
+    let _post = PostContent {
         title: item.post_title.clone(),
         url: item.post_url.clone(),
         slug: item.post_slug.clone(),
@@ -400,7 +406,7 @@ pub async fn run_syndication_scheduler(app_handle: tauri::AppHandle) {
 
 /// Get items that are due to be sent (scheduled_at <= now, status = 'scheduled').
 fn get_due_items() -> Result<Vec<QueueItem>, String> {
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
     let now = now_iso();
     let mut stmt = db
         .prepare(

@@ -3,41 +3,9 @@ import { ref, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { X } from 'lucide-vue-next'
+import type { AppConfig } from '../types'
 
-interface VaultConfig {
-  path: string
-  name: string
-  excluded_dirs: string[]
-  publishable_dirs: string[]
-}
-
-interface PublishTarget {
-  name: string
-  id: string
-  repo_path: string
-  domain: string
-  content_path_pattern: string
-  branch: string
-  is_default: boolean
-}
-
-interface EditorConfig {
-  name: string
-  app_name: string
-  enabled: boolean
-}
-
-interface AppConfig {
-  version: number
-  vault: VaultConfig
-  publish_targets: PublishTarget[]
-  editors: EditorConfig[]
-  default_editor: string
-  cloudinary_cloud_name: string | null
-  analytics_url: string | null
-}
-
-const emit = defineEmits<{ close: [], saved: [] }>()
+const emit = defineEmits<{ close: []; saved: [] }>()
 
 const activeTab = ref<'vault' | 'publishing' | 'editors' | 'connections'>('vault')
 const config = ref<AppConfig | null>(null)
@@ -75,8 +43,8 @@ const newEditorApp = ref('')
 
 onMounted(async () => {
   try {
-    config.value = await invoke('get_app_config') as AppConfig
-    configPath.value = await invoke('get_config_path') as string
+    config.value = (await invoke('get_app_config')) as AppConfig
+    configPath.value = (await invoke('get_config_path')) as string
   } catch (e) {
     console.error('Failed to load config:', e)
   }
@@ -100,14 +68,14 @@ async function browseRepoPath(index: number) {
 
 async function validateVaultPath() {
   if (!config.value) return
-  vaultPathValid.value = await invoke('validate_vault_path', { path: config.value.vault.path }) as boolean
+  vaultPathValid.value = (await invoke('validate_vault_path', { path: config.value.vault.path })) as boolean
 }
 
 async function validateRepoPath(index: number) {
   if (!config.value) return
-  repoPathValid.value[index] = await invoke('validate_repo_path', {
-    path: config.value.publish_targets[index].repo_path
-  }) as boolean
+  repoPathValid.value[index] = (await invoke('validate_repo_path', {
+    path: config.value.publish_targets[index].repo_path,
+  })) as boolean
 }
 
 function addExcludedDir() {
@@ -187,7 +155,9 @@ async function save() {
   try {
     await invoke('save_app_config', { configData: config.value })
     saveMessage.value = 'Saved!'
-    setTimeout(() => { saveMessage.value = '' }, 2000)
+    setTimeout(() => {
+      saveMessage.value = ''
+    }, 2000)
     emit('saved')
   } catch (e) {
     saveMessage.value = `Error: ${e}`
@@ -209,7 +179,9 @@ async function save() {
           <button :class="{ active: activeTab === 'vault' }" @click="activeTab = 'vault'">Vault</button>
           <button :class="{ active: activeTab === 'publishing' }" @click="activeTab = 'publishing'">Publishing</button>
           <button :class="{ active: activeTab === 'editors' }" @click="activeTab = 'editors'">Editors</button>
-          <button :class="{ active: activeTab === 'connections' }" @click="activeTab = 'connections'">Connections</button>
+          <button :class="{ active: activeTab === 'connections' }" @click="activeTab = 'connections'">
+            Connections
+          </button>
         </div>
 
         <div class="settings-body" v-if="config">
@@ -228,7 +200,10 @@ async function save() {
             </div>
 
             <div class="field">
-              <label>Vault Name <span class="hint">for obsidian:// URLs</span></label>
+              <label>
+                Vault Name
+                <span class="hint">for obsidian:// URLs</span>
+              </label>
               <input v-model="config.vault.name" />
             </div>
 
@@ -240,11 +215,7 @@ async function save() {
                   <button @click="removeExcludedDir(i)" class="chip-remove">&times;</button>
                 </span>
                 <div class="chip-input-row">
-                  <input
-                    v-model="newExcludedDir"
-                    placeholder="Add directory..."
-                    @keydown.enter="addExcludedDir"
-                  />
+                  <input v-model="newExcludedDir" placeholder="Add directory..." @keydown.enter="addExcludedDir" />
                   <button @click="addExcludedDir" class="add-btn">+</button>
                 </div>
               </div>
@@ -279,7 +250,9 @@ async function save() {
                     <input type="radio" :checked="target.is_default" @change="setDefaultTarget(i)" />
                     Default
                   </label>
-                  <button v-if="config.publish_targets.length > 1" @click="removeTarget(i)" class="remove-btn">&times;</button>
+                  <button v-if="config.publish_targets.length > 1" @click="removeTarget(i)" class="remove-btn">
+                    &times;
+                  </button>
                 </div>
               </div>
 
@@ -307,7 +280,10 @@ async function save() {
               </div>
 
               <div class="field">
-                <label>Content Path Pattern <span class="hint">{year} = current year</span></label>
+                <label>
+                  Content Path Pattern
+                  <span class="hint">{year} = current year</span>
+                </label>
                 <input v-model="target.content_path_pattern" placeholder="content/blog/{year}" />
               </div>
             </div>
@@ -371,7 +347,8 @@ async function save() {
             </div>
 
             <div class="config-path">
-              Config file: <code>{{ configPath }}</code>
+              Config file:
+              <code>{{ configPath }}</code>
             </div>
           </div>
         </div>
@@ -461,7 +438,9 @@ async function save() {
   margin-bottom: -1px;
 }
 
-.settings-tabs button:hover { color: var(--text-secondary); }
+.settings-tabs button:hover {
+  color: var(--text-secondary);
+}
 .settings-tabs button.active {
   color: var(--text-primary);
   border-bottom-color: var(--text-primary);
@@ -501,7 +480,8 @@ async function save() {
   letter-spacing: 0;
 }
 
-.field input, .add-editor-form input {
+.field input,
+.add-editor-form input {
   padding: 6px 10px;
   font-size: 12px;
   background: var(--bg-tertiary);
@@ -511,22 +491,30 @@ async function save() {
   font-family: 'SF Mono', monospace;
 }
 
-.field input:focus, .add-editor-form input:focus {
+.field input:focus,
+.add-editor-form input:focus {
   outline: none;
   border-color: var(--selection-bg);
 }
 
-.field input.valid { border-color: var(--success); }
-.field input.invalid { border-color: var(--danger); }
+.field input.valid {
+  border-color: var(--success);
+}
+.field input.invalid {
+  border-color: var(--danger);
+}
 
 .path-input {
   display: flex;
   gap: 6px;
 }
 
-.path-input input { flex: 1; }
+.path-input input {
+  flex: 1;
+}
 
-.browse-btn, .add-btn {
+.browse-btn,
+.add-btn {
   padding: 6px 12px;
   font-size: 11px;
   background: var(--accent);
@@ -536,7 +524,8 @@ async function save() {
   cursor: pointer;
 }
 
-.browse-btn:hover, .add-btn:hover {
+.browse-btn:hover,
+.add-btn:hover {
   background: var(--bg-tertiary);
 }
 
@@ -569,7 +558,9 @@ async function save() {
   line-height: 1;
 }
 
-.chip-remove:hover { color: var(--danger); }
+.chip-remove:hover {
+  color: var(--danger);
+}
 
 .chip-input-row {
   display: flex;
@@ -660,7 +651,9 @@ async function save() {
   gap: 10px;
 }
 
-.field-row .field { flex: 1; }
+.field-row .field {
+  flex: 1;
+}
 
 .add-target-btn {
   padding: 8px;
@@ -760,7 +753,9 @@ async function save() {
   color: var(--success);
 }
 
-.save-msg.error { color: var(--danger); }
+.save-msg.error {
+  color: var(--danger);
+}
 
 .cancel-btn {
   padding: 6px 14px;
@@ -772,7 +767,9 @@ async function save() {
   cursor: pointer;
 }
 
-.cancel-btn:hover { background: var(--bg-tertiary); }
+.cancel-btn:hover {
+  background: var(--bg-tertiary);
+}
 
 .save-btn {
   padding: 6px 14px;
@@ -785,14 +782,21 @@ async function save() {
   font-weight: 500;
 }
 
-.save-btn:hover { opacity: 0.9; }
-.save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.save-btn:hover {
+  opacity: 0.9;
+}
+.save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* Transitions */
-.modal-enter-active, .modal-leave-active {
+.modal-enter-active,
+.modal-leave-active {
   transition: all 0.2s var(--ease-out-expo);
 }
-.modal-enter-from, .modal-leave-to {
+.modal-enter-from,
+.modal-leave-to {
   opacity: 0;
 }
 .modal-enter-from .settings-modal {

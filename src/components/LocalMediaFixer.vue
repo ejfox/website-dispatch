@@ -46,18 +46,14 @@ const results = ref<MediaFixResult[]>([])
 const error = ref<string | null>(null)
 const showConfirmApply = ref(false)
 
-const successCount = computed(() =>
-  results.value.filter(r => r.upload_result.success).length
-)
+const successCount = computed(() => results.value.filter((r) => r.upload_result.success).length)
 
-const failCount = computed(() =>
-  results.value.filter(r => !r.upload_result.success).length
-)
+const failCount = computed(() => results.value.filter((r) => !r.upload_result.success).length)
 
 const fixesToApply = computed(() =>
   results.value
-    .filter(r => r.upload_result.success && r.replacement_text)
-    .map(r => [r.original_ref.original_text, r.replacement_text!] as [string, string])
+    .filter((r) => r.upload_result.success && r.replacement_text)
+    .map((r) => [r.original_ref.original_text, r.replacement_text!] as [string, string]),
 )
 
 async function uploadAll() {
@@ -75,7 +71,7 @@ async function uploadAll() {
       const fixResults: MediaFixResult[] = await invoke('fix_local_media', {
         sourcePath: props.filePath,
         mediaRefs: [media],
-        folder: 'blog' // Default folder for blog images
+        folder: 'blog', // Default folder for blog images
       })
 
       results.value.push(...fixResults)
@@ -95,7 +91,7 @@ async function applyFixes() {
   try {
     await invoke('apply_media_fixes', {
       filePath: props.filePath,
-      fixes: fixesToApply.value
+      fixes: fixesToApply.value,
     })
     emit('fixed')
     emit('close')
@@ -132,7 +128,9 @@ function getStatusClass(result: MediaFixResult): string {
         <span class="count">{{ localMedia.length }} files</span>
         <button class="close-btn" @click="$emit('close')">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
+            <path
+              d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"
+            />
           </svg>
         </button>
       </div>
@@ -163,9 +161,7 @@ function getStatusClass(result: MediaFixResult): string {
         <div class="progress-bar">
           <div class="progress-fill" :style="{ width: uploadProgress + '%' }"></div>
         </div>
-        <div class="progress-text">
-          Uploading: {{ currentUpload }}
-        </div>
+        <div class="progress-text">Uploading: {{ currentUpload }}</div>
       </div>
 
       <!-- After upload: show results -->
@@ -211,19 +207,13 @@ function getStatusClass(result: MediaFixResult): string {
 
       <div class="modal-footer">
         <template v-if="results.length === 0">
-          <button
-            @click="uploadAll"
-            :disabled="uploading || localMedia.every(m => !m.resolved_path)"
-            class="primary"
-          >
+          <button @click="uploadAll" :disabled="uploading || localMedia.every((m) => !m.resolved_path)" class="primary">
             {{ uploading ? 'Uploading...' : 'Upload All to Cloudinary' }}
           </button>
         </template>
         <template v-else-if="successCount > 0">
           <button @click="copyFixedContent">Copy Fixed Content</button>
-          <button @click="showConfirmApply = true" class="primary">
-            Apply to Source File
-          </button>
+          <button @click="showConfirmApply = true" class="primary">Apply to Source File</button>
         </template>
         <template v-else>
           <button @click="$emit('close')">Close</button>

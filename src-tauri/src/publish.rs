@@ -148,7 +148,7 @@ pub fn publish_file(
     slug: &str,
     target_id: Option<&str>,
 ) -> Result<String, String> {
-    let app_config = config::get();
+    let app_config = config::get()?;
     let target = config::resolve_target(target_id)?;
     let normalized_path = source_path.replace('\\', "/");
     if !normalized_path.starts_with(&app_config.vault.path)

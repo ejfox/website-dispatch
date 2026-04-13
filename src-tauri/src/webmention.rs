@@ -1,4 +1,3 @@
-use regex::Regex;
 use reqwest::blocking::Client;
 use reqwest::header::LINK;
 use serde::{Deserialize, Serialize};
@@ -24,10 +23,9 @@ pub struct WebmentionReport {
 
 /// Extract all outbound HTTP(S) links from HTML content
 pub fn extract_links(html: &str, own_domain: &str) -> Vec<String> {
-    let re = Regex::new(r#"<a[^>]+href="(https?://[^"]+)"[^>]*>"#).unwrap();
     let own = own_domain.trim_end_matches('/').to_lowercase();
 
-    re.captures_iter(html)
+    crate::patterns::HTML_LINK.captures_iter(html)
         .filter_map(|cap| {
             let url = cap[1].to_string();
             let lower = url.to_lowercase();
@@ -65,27 +63,12 @@ pub fn discover_endpoint(client: &Client, target: &str) -> Option<String> {
     let body = resp.text().ok()?;
 
     // 2. Check <link rel="webmention"> in HTML
-    let link_re =
-        Regex::new(r#"<link[^>]*rel=["']?webmention["']?[^>]*href=["']([^"']+)["'][^>]*/?\s*>"#)
-            .unwrap();
-    // Also match when href comes before rel
-    let link_re2 =
-        Regex::new(r#"<link[^>]*href=["']([^"']+)["'][^>]*rel=["']?webmention["']?[^>]*/?\s*>"#)
-            .unwrap();
-
-    if let Some(cap) = link_re.captures(&body).or_else(|| link_re2.captures(&body)) {
+    if let Some(cap) = crate::patterns::WEBMENTION_LINK_REL_FIRST.captures(&body).or_else(|| crate::patterns::WEBMENTION_LINK_HREF_FIRST.captures(&body)) {
         return Some(resolve_url(&final_url, &cap[1]));
     }
 
     // 3. Check <a rel="webmention"> in HTML
-    let a_re =
-        Regex::new(r#"<a[^>]*rel=["']?webmention["']?[^>]*href=["']([^"']+)["'][^>]*>"#)
-            .unwrap();
-    let a_re2 =
-        Regex::new(r#"<a[^>]*href=["']([^"']+)["'][^>]*rel=["']?webmention["']?[^>]*>"#)
-            .unwrap();
-
-    if let Some(cap) = a_re.captures(&body).or_else(|| a_re2.captures(&body)) {
+    if let Some(cap) = crate::patterns::WEBMENTION_A_REL_FIRST.captures(&body).or_else(|| crate::patterns::WEBMENTION_A_HREF_FIRST.captures(&body)) {
         return Some(resolve_url(&final_url, &cap[1]));
     }
 
@@ -225,8 +208,7 @@ fn parse_link_header(header: &str) -> Option<String> {
     for part in header.split(',') {
         let part = part.trim();
         if part.contains("rel=\"webmention\"") || part.contains("rel=webmention") {
-            let re = Regex::new(r"<([^>]+)>").unwrap();
-            if let Some(cap) = re.captures(part) {
+            if let Some(cap) = crate::patterns::LINK_HEADER_URL.captures(part) {
                 return Some(cap[1].to_string());
             }
         }

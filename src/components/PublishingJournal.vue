@@ -2,10 +2,17 @@
 import { ref, onMounted, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import {
-  PhFlame, PhCalendarBlank, PhTrendUp, PhPencilSimple,
-  PhLightbulb, PhClock, PhTextAa, PhCheckCircle,
-  PhCircleWavy, PhBroadcast, PhArrowCounterClockwise,
-  PhTrash, PhEye
+  PhFlame,
+  PhTrendUp,
+  PhPencilSimple,
+  PhLightbulb,
+  PhClock,
+  PhCheckCircle,
+  PhCircleWavy,
+  PhBroadcast,
+  PhArrowCounterClockwise,
+  PhTrash,
+  PhEye,
 } from '@phosphor-icons/vue'
 
 interface Milestone {
@@ -36,6 +43,7 @@ interface JournalStats {
   most_active_hour: number | null
   most_active_day_of_week: string | null
   publish_hour_distribution: number[]
+  monthly_history?: { month: string; words: number }[]
   milestones: Milestone[]
   last_publish_at: string | null
   days_since_last_publish: number | null
@@ -74,7 +82,15 @@ interface VaultPulse {
   blog_count: number
   signals: VaultSignal[]
   tag_cloud: [string, number][]
-  recent_edits: { path: string; filename: string; title: string | null; word_count: number; modified: number; source_dir: string; is_publishable: boolean }[]
+  recent_edits: {
+    path: string
+    filename: string
+    title: string | null
+    word_count: number
+    modified: number
+    source_dir: string
+    is_publishable: boolean
+  }[]
 }
 
 const stats = ref<JournalStats | null>(null)
@@ -84,21 +100,13 @@ const pulse = ref<VaultPulse | null>(null)
 const loading = ref(true)
 const backfilling = ref(false)
 
-const earnedMilestones = computed(() =>
-  stats.value?.milestones.filter(m => m.achieved_at) || []
-)
+const earnedMilestones = computed(() => stats.value?.milestones.filter((m) => m.achieved_at) || [])
 
-const unearnedMilestones = computed(() =>
-  stats.value?.milestones.filter(m => !m.achieved_at) || []
-)
+const unearnedMilestones = computed(() => stats.value?.milestones.filter((m) => !m.achieved_at) || [])
 
-const hourMax = computed(() =>
-  Math.max(...(stats.value?.publish_hour_distribution || [0]), 1)
-)
+const hourMax = computed(() => Math.max(...(stats.value?.publish_hour_distribution || [0]), 1))
 
-const monthlyMax = computed(() =>
-  Math.max(...(stats.value?.monthly_history || []).map((m: any) => m.words), 1)
-)
+const monthlyMax = computed(() => Math.max(...(stats.value?.monthly_history || []).map((m: any) => m.words), 1))
 
 const currentMonth = computed(() => {
   const d = new Date()
@@ -113,17 +121,11 @@ const weekDelta = computed(() => {
   return null
 })
 
-const vaultSignals = computed(() =>
-  pulse.value?.signals.filter(s => s.kind === 'active_draft') || []
-)
+const vaultSignals = computed(() => pulse.value?.signals.filter((s) => s.kind === 'active_draft') || [])
 
-const growingDrafts = computed(() =>
-  pulse.value?.signals.filter(s => s.kind === 'growing_draft') || []
-)
+const growingDrafts = computed(() => pulse.value?.signals.filter((s) => s.kind === 'growing_draft') || [])
 
-const dormantSignals = computed(() =>
-  pulse.value?.signals.filter(s => s.kind === 'dormant_idea') || []
-)
+const dormantSignals = computed(() => pulse.value?.signals.filter((s) => s.kind === 'dormant_idea') || [])
 
 function formatWords(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
@@ -152,10 +154,14 @@ function formatAge(ts: string): string {
 
 function eventIcon(event: string) {
   switch (event) {
-    case 'publish': return PhBroadcast
-    case 'republish': return PhArrowCounterClockwise
-    case 'unpublish': return PhTrash
-    default: return PhBroadcast
+    case 'publish':
+      return PhBroadcast
+    case 'republish':
+      return PhArrowCounterClockwise
+    case 'unpublish':
+      return PhTrash
+    default:
+      return PhBroadcast
   }
 }
 
@@ -198,7 +204,7 @@ const heatmapGrid = computed(() => {
       const isFuture = d > today
       col.push({
         date: key,
-        count: isFuture ? -1 : (heatmapData.value.get(key) || 0),
+        count: isFuture ? -1 : heatmapData.value.get(key) || 0,
         today: isToday,
       })
     }
@@ -207,9 +213,7 @@ const heatmapGrid = computed(() => {
   return grid
 })
 
-const heatmapMax = computed(() =>
-  Math.max(...Array.from(heatmapData.value.values()), 1)
-)
+const heatmapMax = computed(() => Math.max(...Array.from(heatmapData.value.values()), 1))
 
 function heatmapColor(count: number): string {
   if (count < 0) return 'transparent' // future
@@ -274,12 +278,18 @@ onMounted(async () => {
     <!-- Heatmap -->
     <div class="heatmap">
       <div class="heatmap-day-labels">
-        <span>M</span><span></span><span>W</span><span></span><span>F</span><span></span><span></span>
+        <span>M</span>
+        <span></span>
+        <span>W</span>
+        <span></span>
+        <span>F</span>
+        <span></span>
+        <span></span>
       </div>
       <div class="heatmap-grid">
         <div v-for="(week, wi) in heatmapGrid" :key="wi" class="heatmap-col">
           <div
-            v-for="(cell, di) in week"
+            v-for="cell in week"
             :key="cell.date"
             class="heatmap-cell"
             :class="{ today: cell.today }"
@@ -323,11 +333,7 @@ onMounted(async () => {
     <div v-if="stats.monthly_history && stats.monthly_history.length > 1" class="monthly-section">
       <div class="section-label">Words per month</div>
       <div class="monthly-chart">
-        <div
-          v-for="m in [...stats.monthly_history].reverse()"
-          :key="m.month"
-          class="month-col"
-        >
+        <div v-for="m in [...stats.monthly_history].reverse()" :key="m.month" class="month-col">
           <div class="month-bar-wrap">
             <div
               class="month-bar"
@@ -359,26 +365,26 @@ onMounted(async () => {
         </div>
       </div>
       <div class="hour-labels">
-        <span>12a</span><span>6a</span><span>12p</span><span>6p</span>
+        <span>12a</span>
+        <span>6a</span>
+        <span>12p</span>
+        <span>6p</span>
       </div>
       <div class="rhythm-insights">
-        <span v-if="stats.most_active_hour !== null">
-          Peak: {{ formatHour(stats.most_active_hour) }}
-        </span>
-        <span v-if="stats.most_active_day_of_week">
-          Most active: {{ stats.most_active_day_of_week }}s
-        </span>
-        <span>
-          Avg: {{ stats.avg_publishes_per_week.toFixed(1) }}/week
-        </span>
+        <span v-if="stats.most_active_hour !== null">Peak: {{ formatHour(stats.most_active_hour) }}</span>
+        <span v-if="stats.most_active_day_of_week">Most active: {{ stats.most_active_day_of_week }}s</span>
+        <span>Avg: {{ stats.avg_publishes_per_week.toFixed(1) }}/week</span>
       </div>
     </div>
 
     <!-- Growing Drafts — the big ones brewing -->
     <div v-if="growingDrafts.length > 0" class="vault-section growing">
-      <div class="section-label"><PhTrendUp :size="10" weight="bold" /> Growing</div>
+      <div class="section-label">
+        <PhTrendUp :size="10" weight="bold" />
+        Growing
+      </div>
       <div class="signal-list">
-        <div v-for="signal in growingDrafts" :key="signal.path" class="signal-item growing-item">
+        <div v-for="(signal, idx) in growingDrafts" :key="signal.path ?? idx" class="signal-item growing-item">
           <PhPencilSimple :size="10" weight="fill" />
           <span class="signal-text">{{ signal.message }}</span>
         </div>
@@ -387,9 +393,12 @@ onMounted(async () => {
 
     <!-- Vault Pulse: Active Drafts -->
     <div v-if="vaultSignals.length > 0" class="vault-section">
-      <div class="section-label"><PhEye :size="10" weight="bold" /> Vault pulse</div>
+      <div class="section-label">
+        <PhEye :size="10" weight="bold" />
+        Vault pulse
+      </div>
       <div class="signal-list">
-        <div v-for="signal in vaultSignals" :key="signal.path" class="signal-item">
+        <div v-for="(signal, idx) in vaultSignals" :key="signal.path ?? idx" class="signal-item">
           <PhPencilSimple :size="10" weight="duotone" />
           <span class="signal-text">{{ signal.message }}</span>
         </div>
@@ -398,9 +407,12 @@ onMounted(async () => {
 
     <!-- Vault Pulse: Dormant Ideas -->
     <div v-if="dormantSignals.length > 0" class="vault-section dormant">
-      <div class="section-label"><PhLightbulb :size="10" weight="bold" /> Dormant ideas</div>
+      <div class="section-label">
+        <PhLightbulb :size="10" weight="bold" />
+        Dormant ideas
+      </div>
       <div class="signal-list">
-        <div v-for="signal in dormantSignals" :key="signal.path" class="signal-item">
+        <div v-for="(signal, idx) in dormantSignals" :key="signal.path ?? idx" class="signal-item">
           <PhClock :size="10" weight="duotone" />
           <span class="signal-text">{{ signal.message }}</span>
         </div>
@@ -411,21 +423,11 @@ onMounted(async () => {
     <div class="milestones-section" v-if="earnedMilestones.length > 0">
       <div class="section-label">Milestones</div>
       <div class="milestone-grid">
-        <div
-          v-for="m in earnedMilestones"
-          :key="m.id"
-          class="milestone earned"
-          :data-tip="m.description"
-        >
+        <div v-for="m in earnedMilestones" :key="m.id" class="milestone earned" :data-tip="m.description">
           <PhCheckCircle :size="14" weight="fill" />
           <span>{{ m.label }}</span>
         </div>
-        <div
-          v-for="m in unearnedMilestones.slice(0, 3)"
-          :key="m.id"
-          class="milestone locked"
-          :data-tip="m.description"
-        >
+        <div v-for="m in unearnedMilestones.slice(0, 3)" :key="m.id" class="milestone locked" :data-tip="m.description">
           <PhCircleWavy :size="14" weight="duotone" />
           <span>{{ m.label }}</span>
         </div>
@@ -437,9 +439,7 @@ onMounted(async () => {
       <div class="section-label">Recent activity</div>
       <div v-if="entries.length === 0" class="empty-log">
         <p>No publishing activity yet.</p>
-        <button v-if="!backfilling" @click="doBackfill" class="backfill-btn">
-          Import from git history
-        </button>
+        <button v-if="!backfilling" @click="doBackfill" class="backfill-btn">Import from git history</button>
         <span v-else class="backfill-loading">Importing...</span>
       </div>
       <div v-else class="activity-log">
@@ -785,9 +785,16 @@ onMounted(async () => {
   opacity: 0.6;
 }
 
-.vault-section .section-label { color: rgba(129, 140, 248, 0.7); }
-.vault-section.growing .section-label { color: var(--success); }
-.vault-section.dormant .section-label { color: var(--text-tertiary); opacity: 0.7; }
+.vault-section .section-label {
+  color: rgba(129, 140, 248, 0.7);
+}
+.vault-section.growing .section-label {
+  color: var(--success);
+}
+.vault-section.dormant .section-label {
+  color: var(--text-tertiary);
+  opacity: 0.7;
+}
 
 .growing-item {
   background: rgba(48, 209, 88, 0.04) !important;
@@ -863,9 +870,15 @@ onMounted(async () => {
   border-bottom: none;
 }
 
-.log-entry svg.publish { color: var(--success); }
-.log-entry svg.republish { color: #818cf8; }
-.log-entry svg.unpublish { color: var(--text-tertiary); }
+.log-entry svg.publish {
+  color: var(--success);
+}
+.log-entry svg.republish {
+  color: #818cf8;
+}
+.log-entry svg.unpublish {
+  color: var(--text-tertiary);
+}
 
 .log-title {
   flex: 1;

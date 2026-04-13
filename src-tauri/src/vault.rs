@@ -1,5 +1,4 @@
 use crate::{config, Config, MarkdownFile};
-use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -7,11 +6,11 @@ use std::time::SystemTime;
 use walkdir::WalkDir;
 
 pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
-    let config = Config::default();
+    let config = Config::from_app_config()?;
     let mut files: Vec<MarkdownFile> = Vec::new();
 
     // Use publishable dirs from config
-    let app_config = config::get();
+    let app_config = config::get()?;
     let publishable_dirs = app_config.vault.publishable_dirs.clone();
 
     for entry in WalkDir::new(&config.vault_path)
@@ -218,7 +217,10 @@ fn find_published_info(
     website_repo: &str,
     slug: &str,
 ) -> (Option<String>, Option<u64>, Option<String>) {
-    let target = config::default_target();
+    let target = match config::default_target() {
+        Ok(t) => t,
+        Err(_) => return (None, None, None),
+    };
     find_published_info_inner(&target, website_repo, slug)
 }
 
@@ -545,9 +547,8 @@ fn check_warnings(
     }
 
     // Check for images with missing or junk alt text
-    let bad_alt_re = Regex::new(r"!\[([^\]]*)\]\([^)]+\)").unwrap();
     let mut bad_alt_count = 0;
-    for caps in bad_alt_re.captures_iter(body) {
+    for caps in crate::patterns::MD_IMAGE_ALT_CHECK.captures_iter(body) {
         let alt = caps.get(1).map(|m| m.as_str()).unwrap_or("");
         if is_junk_alt(alt) {
             bad_alt_count += 1;
@@ -613,38 +614,31 @@ fn check_warnings(
 }
 
 /// Returns true if alt text is empty or junk (filenames, timestamps, UUIDs).
-fn is_junk_alt(alt: &str) -> bool {
+pub fn is_junk_alt(alt: &str) -> bool {
     let alt = alt.trim();
     if alt.is_empty() {
         return true;
     }
-    let junk_re = Regex::new(
-        r"(?i)^(Screenshot|Screen Shot|Pasted image|IMG_|DSC|DJI_|DSCF|CleanShot|Untitled|image\d*)"
-    ).unwrap();
-    if junk_re.is_match(alt) {
+    if crate::patterns::JUNK_ALT.is_match(alt) {
         return true;
     }
     // UUID-like: 8hex-4hex...
-    let uuid_re = Regex::new(r"^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}").unwrap();
-    if uuid_re.is_match(alt) {
+    if crate::patterns::UUID_PREFIX.is_match(alt) {
         return true;
     }
     // Bare filename with extension
-    let filename_re = Regex::new(r"(?i)^[A-Za-z0-9_.-]+\.(png|jpe?g|gif|webp|svg|tiff?)$").unwrap();
-    if filename_re.is_match(alt) {
+    if crate::patterns::FILENAME_WITH_EXT.is_match(alt) {
         return true;
     }
     // Date-prefixed junk
-    let date_re = Regex::new(r"^\d{4}-\d{2}-\d{2}").unwrap();
-    if date_re.is_match(alt) {
+    if crate::patterns::DATE_PREFIX.is_match(alt) {
         return true;
     }
     false
 }
 
 fn has_long_link_text(body: &str, max_words: usize) -> bool {
-    let link_re = Regex::new(r"(!)?\[([^\]]+)\]\(([^)]+)\)").unwrap();
-    for caps in link_re.captures_iter(body) {
+    for caps in crate::patterns::MD_LINK.captures_iter(body) {
         if caps.get(1).is_some() {
             continue;
         }
@@ -664,45 +658,38 @@ fn check_privacy(body: &str) -> Vec<String> {
     let mut warnings = Vec::new();
 
     // Phone numbers (US formats: 555-123-4567, (555) 123-4567, +1 555 123 4567)
-    let phone_re = Regex::new(r"(?:\+1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}").unwrap();
-    if phone_re.is_match(body) {
+    if crate::patterns::PHONE_NUMBER.is_match(body) {
         warnings.push("[privacy]Phone number detected".into());
     }
 
     // Email addresses
-    let email_re = Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").unwrap();
-    if email_re.is_match(body) {
+    if crate::patterns::EMAIL_ADDRESS.is_match(body) {
         warnings.push("[privacy]Email address detected".into());
     }
 
     // Dollar amounts ($X,XXX or $XX,XXX+ — flag larger amounts as financial info)
-    let money_re = Regex::new(r"\$\d{1,3}(?:,\d{3})+(?:\.\d{2})?|\$\d{4,}(?:\.\d{2})?").unwrap();
-    if money_re.is_match(body) {
+    if crate::patterns::MONEY_AMOUNT.is_match(body) {
         warnings.push("[privacy]Financial amount detected".into());
     }
 
     // SSN patterns (XXX-XX-XXXX)
-    let ssn_re = Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap();
-    if ssn_re.is_match(body) {
+    if crate::patterns::SSN.is_match(body) {
         warnings.push("[privacy]Possible SSN detected".into());
     }
 
     // Street addresses (number + street name + type)
-    let addr_re = Regex::new(r"\b\d{1,5}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:St|Ave|Blvd|Dr|Rd|Ln|Ct|Way|Pl|Circle|Terrace|Court)\b").unwrap();
-    if addr_re.is_match(body) {
+    if crate::patterns::STREET_ADDRESS.is_match(body) {
         warnings.push("[privacy]Street address detected".into());
     }
 
     // "Met with [Name]" / "talked to [Name]" / "called [Name]" patterns
     // Catches "met with John Smith", "called Sarah", "lunch with Mike", etc.
-    let people_re = Regex::new(r"(?i)\b(?:met with|talked to|called|lunch with|dinner with|coffee with|meeting with|spoke with|visited|hanging out with|texted|emailed|DMed)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)").unwrap();
-    if people_re.is_match(body) {
+    if crate::patterns::PEOPLE_REFERENCE.is_match(body) {
         warnings.push("[privacy]Named person reference".into());
     }
 
     // Health/medical terms
-    let health_re = Regex::new(r"(?i)\b(?:diagnosis|prescribed|medication|therapist|therapy session|doctor(?:'s)? appointment|blood (?:test|pressure|work)|symptoms?|mg\s+(?:of|daily)|medical|hospital|surgery|prescription)\b").unwrap();
-    if health_re.is_match(body) {
+    if crate::patterns::HEALTH_MEDICAL.is_match(body) {
         warnings.push("[privacy]Health/medical info".into());
     }
 

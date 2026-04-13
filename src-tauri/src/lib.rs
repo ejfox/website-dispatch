@@ -7,8 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 
 // Tauri-specific imports for building desktop apps
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 
 // --- MODULE DECLARATIONS ---
@@ -16,6 +14,7 @@ use tauri::Manager;
 // This is how Rust organizes code into separate files.
 // Each module becomes accessible as `module_name::function_name()`
 mod alttext; // AI-powered alt text generation for images
+mod patterns; // Shared compiled regex patterns (LazyLock statics)
 mod analytics; // Umami analytics integration
 mod asset_usage; // Tracks which Cloudinary images are used in which posts
 mod cloudinary; // Uploads images/videos to Cloudinary CDN
@@ -29,6 +28,8 @@ mod syndication_queue; // Scheduled syndication queue with background sender
 mod vault; // Scans your Obsidian vault for markdown files
 mod webmention; // IndieWeb webmention sending
 mod journal; // Publishing journal, streaks, milestones
+mod open; // Open files in Obsidian, editors, terminal
+mod menu; // Application menu bar builder
 mod vault_pulse; // Read-only vault intelligence (never publishes)
 
 // --- DATA STRUCTURES ---
@@ -97,22 +98,14 @@ pub struct Config {
 impl Config {
     /// Build a Config from the new AppConfig system.
     /// This bridges old code that uses Config with the new config module.
-    pub fn from_app_config() -> Self {
-        let app = config::get();
-        let target = config::default_target();
-        Config {
+    pub fn from_app_config() -> Result<Self, String> {
+        let app = config::get()?;
+        let target = config::default_target()?;
+        Ok(Config {
             vault_path: app.vault.path,
             website_repo: target.repo_path,
             excluded_dirs: app.vault.excluded_dirs,
-        }
-    }
-}
-
-// `impl` adds methods to a struct (like class methods in other languages)
-// `Default` is a trait (interface) that provides a default() method
-impl Default for Config {
-    fn default() -> Self {
-        Config::from_app_config()
+        })
     }
 }
 
@@ -247,98 +240,28 @@ async fn check_obsidian_api() -> bool {
     obsidian::check_api_status().await
 }
 
-// Open a file in Obsidian using its URL scheme (obsidian://open?vault=...&file=...)
+// Open a file in Obsidian using its URL scheme
 #[tauri::command]
 fn open_in_obsidian(path: String) -> Result<(), String> {
-    let app_config = config::get();
-
-    // Get path relative to vault root by stripping the vault_path prefix
-    let relative_path = path
-        .strip_prefix(&app_config.vault.path)
-        .unwrap_or(&path)
-        .trim_start_matches('/');
-
-    // Build the Obsidian URL scheme using configured vault name
-    let url = format!(
-        "obsidian://open?vault={}&file={}",
-        app_config.vault.name,
-        urlencoding::encode(relative_path)
-    );
-
-    // Run macOS `open` command with the URL
-    // .spawn() starts the process without waiting for it to finish
-    std::process::Command::new("open")
-        .arg(&url)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    open::open_in_obsidian(&path)
 }
 
-// Open a file in any macOS app (e.g., "iA Writer", "VS Code")
+// Open a file in any macOS app
 #[tauri::command]
 fn open_in_app(path: String, app: String) -> Result<(), String> {
-    // `open -a "App Name" /path/to/file` opens file in specified app
-    std::process::Command::new("open")
-        .args(["-a", &app, &path])
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    open::open_in_app(&path, &app)
 }
 
-// Open a terminal (iTerm or Terminal.app) and run a command with the file path
+// Open a terminal and run a command with the file path
 #[tauri::command]
 fn open_in_terminal(path: String, cmd: String) -> Result<(), String> {
-    // AppleScript to control iTerm
-    // r#"..."# is a raw string literal - no escape sequences needed
-    let iterm_script = format!(
-        r#"tell application "iTerm"
-            activate
-            try
-                set newWindow to (create window with default profile)
-                tell current session of newWindow
-                    write text "{} \"{}\""
-                end tell
-            on error
-                tell current window
-                    create tab with default profile
-                    tell current session
-                        write text "{} \"{}\""
-                    end tell
-                end tell
-            end try
-        end tell"#,
-        cmd, path, cmd, path
-    );
-
-    // Try iTerm first using osascript (AppleScript runner)
-    let result = std::process::Command::new("osascript")
-        .args(["-e", &iterm_script])
-        .output();
-
-    if matches!(result, Ok(ref output) if output.status.success()) {
-        return Ok(());
-    }
-
-    // Fallback to Terminal.app if iTerm isn't available
-    let terminal_script = format!(
-        r#"tell application "Terminal"
-            activate
-            do script "{} \"{}\""
-        end tell"#,
-        cmd, path
-    );
-
-    std::process::Command::new("osascript")
-        .args(["-e", &terminal_script])
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    open::open_in_terminal(&path, &cmd)
 }
 
 // --- CONFIG COMMANDS ---
 
 #[tauri::command]
-fn get_app_config() -> config::AppConfig {
+fn get_app_config() -> Result<config::AppConfig, String> {
     config::get()
 }
 
@@ -368,7 +291,7 @@ fn validate_repo_path(path: String) -> bool {
 
 #[tauri::command]
 fn create_new_post(title: String) -> Result<String, String> {
-    let app_config = config::get();
+    let app_config = config::get()?;
     let vault_path = &app_config.vault.path;
 
     // Generate slug from title
@@ -410,7 +333,7 @@ fn create_new_post(title: String) -> Result<String, String> {
 
 #[tauri::command]
 fn is_post_crowned(slug: String) -> Result<bool, String> {
-    let app_config = config::get();
+    let app_config = config::get()?;
     let target = app_config.publish_targets.first()
         .ok_or_else(|| "No publish target configured".to_string())?;
     let vue_path = format!("{}/pages/blog/{}.vue", target.repo_path, slug);
@@ -419,7 +342,7 @@ fn is_post_crowned(slug: String) -> Result<bool, String> {
 
 #[tauri::command]
 fn crown_post(slug: String, hue: u32) -> Result<String, String> {
-    let app_config = config::get();
+    let app_config = config::get()?;
     let target = app_config.publish_targets.first()
         .ok_or_else(|| "No publish target configured".to_string())?;
 
@@ -445,209 +368,13 @@ fn crown_post(slug: String, hue: u32) -> Result<String, String> {
     let body_class = format!("{}-takeover", name);
     let css_class = format!("{}-page", name);
 
-    // Build the Vue SFC template
-    let template = format!(r##"<script setup>
-/**
- * CROWNED POST: {title}
- * Hue: {hue} | Scaffolded from Dispatch
- */
-
-import {{ useIntersectionObserver }} from '@vueuse/core'
-import PostMetadataBar from '~/components/blog/post/PostMetadataBar.vue'
-import PostNav from '~/components/blog/post/PostNav.vue'
-import PostRelated from '~/components/blog/post/PostRelated.vue'
-import Webmentions from '~/components/blog/Webmentions.vue'
-
-const {{
-  post, nextPrevPosts, relatedPosts, readingStats,
-  postTitle, postUrl, articleTags,
-  renderedTitle, startAnimation,
-  palette,
-}} = await useCrownedPost({{
-  slug: '{slug}',
-  bodyClass: '{body_class}',
-  hue: {hue},
-  fallbackTitle: '{title}',
-}})
-
-const articleContent = ref(null)
-const scrollProgress = ref(0)
-
-onMounted(() => {{
-  startAnimation()
-
-  const handleScroll = () => {{
-    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight
-    scrollProgress.value = scrollHeight <= 0 ? 0 : Math.min((window.scrollY / scrollHeight) * 100, 100)
-  }}
-  window.addEventListener('scroll', handleScroll)
-  onUnmounted(() => window.removeEventListener('scroll', handleScroll))
-
-  nextTick(() => {{
-    if (!articleContent.value) return
-    const elements = articleContent.value.querySelectorAll('h2, h3, h4, p, blockquote, pre, img, figure, ul, ol')
-
-    import('animejs').then(({{ animate }}) => {{
-      const seen = new WeakSet()
-      elements.forEach((el, idx) => {{
-        if (el.getBoundingClientRect().top < window.innerHeight) return
-        const tag = el.tagName.toLowerCase()
-        const isHeading = ['h2', 'h3', 'h4'].includes(tag)
-        const isMedia = ['img', 'figure'].includes(tag)
-        const isQuote = tag === 'blockquote'
-
-        el.style.opacity = '0'
-        if (isHeading) el.style.transform = 'translateX(-20px)'
-        else if (isMedia) {{ el.style.transform = 'scale(0.97)'; el.style.filter = 'blur(4px)' }}
-        else if (isQuote) el.style.transform = 'translateX(20px)'
-        else el.style.transform = 'translateY(12px)'
-
-        const obs = new IntersectionObserver(([entry]) => {{
-          if (!entry.isIntersecting || seen.has(el)) return
-          seen.add(el)
-          obs.disconnect()
-          const cleanup = () => {{ el.style.opacity = ''; el.style.transform = ''; el.style.filter = '' }}
-
-          if (isHeading) animate(el, {{ opacity: [0, 1], translateX: [-20, 0], duration: 500, ease: 'outCubic', onComplete: cleanup }})
-          else if (isMedia) animate(el, {{ opacity: [0, 1], scale: [0.97, 1], filter: ['blur(4px)', 'blur(0px)'], duration: 600, ease: 'outQuad', onComplete: cleanup }})
-          else if (isQuote) animate(el, {{ opacity: [0, 1], translateX: [20, 0], duration: 500, ease: 'outCubic', onComplete: cleanup }})
-          else animate(el, {{ opacity: [0, 1], translateY: [12, 0], duration: 400, delay: Math.min((idx % 3) * 60, 120), ease: 'outQuad', onComplete: cleanup }})
-        }}, {{ threshold: 0.05, rootMargin: '0px 0px -10% 0px' }})
-        obs.observe(el)
-      }})
-    }})
-  }})
-}})
-</script>
-
-<template>
-  <div class="{css_class}">
-    <div class="crowned-progress">
-      <div class="crowned-progress-inner" :style="{{ width: scrollProgress + '%' }}" />
-    </div>
-
-    <div v-if="post" class="fixed top-0 left-0 right-0 z-[100] bg-black/80 backdrop-blur-sm print:hidden">
-      <PostMetadataBar :date="post?.metadata?.date || post?.date" :stats="readingStats" />
-    </div>
-
-    <article v-if="post" class="h-entry">
-      <header class="crowned-hero">
-        <h1 class="crowned-title" v-html="renderedTitle" />
-        <p v-if="post?.metadata?.dek || post?.dek" class="crowned-dek">
-          {{{{ post?.metadata?.dek || post?.dek }}}}
-        </p>
-        <WidgetsScrollIndicator :color="palette.accentDim" />
-      </header>
-
-      <time v-if="post?.metadata?.date" :datetime="post.metadata.date" class="dt-published hidden">{{{{ post.metadata.date }}}}</time>
-      <div class="p-author h-card hidden"><span class="p-name">EJ Fox</span><a class="u-url" href="https://ejfox.com">ejfox.com</a></div>
-      <a :href="postUrl" class="u-url hidden">{{{{ postUrl }}}}</a>
-
-      <div ref="articleContent" class="crowned-body">
-        <div v-if="post?.html" class="blog-post-content e-content font-serif" v-html="post.html" />
-      </div>
-
-      <div v-if="articleTags.length" class="crowned-tags">
-        <a v-for="tag in articleTags" :key="tag" :href="`/blog/tag/${{tag}}`" class="crowned-tag">{{{{ tag }}}}</a>
-      </div>
-
-      <PostNav class="print:hidden" :prev-post="nextPrevPosts?.prev" :next-post="nextPrevPosts?.next" />
-      <PostRelated class="print:hidden" :related-posts="relatedPosts" />
-      <Webmentions class="print:hidden" :url="postUrl" />
-    </article>
-  </div>
-</template>
-
-<style lang="postcss">
-body.{body_class} {{ background: var(--pt-bg) !important; }}
-body.{body_class} #app-container,
-body.{body_class} #app-container > section {{ background: var(--pt-bg) !important; }}
-body.{body_class} nav.sticky,
-body.{body_class} nav.md\:hidden {{ display: none !important; }}
-body.{body_class} #main-content {{ width: 100% !important; padding-top: 0 !important; }}
-body.{body_class} footer {{ background: var(--pt-bg) !important; border-color: transparent !important; }}
-body.{body_class} .blog-post-content blockquote::before,
-body.{body_class} blockquote::before {{ content: none !important; display: none !important; }}
-
-.{css_class} {{
-  position: relative; min-height: 100vh;
-  background: var(--pt-bg); color: var(--pt-text-dim);
-}}
-
-.crowned-progress {{ position: fixed; top: 0; left: 0; right: 0; height: 1px; z-index: 101; }}
-.crowned-progress-inner {{ height: 100%; background: linear-gradient(90deg, var(--pt-accent-dim), var(--pt-accent-glow)); transition: width 75ms ease-out; }}
-
-.crowned-hero {{
-  position: relative; z-index: 1; max-width: 900px; margin: 0 auto;
-  padding: 8rem 2rem 6rem; min-height: 70vh;
-  display: flex; flex-direction: column; justify-content: center;
-}}
-@media (min-width: 768px) {{ .crowned-hero {{ padding: 10rem 2rem 8rem; min-height: 80vh; }} }}
-
-.crowned-title {{
-  font-size: clamp(2.5rem, 8vw, 5.5rem); font-weight: 900; line-height: 1.05;
-  letter-spacing: -0.03em; color: var(--pt-text); overflow-wrap: break-word;
-}}
-.crowned-title .typing-char {{ display: inline; opacity: 0; transition: opacity 0.06s ease-out; }}
-.crowned-title .typing-char.typed {{ opacity: 1; }}
-.crowned-title .cursor {{
-  display: inline-block; width: 3px; height: 0.85em; margin-left: 1px;
-  background: var(--pt-accent); animation: crowned-blink 0.5s ease-in-out infinite; vertical-align: baseline;
-}}
-@keyframes crowned-blink {{ 0%, 40% {{ opacity: 0.85; }} 50%, 90% {{ opacity: 0; }} 100% {{ opacity: 0.85; }} }}
-
-.crowned-dek {{
-  margin-top: 1.5rem; font-family: Georgia, serif; font-size: 1.125rem;
-  line-height: 1.6; color: var(--pt-text-muted); max-width: 42em; font-style: italic;
-}}
-
-.crowned-body {{ max-width: 900px; margin: 0 auto; padding: 0 2rem 4rem; }}
-.{css_class} .blog-post-content {{ --body-margin: 2rem; }}
-
-.{css_class} .blog-post-content p,
-.{css_class} .blog-post-content ul,
-.{css_class} .blog-post-content ol,
-.{css_class} .blog-post-content li {{ color: var(--pt-text-dim); }}
-
-.{css_class} .blog-post-content h1,
-.{css_class} .blog-post-content h2 {{ color: var(--pt-text); border: none !important; }}
-.{css_class} .blog-post-content h3,
-.{css_class} .blog-post-content h4 {{ color: var(--pt-text-dim); }}
-
-.{css_class} .blog-post-content a {{ color: var(--pt-accent); text-decoration-color: var(--pt-accent-faint); }}
-.{css_class} .blog-post-content a:hover {{ color: var(--pt-accent-glow); text-shadow: 0 0 12px var(--pt-accent-faint); }}
-
-.{css_class} .blog-post-content blockquote {{
-  border-left: 2px solid var(--pt-accent-faint) !important;
-  background: transparent !important; padding: 0.5rem 0 0.5rem 1.5rem !important;
-  color: var(--pt-text-dim);
-}}
-
-.{css_class} .blog-post-content code {{ background: var(--pt-surface); color: var(--pt-accent-glow); border: 1px solid var(--pt-accent-faint); }}
-.{css_class} .blog-post-content pre {{ background: var(--pt-surface); border: none; }}
-.{css_class} .blog-post-content pre code {{ background: transparent; border: none; }}
-.{css_class} .blog-post-content img {{ border-radius: 6px; }}
-.{css_class} .blog-post-content hr {{ border: none; height: 1px; margin: 4rem 0; background: linear-gradient(90deg, transparent, var(--pt-accent-dim), transparent); }}
-
-.crowned-tags {{ max-width: 900px; margin: 0 auto; padding: 1rem 2rem 2rem; display: flex; flex-wrap: wrap; gap: 0.5rem; }}
-.crowned-tag {{
-  font-family: ui-monospace, monospace; font-size: 0.6875rem;
-  padding: 0.25rem 0.75rem; border-radius: 999px;
-  border: 1px solid var(--pt-accent-faint); color: var(--pt-text-muted); text-decoration: none; transition: all 0.15s;
-}}
-.crowned-tag:hover {{ border-color: var(--pt-accent-dim); color: var(--pt-text); }}
-
-@media (prefers-reduced-motion: reduce) {{
-  .crowned-title .typing-char {{ opacity: 1 !important; transition: none; }}
-  .crowned-title .cursor {{ display: none; }}
-}}
-
-@media print {{
-  .crowned-progress {{ display: none !important; }}
-  .{css_class} {{ background: white !important; color: black !important; }}
-}}
-</style>
-"##, title = title_case, hue = hue, slug = slug, body_class = body_class, css_class = css_class);
+    // Load template at compile time and interpolate placeholders
+    let template = include_str!("../templates/crowned-post.vue")
+        .replace("__SLUG__", &slug)
+        .replace("__HUE__", &hue.to_string())
+        .replace("__TITLE__", &title_case)
+        .replace("__BODY_CLASS__", &body_class)
+        .replace("__CSS_CLASS__", &css_class);
 
     // Create directory and write file
     let parent = std::path::Path::new(&vue_path).parent()
@@ -765,7 +492,7 @@ fn get_journal_heatmap(days: Option<u32>) -> Result<Vec<(String, u32)>, String> 
 
 #[tauri::command]
 fn backfill_journal() -> Result<u32, String> {
-    let target = config::default_target();
+    let target = config::default_target()?;
     journal::backfill_from_git(&target.repo_path, &target.domain)
 }
 
@@ -1072,45 +799,7 @@ fn upload_og_image(file_path: String, slug: String) -> Result<String, String> {
 // List all folders in Cloudinary (for folder picker UI)
 #[tauri::command]
 async fn cloudinary_list_folders() -> Result<Vec<String>, String> {
-    let config = cloudinary::get_config()?;
-
-    let url = format!(
-        "https://api.cloudinary.com/v1_1/{}/folders",
-        config.cloud_name
-    );
-
-    // Make HTTP request with basic auth
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
-        .basic_auth(&config.api_key, Some(&config.api_secret))
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
-
-    // Check for HTTP errors
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("HTTP {}: {}", status, body));
-    }
-
-    // Parse JSON response
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
-
-    // Extract folder paths from the response
-    // .as_array() returns Option<&Vec>, unwrap_or provides empty fallback
-    let folders = json["folders"]
-        .as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .filter_map(|f| f["path"].as_str().map(|s| s.to_string()))
-        .collect();
-
-    Ok(folders)
+    cloudinary::list_folders().await
 }
 
 // Open or focus the preview window
@@ -1168,6 +857,13 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        // --- APPLICATION MENU BAR ---
+        // macOS apps need a proper menu bar for Cmd+C/V/Z to work in text fields.
+        .menu(|handle| {
+            menu::build_app_menu(handle)
+        })
+        // Handle custom menu item clicks — emit events to the frontend
+        .on_menu_event(menu::handle_menu_event)
         .setup(|app| {
             // Initialize config before anything else
             config::init();
@@ -1189,42 +885,21 @@ pub fn run() {
                 companion::start_server().await;
             });
 
-            // Build tray menu
-            let open_i = MenuItem::with_id(app, "open", "Open Dispatch", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open_i, &quit_i])?;
+            // Build tray icon with menu
+            menu::build_tray(app)?;
 
-            TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "open" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+            // --- HIDE WINDOW ON CLOSE ---
+            // macOS convention: tray apps hide the window on Cmd+W / red close button
+            // instead of quitting. The user quits via tray menu or Cmd+Q.
+            if let Some(window) = app.get_webview_window("main") {
+                let window_clone = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = window_clone.hide();
                     }
-                    "quit" => {
-                        preview::stop_server();
-                        app.exit(0);
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                })
-                .build(app)?;
+                });
+            }
 
             Ok(())
         })

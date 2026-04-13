@@ -2,34 +2,32 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { FileText, Search, RefreshCw, Zap, Settings, Plus } from 'lucide-vue-next'
-import { PhLockSimple, PhEye, PhCheckCircle, PhRows, PhSquaresFour, PhKeyboard, PhCursor, PhCircleWavy, PhChartBar, PhDeviceMobile, PhFolder, PhTextAa, PhGitBranch, PhImageSquare, PhFlame } from '@phosphor-icons/vue'
+import {
+  PhRows,
+  PhSquaresFour,
+  PhCircleWavy,
+  PhChartBar,
+  PhDeviceMobile,
+  PhFolder,
+  PhTextAa,
+  PhGitBranch,
+  PhImageSquare,
+  PhFlame,
+} from '@phosphor-icons/vue'
 import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
 import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
 import PublishingJournal from './components/PublishingJournal.vue'
 import SettingsModal from './components/SettingsModal.vue'
-
-interface MarkdownFile {
-  path: string
-  filename: string
-  title: string | null
-  dek: string | null
-  date: string | null
-  tags: string[]
-  created: number
-  modified: number
-  word_count: number
-  is_safe: boolean
-  warnings: string[]
-  published_url: string | null
-  published_date: number | null
-  source_dir: string
-  unlisted: boolean
-  password: string | null
-  publish_at: string | null
-  content_type: string
-}
+import SearchModal from './components/SearchModal.vue'
+import HelpOverlay from './components/HelpOverlay.vue'
+import { useLocalStorage } from '@vueuse/core'
+import type { MarkdownFile } from './types'
+import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
+import { useAppConfig } from './composables/useAppConfig'
+import { useConnectionStatus } from './composables/useConnectionStatus'
 
 const files = ref<MarkdownFile[]>([])
 const selectedFile = ref<MarkdownFile | null>(null)
@@ -37,9 +35,6 @@ const loading = ref(true)
 
 // Search state
 const searchOpen = ref(false)
-const searchQuery = ref('')
-const searchInput = ref<HTMLInputElement | null>(null)
-const selectedIndex = ref(0)
 
 // New Post state
 const newPostOpen = ref(false)
@@ -47,18 +42,18 @@ const newPostTitle = ref('')
 const newPostInput = ref<HTMLInputElement | null>(null)
 const newPostCreating = ref(false)
 
-// Help & keyboard state
+// Help state
 const showHelp = ref(false)
-const lastGPress = ref(0)
+
+// Window focus state (for native dimming when unfocused)
+const windowFocused = ref(true)
 
 // Right panel tab state
 const rightTab = ref<'preview' | 'media' | 'journal'>('preview')
-const cloudinaryConnected = ref(false)
-const obsidianConnected = ref(false)
-const analyticsConnected = ref(false)
-const companionUrl = ref<string | null>(null)
-const companionPin = ref('')
-const gitBranch = ref<string | null>(null)
+
+// Connection status (auto-checks on creation)
+const { cloudinaryConnected, obsidianConnected, analyticsConnected, companionUrl, companionPin, gitBranch } =
+  useConnectionStatus()
 
 // Journal stats (for status bar / titlebar)
 const journalStats = ref<any>(null)
@@ -66,7 +61,9 @@ const journalStats = ref<any>(null)
 async function refreshJournalStats() {
   try {
     journalStats.value = await invoke('get_journal_stats')
-  } catch (_) { /* journal may not be ready yet */ }
+  } catch (_) {
+    /* journal may not be ready yet */
+  }
 }
 
 // Settings modal
@@ -75,34 +72,11 @@ const showSettings = ref(false)
 // FilePreview ref for Cmd+Enter publish
 const filePreviewRef = ref<InstanceType<typeof FilePreview> | null>(null)
 
-// App config
-interface EditorConfig { name: string; app_name: string; enabled: boolean }
-interface AppConfig {
-  default_editor: string
-  editors: EditorConfig[]
-  publish_targets: { id: string; name: string; is_default: boolean }[]
-}
-const appConfig = ref<AppConfig | null>(null)
+// App config (shared singleton)
+const { appConfig, fetchConfig: loadConfig } = useAppConfig()
 
-// Compact mode preference
-const compactMode = ref(localStorage.getItem('dispatch-compact') === 'true')
-function toggleCompactMode() {
-  compactMode.value = !compactMode.value
-  localStorage.setItem('dispatch-compact', compactMode.value.toString())
-}
-
-
-const searchResults = computed(() => {
-  if (!searchQuery.value.trim()) return files.value.slice(0, 20)
-  const q = searchQuery.value.toLowerCase()
-  return files.value
-    .filter(f => {
-      const title = (f.title || f.filename).toLowerCase()
-      const tags = f.tags.join(' ').toLowerCase()
-      return title.includes(q) || tags.includes(q) || f.filename.toLowerCase().includes(q)
-    })
-    .slice(0, 20)
-})
+// Compact mode preference (auto-syncs with localStorage)
+const compactMode = useLocalStorage('dispatch-compact', false)
 
 // Stats computations
 const stats = computed(() => {
@@ -110,9 +84,9 @@ const stats = computed(() => {
   const dayAgo = now - 86400
   const weekAgo = now - 86400 * 7
 
-  const liveFiles = files.value.filter(f => f.published_url)
-  const todayPublished = liveFiles.filter(f => f.published_date && f.published_date > dayAgo)
-  const weekPublished = liveFiles.filter(f => f.published_date && f.published_date > weekAgo)
+  const liveFiles = files.value.filter((f) => f.published_url)
+  const todayPublished = liveFiles.filter((f) => f.published_date && f.published_date > dayAgo)
+  const weekPublished = liveFiles.filter((f) => f.published_date && f.published_date > weekAgo)
 
   return {
     total: files.value.length,
@@ -121,20 +95,16 @@ const stats = computed(() => {
     totalWords: files.value.reduce((sum, f) => sum + f.word_count, 0),
     todayPublished: todayPublished.length,
     weekPublished: weekPublished.length,
-    weekWords: weekPublished.reduce((sum, f) => sum + f.word_count, 0)
+    weekWords: weekPublished.reduce((sum, f) => sum + f.word_count, 0),
   }
 })
 
 function openSearch() {
   searchOpen.value = true
-  searchQuery.value = ''
-  selectedIndex.value = 0
-  setTimeout(() => searchInput.value?.focus(), 10)
 }
 
 function closeSearch() {
   searchOpen.value = false
-  searchQuery.value = ''
 }
 
 function openNewPost() {
@@ -156,7 +126,7 @@ async function createNewPost() {
     closeNewPost()
     await loadFiles()
     // Select the new file
-    const newFile = files.value.find(f => f.path === path)
+    const newFile = files.value.find((f) => f.path === path)
     if (newFile) selectedFile.value = newFile
     // Open in default editor
     const editor = appConfig.value?.default_editor || 'iA Writer'
@@ -181,7 +151,7 @@ async function handleInsertMedia(markdown: string) {
   try {
     await invoke('append_to_file', {
       path: selectedFile.value.path,
-      content: markdown
+      content: markdown,
     })
     rightTab.value = 'preview'
     // Refresh the file content by re-selecting
@@ -196,188 +166,9 @@ async function handleInsertMedia(markdown: string) {
   }
 }
 
-function selectResult(file: MarkdownFile) {
+function handleSearchSelect(file: MarkdownFile) {
   selectedFile.value = file
   closeSearch()
-}
-
-function handleSearchKey(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    closeSearch()
-  } else if (e.key === 'ArrowDown') {
-    e.preventDefault()
-    selectedIndex.value = Math.min(selectedIndex.value + 1, searchResults.value.length - 1)
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault()
-    selectedIndex.value = Math.max(selectedIndex.value - 1, 0)
-  } else if (e.key === 'Enter') {
-    e.preventDefault()
-    const result = searchResults.value[selectedIndex.value]
-    if (result) selectResult(result)
-  }
-}
-
-function handleGlobalKey(e: KeyboardEvent) {
-  // ⌘K or / for search
-  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-    e.preventDefault()
-    if (searchOpen.value) closeSearch()
-    else openSearch()
-    return
-  }
-
-  // Don't handle navigation when search or settings is open
-  if (searchOpen.value) {
-    if (e.key === 'Escape') closeSearch()
-    return
-  }
-
-  if (showSettings.value) {
-    if (e.key === 'Escape') showSettings.value = false
-    return
-  }
-
-  // Don't handle when new post dialog is open
-  if (newPostOpen.value) {
-    if (e.key === 'Escape') closeNewPost()
-    return
-  }
-
-  // , opens settings (like ⌘, in macOS apps)
-  if (e.key === ',' && !e.metaKey && !e.ctrlKey) {
-    e.preventDefault()
-    showSettings.value = true
-    return
-  }
-
-  // / also opens search (vim style)
-  if (e.key === '/' && !e.metaKey && !e.ctrlKey) {
-    e.preventDefault()
-    openSearch()
-    return
-  }
-
-  // ? shows help
-  if (e.key === '?' && e.shiftKey) {
-    e.preventDefault()
-    showHelp.value = !showHelp.value
-    return
-  }
-
-  const currentIndex = selectedFile.value
-    ? files.value.findIndex(f => f.path === selectedFile.value?.path)
-    : -1
-
-  // Arrow navigation through file list
-  if (e.key === 'ArrowDown' || e.key === 'j') {
-    e.preventDefault()
-    const nextIndex = Math.min(currentIndex + 1, files.value.length - 1)
-    selectedFile.value = files.value[nextIndex]
-  }
-
-  if (e.key === 'ArrowUp' || e.key === 'k') {
-    e.preventDefault()
-    const prevIndex = Math.max(currentIndex - 1, 0)
-    selectedFile.value = files.value[prevIndex]
-  }
-
-  // g g - go to top (vim style, track double-tap)
-  if (e.key === 'g' && !e.metaKey && !e.ctrlKey) {
-    const now = Date.now()
-    if (lastGPress.value && now - lastGPress.value < 300) {
-      selectedFile.value = files.value[0]
-      lastGPress.value = 0
-    } else {
-      lastGPress.value = now
-    }
-  }
-
-  // G - go to bottom
-  if (e.key === 'G' && e.shiftKey) {
-    e.preventDefault()
-    selectedFile.value = files.value[files.value.length - 1]
-  }
-
-  // [ and ] - prev/next with wrap
-  if (e.key === '[') {
-    const prevIndex = currentIndex <= 0 ? files.value.length - 1 : currentIndex - 1
-    selectedFile.value = files.value[prevIndex]
-  }
-  if (e.key === ']') {
-    const nextIndex = currentIndex >= files.value.length - 1 ? 0 : currentIndex + 1
-    selectedFile.value = files.value[nextIndex]
-  }
-
-  // 1-9 jump to nth file
-  if (e.key >= '1' && e.key <= '9' && !e.metaKey && !e.ctrlKey) {
-    const idx = parseInt(e.key) - 1
-    if (idx < files.value.length) {
-      selectedFile.value = files.value[idx]
-    }
-  }
-
-  // Escape to deselect
-  if (e.key === 'Escape') {
-    selectedFile.value = null
-    showHelp.value = false
-  }
-
-  // o - open in Obsidian
-  if (e.key === 'o' && selectedFile.value && !e.metaKey) {
-    invoke('open_in_obsidian', { path: selectedFile.value.path })
-  }
-
-  // i - open in default editor
-  if (e.key === 'i' && selectedFile.value) {
-    const editor = appConfig.value?.default_editor || 'iA Writer'
-    invoke('open_in_app', { path: selectedFile.value.path, app: editor })
-  }
-
-  // p - open preview
-  if (e.key === 'p' && selectedFile.value && !e.metaKey) {
-    invoke('open_preview')
-  }
-
-  // v - view on site (if published)
-  if (e.key === 'v' && selectedFile.value?.published_url) {
-    window.open(selectedFile.value.published_url, '_blank')
-  }
-
-  // c - copy URL (if published)
-  if (e.key === 'c' && selectedFile.value?.published_url && !e.metaKey) {
-    navigator.clipboard.writeText(selectedFile.value.published_url)
-  }
-
-  // n - new post
-  if (e.key === 'n' && !e.metaKey && !e.ctrlKey) {
-    e.preventDefault()
-    openNewPost()
-    return
-  }
-
-  // r - refresh
-  if (e.key === 'r' && !e.metaKey && !e.ctrlKey) {
-    loadFiles()
-  }
-
-  // m - toggle media library tab
-  if (e.key === 'm' && !e.metaKey && !e.ctrlKey) {
-    e.preventDefault()
-    rightTab.value = rightTab.value === 'media' ? 'preview' : 'media'
-  }
-
-  // J - toggle journal tab
-  if (e.key === 'J' && !e.metaKey && !e.ctrlKey) {
-    e.preventDefault()
-    rightTab.value = rightTab.value === 'journal' ? 'preview' : 'journal'
-  }
-
-  // ⌘Enter to publish (opens confirmation modal)
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && selectedFile.value) {
-    e.preventDefault()
-    const isRepublish = !!selectedFile.value.published_url
-    filePreviewRef.value?.openPublishConfirm(isRepublish)
-  }
 }
 
 async function loadFiles() {
@@ -392,15 +183,24 @@ async function loadFiles() {
   refreshJournalStats()
 }
 
-let unlistenSchedule: (() => void) | null = null
+// Keyboard shortcuts composable
+const { handleGlobalKey } = useKeyboardShortcuts({
+  files,
+  selectedFile,
+  searchOpen,
+  showSettings,
+  newPostOpen,
+  showHelp,
+  rightTab,
+  filePreviewRef,
+  openSearch,
+  closeSearch,
+  openNewPost,
+  closeNewPost,
+  loadFiles,
+})
 
-async function loadConfig() {
-  try {
-    appConfig.value = await invoke('get_app_config') as AppConfig
-  } catch (e) {
-    console.error('Failed to load config:', e)
-  }
-}
+let unlistenSchedule: (() => void) | null = null
 
 function onSettingsSaved() {
   loadConfig()
@@ -408,7 +208,6 @@ function onSettingsSaved() {
 }
 
 onMounted(async () => {
-  loadConfig()
   loadFiles()
   refreshJournalStats()
   window.addEventListener('keydown', handleGlobalKey)
@@ -419,35 +218,18 @@ onMounted(async () => {
   })
   unlistenSchedule = unlisten
 
-  // Check connection statuses
-  invoke('check_cloudinary_status').then((connected: unknown) => {
-    cloudinaryConnected.value = connected as boolean
-  }).catch(() => {
-    cloudinaryConnected.value = false
+  // Track window focus for native dimming behavior
+  getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+    windowFocused.value = focused
   })
 
-  invoke('check_obsidian_api').then((connected: unknown) => {
-    obsidianConnected.value = connected as boolean
-  }).catch(() => {
-    obsidianConnected.value = false
+  // Handle menu bar events from Rust
+  listen('menu-new-post', () => openNewPost())
+  listen('menu-refresh', () => loadFiles())
+  listen('menu-toggle-compact', () => {
+    compactMode.value = !compactMode.value
   })
-
-  invoke('check_analytics_status').then((connected: unknown) => {
-    analyticsConnected.value = connected as boolean
-  }).catch(() => {
-    analyticsConnected.value = false
-  })
-
-  invoke('get_companion_info').then((info: any) => {
-    companionUrl.value = info.url
-    companionPin.value = info.pin
-  }).catch(() => {})
-
-  invoke('get_git_status').then((status: any) => {
-    if (status?.ok) {
-      gitBranch.value = status.branch
-    }
-  }).catch(() => { /* git status check - non-critical */ })
+  listen('menu-search', () => openSearch())
 })
 
 onUnmounted(() => {
@@ -457,87 +239,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app">
-
+  <div class="app" :class="{ unfocused: !windowFocused }">
     <!-- Help Modal -->
-    <div v-if="showHelp" class="search-overlay" @click.self="showHelp = false">
-      <div class="help-modal">
-        <div class="help-title">Keyboard Shortcuts</div>
-        <div class="help-grid">
-          <div class="help-section">
-            <div class="help-section-title"><PhCursor :size="10" weight="duotone" /> Navigation</div>
-            <div class="help-row"><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> <span>move up/down</span></div>
-            <div class="help-row"><kbd>g</kbd><kbd>g</kbd> <span>go to top</span></div>
-            <div class="help-row"><kbd>G</kbd> <span>go to bottom</span></div>
-            <div class="help-row"><kbd>[</kbd> <kbd>]</kbd> <span>prev/next (wrap)</span></div>
-            <div class="help-row"><kbd>1</kbd>-<kbd>9</kbd> <span>jump to nth file</span></div>
-            <div class="help-row"><kbd>esc</kbd> <span>deselect</span></div>
-          </div>
-          <div class="help-section">
-            <div class="help-section-title"><PhKeyboard :size="10" weight="duotone" /> Actions</div>
-            <div class="help-row"><kbd>⌘</kbd><kbd>K</kbd> or <kbd>/</kbd> <span>search</span></div>
-            <div class="help-row"><kbd>o</kbd> <span>open in Obsidian</span></div>
-            <div class="help-row"><kbd>i</kbd> <span>open in iA Writer</span></div>
-            <div class="help-row"><kbd>p</kbd> <span>preview</span></div>
-            <div class="help-row"><kbd>v</kbd> <span>view on site</span></div>
-            <div class="help-row"><kbd>c</kbd> <span>copy URL</span></div>
-            <div class="help-row"><kbd>n</kbd> <span>new post</span></div>
-            <div class="help-row"><kbd>r</kbd> <span>refresh</span></div>
-            <div class="help-row"><kbd>m</kbd> <span>media library</span></div>
-            <div class="help-row"><kbd>⌘</kbd><kbd>↵</kbd> <span>publish</span></div>
-            <div class="help-row"><kbd>,</kbd> <span>settings</span></div>
-          </div>
-        </div>
-        <div class="help-divider"></div>
-        <div class="help-section-title"><PhEye :size="10" weight="duotone" /> Visibility Spectrum</div>
-        <div class="visibility-spectrum">
-          <div class="vis-row"><span class="vis-badge vis-public"><PhCheckCircle :size="9" weight="fill" /> PUBLIC</span> <span class="vis-desc">Appears in listings, feeds, search</span></div>
-          <div class="vis-row"><span class="vis-badge vis-unlisted">UNLISTED</span> <span class="vis-desc">Link only — add <code>unlisted: true</code></span></div>
-          <div class="vis-row"><span class="vis-badge vis-protected">PROTECTED</span> <span class="vis-desc">Link + password — add <code>password: xyz</code></span></div>
-        </div>
-        <div class="help-hint">Press <kbd>?</kbd> or <kbd>esc</kbd> to close</div>
-      </div>
-    </div>
-
+    <HelpOverlay :show="showHelp" @close="showHelp = false" />
 
     <!-- Search Modal -->
-    <Transition name="modal">
-      <div v-if="searchOpen" class="search-overlay" @click.self="closeSearch">
-        <div class="search-modal">
-        <input
-          ref="searchInput"
-          v-model="searchQuery"
-          type="text"
-          placeholder="Search posts..."
-          class="search-input"
-          @keydown="handleSearchKey"
-        />
-        <div class="search-results">
-          <button
-            v-for="(file, i) in searchResults"
-            :key="file.path"
-            class="search-result"
-            :class="{ selected: i === selectedIndex }"
-            @click="selectResult(file)"
-            @mouseenter="selectedIndex = i"
-          >
-            <span v-if="file.password" class="result-badge protected"><PhLockSimple :size="10" weight="fill" /></span>
-            <span v-else-if="file.unlisted" class="result-badge unlisted"><PhEye :size="10" weight="fill" /></span>
-            <span v-else-if="file.published_url" class="result-badge live"><PhCheckCircle :size="10" weight="fill" /></span>
-            <span class="result-title">{{ file.title || file.filename.replace('.md', '') }}</span>
-            <span class="result-words">{{ file.word_count }}w</span>
-            <span class="result-dir">{{ file.source_dir }}</span>
-          </button>
-          <div v-if="searchResults.length === 0" class="no-results">No results</div>
-        </div>
-        <div class="search-hint">
-          <span>↑↓ navigate</span>
-          <span>↵ select</span>
-          <span>esc close</span>
-        </div>
-      </div>
-    </div>
-    </Transition>
+    <SearchModal :show="searchOpen" :files="files" @close="closeSearch" @select="handleSearchSelect" />
 
     <!-- New Post Modal -->
     <Transition name="modal">
@@ -555,7 +262,13 @@ onUnmounted(() => {
           />
           <div class="new-post-footer">
             <span class="new-post-slug" v-if="newPostTitle.trim()">
-              blog/{{ new Date().getFullYear() }}/{{ newPostTitle.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-') }}.md
+              blog/{{ new Date().getFullYear() }}/{{
+                newPostTitle
+                  .trim()
+                  .toLowerCase()
+                  .replace(/[^a-z0-9\s]/g, '')
+                  .replace(/\s+/g, '-')
+              }}.md
             </span>
             <div class="new-post-actions">
               <button @click="closeNewPost" class="np-btn">Cancel</button>
@@ -575,29 +288,19 @@ onUnmounted(() => {
         :selected="selectedFile"
         :loading="loading"
         :compact="compactMode"
-        @select="(f) => { selectedFile = f; rightTab = 'preview' }"
+        @select="
+          (f) => {
+            selectedFile = f
+            rightTab = 'preview'
+          }
+        "
       />
 
       <div class="right-panel">
         <div class="panel-tabs" data-tauri-drag-region>
-          <button
-            :class="{ active: rightTab === 'preview' }"
-            @click="rightTab = 'preview'"
-          >
-            Preview
-          </button>
-          <button
-            :class="{ active: rightTab === 'media' }"
-            @click="rightTab = 'media'"
-          >
-            Media
-          </button>
-          <button
-            :class="{ active: rightTab === 'journal' }"
-            @click="rightTab = 'journal'"
-          >
-            Journal
-          </button>
+          <button :class="{ active: rightTab === 'preview' }" @click="rightTab = 'preview'">Preview</button>
+          <button :class="{ active: rightTab === 'media' }" @click="rightTab = 'media'">Media</button>
+          <button :class="{ active: rightTab === 'journal' }" @click="rightTab = 'journal'">Journal</button>
           <div class="titlebar-stats" v-if="journalStats" data-tauri-drag-region>
             <span v-if="journalStats.current_streak_days >= 2" class="streak-pill">
               <PhFlame :size="9" weight="fill" />
@@ -641,9 +344,19 @@ onUnmounted(() => {
             </div>
             <div class="empty-title">Select a post</div>
             <div class="empty-shortcuts">
-              <div class="shortcut-row"><kbd>j</kbd><kbd>k</kbd> <span>navigate</span></div>
-              <div class="shortcut-row"><kbd>/</kbd> <span>search</span></div>
-              <div class="shortcut-row"><kbd>?</kbd> <span>all shortcuts</span></div>
+              <div class="shortcut-row">
+                <kbd>j</kbd>
+                <kbd>k</kbd>
+                <span>navigate</span>
+              </div>
+              <div class="shortcut-row">
+                <kbd>/</kbd>
+                <span>search</span>
+              </div>
+              <div class="shortcut-row">
+                <kbd>?</kbd>
+                <span>all shortcuts</span>
+              </div>
             </div>
           </div>
 
@@ -656,59 +369,90 @@ onUnmounted(() => {
             @insert="handleInsertMedia"
           />
 
-          <PublishingJournal
-            v-else-if="rightTab === 'journal'"
-          />
+          <PublishingJournal v-else-if="rightTab === 'journal'" />
         </div>
       </div>
     </main>
 
     <!-- Settings Modal -->
-    <SettingsModal
-      v-if="showSettings"
-      @close="showSettings = false"
-      @saved="onSettingsSaved"
-    />
+    <SettingsModal v-if="showSettings" @close="showSettings = false" @saved="onSettingsSaved" />
 
     <!-- Status Bar -->
     <div class="statusbar">
       <div class="status-left">
-        <span v-if="selectedFile" class="status-item file-path" :data-tip="selectedFile.source_dir + '/' + selectedFile.filename">
+        <span
+          v-if="selectedFile"
+          class="status-item file-path"
+          :data-tip="selectedFile.source_dir + '/' + selectedFile.filename"
+        >
           <PhFolder :size="10" weight="duotone" />
           {{ selectedFile.source_dir }}/{{ selectedFile.filename }}
         </span>
         <span v-else class="status-item muted">No file selected</span>
-        <span v-if="selectedFile" class="status-item muted tabular" :data-tip="selectedFile.word_count.toLocaleString() + ' words'">
+        <span
+          v-if="selectedFile"
+          class="status-item muted tabular"
+          :data-tip="selectedFile.word_count.toLocaleString() + ' words'"
+        >
           <PhTextAa :size="10" weight="duotone" />
           {{ selectedFile.word_count.toLocaleString() }}
         </span>
-        <span v-if="journalStats && journalStats.words_this_month > 0" class="status-item muted tabular" :data-tip="`${journalStats.words_this_month.toLocaleString()} words published this month`">
+        <span
+          v-if="journalStats && journalStats.words_this_month > 0"
+          class="status-item muted tabular"
+          :data-tip="`${journalStats.words_this_month.toLocaleString()} words published this month`"
+        >
           {{ (journalStats.words_this_month / 1000).toFixed(1) }}k/mo
         </span>
       </div>
       <div class="status-right">
-        <button @click="toggleCompactMode" class="status-btn" :class="{ active: compactMode }" data-tip="Toggle compact view">
+        <button
+          @click="compactMode = !compactMode"
+          class="status-btn"
+          :class="{ active: compactMode }"
+          data-tip="Toggle compact view"
+        >
           <PhRows v-if="compactMode" :size="11" weight="bold" />
           <PhSquaresFour v-else :size="11" weight="bold" />
         </button>
         <span class="status-divider"></span>
-        <span class="status-item" :class="gitBranch ? 'connected' : 'muted'" :data-tip="gitBranch ? `Branch: ${gitBranch}` : 'Git not connected'">
+        <span
+          class="status-item"
+          :class="gitBranch ? 'connected' : 'muted'"
+          :data-tip="gitBranch ? `Branch: ${gitBranch}` : 'Git not connected'"
+        >
           <PhGitBranch :size="11" weight="bold" />
           {{ gitBranch || '---' }}
         </span>
-        <span class="status-item" :class="obsidianConnected ? 'connected' : 'muted'" :data-tip="obsidianConnected ? 'Obsidian vault connected' : 'Obsidian not detected'">
+        <span
+          class="status-item"
+          :class="obsidianConnected ? 'connected' : 'muted'"
+          :data-tip="obsidianConnected ? 'Obsidian vault connected' : 'Obsidian not detected'"
+        >
           <PhCircleWavy :size="10" :weight="obsidianConnected ? 'fill' : 'light'" />
           vault
         </span>
-        <span class="status-item" :class="cloudinaryConnected ? 'connected' : 'muted'" :data-tip="cloudinaryConnected ? 'Cloudinary media connected' : 'Cloudinary not configured'">
+        <span
+          class="status-item"
+          :class="cloudinaryConnected ? 'connected' : 'muted'"
+          :data-tip="cloudinaryConnected ? 'Cloudinary media connected' : 'Cloudinary not configured'"
+        >
           <PhImageSquare :size="10" :weight="cloudinaryConnected ? 'fill' : 'light'" />
           media
         </span>
-        <span class="status-item" :class="analyticsConnected ? 'connected' : 'muted'" :data-tip="analyticsConnected ? 'Umami analytics connected' : 'Analytics not configured'">
+        <span
+          class="status-item"
+          :class="analyticsConnected ? 'connected' : 'muted'"
+          :data-tip="analyticsConnected ? 'Umami analytics connected' : 'Analytics not configured'"
+        >
           <PhChartBar :size="10" :weight="analyticsConnected ? 'fill' : 'light'" />
           analytics
         </span>
-        <span v-if="companionUrl" class="status-item connected" :data-tip="`Companion connected · PIN: ${companionPin}`">
+        <span
+          v-if="companionUrl"
+          class="status-item connected"
+          :data-tip="`Companion connected · PIN: ${companionPin}`"
+        >
           <PhDeviceMobile :size="10" weight="fill" />
           {{ companionUrl.replace('http://', '') }}
         </span>
@@ -717,109 +461,7 @@ onUnmounted(() => {
   </div>
 </template>
 
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-
-/* Base/fallback (dark default) - must come FIRST */
-:root {
-  /* Colors */
-  --bg-primary: rgba(20, 20, 22, 0.85);
-  --bg-secondary: rgba(30, 30, 34, 0.8);
-  --bg-tertiary: rgba(45, 45, 50, 0.6);
-  --bg-solid: #141416;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-light: rgba(255, 255, 255, 0.12);
-  --text-primary: #e5e5e5;
-  --text-secondary: #999;
-  --text-tertiary: #666;
-  --accent: rgba(255, 255, 255, 0.15);
-  --selection-bg: rgba(10, 132, 255, 0.85);
-  --selection-text: #fff;
-  --success: #30d158;
-  --warning: #ff9f0a;
-  --danger: #ff453a;
-  --modal-bg: rgba(35, 35, 40, 0.9);
-  --kbd-bg: rgba(255, 255, 255, 0.1);
-  --kbd-border: rgba(255, 255, 255, 0.15);
-
-  /* Spacing scale */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
-
-  /* Animation timing */
-  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --transition-fast: 0.15s var(--ease-spring);
-  --transition-normal: 0.25s var(--ease-out-expo);
-
-  /* Refined shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 24px 48px rgba(0, 0, 0, 0.2);
-  --shadow-glow: 0 0 0 1px var(--selection-bg), 0 2px 8px color-mix(in srgb, var(--selection-bg) 30%, transparent);
-}
-
-/* Light mode - overrides base when system is light */
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg-primary: rgba(255, 255, 255, 0.9);
-    --bg-secondary: rgba(248, 248, 248, 0.95);
-    --bg-tertiary: rgba(235, 235, 235, 0.8);
-    --bg-solid: #ffffff;
-    --border: rgba(0, 0, 0, 0.08);
-    --border-light: rgba(0, 0, 0, 0.12);
-    --text-primary: #1a1a1a;
-    --text-secondary: #555;
-    --text-tertiary: #888;
-    --accent: rgba(0, 0, 0, 0.08);
-    --selection-bg: rgba(10, 132, 255, 0.2);
-    --selection-text: #1a1a1a;
-    --success: #28a745;
-    --warning: #e67700;
-    --danger: #dc3545;
-    --modal-bg: rgba(255, 255, 255, 0.92);
-    --kbd-bg: rgba(0, 0, 0, 0.06);
-    --kbd-border: rgba(0, 0, 0, 0.12);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.03);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
-    --shadow-lg: 0 24px 48px rgba(0, 0, 0, 0.1);
-    --shadow-glow: 0 0 0 1px var(--selection-bg), 0 2px 8px color-mix(in srgb, var(--selection-bg) 20%, transparent);
-  }
-}
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
-  font-size: 12px;
-  color: var(--text-primary);
-  background: var(--bg-solid);
-  -webkit-font-smoothing: antialiased;
-}
-
-/* Focus ring for accessibility */
-:focus-visible {
-  outline: 2px solid var(--selection-bg);
-  outline-offset: 2px;
-}
-
-button:focus:not(:focus-visible) {
-  outline: none;
-}
-
-/* Smooth scroll */
-* {
-  scroll-behavior: smooth;
-}
-
-/* Selection color */
-::selection {
-  background: var(--selection-bg);
-  color: var(--selection-text);
-}
-
+<style scoped>
 .app {
   height: 100vh;
   display: flex;
@@ -871,7 +513,7 @@ button:focus:not(:focus-visible) {
 
 .panel-tabs button.active {
   color: var(--text-primary);
-  border-bottom-color: var(--text-primary);
+  border-bottom-color: var(--selection-bg);
   font-weight: 600;
 }
 
@@ -918,7 +560,7 @@ button:focus:not(:focus-visible) {
   background: var(--accent);
 }
 
-.titlebar-btn.spinning svg {
+.titlebar-btn.spinning :deep(svg) {
   animation: spin 1s linear infinite;
 }
 
@@ -969,343 +611,6 @@ button:focus:not(:focus-visible) {
 .shortcut-row span {
   margin-left: 4px;
   opacity: 0.7;
-}
-
-/* Spring animations */
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes scaleIn {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
-}
-
-@keyframes celebrate {
-  0% { transform: translate(-50%, -50%) scale(1); }
-  50% { transform: translate(-50%, -50%) scale(1.08); }
-  100% { transform: translate(-50%, -50%) scale(1); }
-}
-
-@keyframes successGlow {
-  0% { box-shadow: 0 0 60px color-mix(in srgb, var(--success) 50%, transparent); }
-  100% { box-shadow: none; }
-}
-
-@keyframes confettiBurst {
-  0% { opacity: 1; transform: translateY(0) scale(1); }
-  100% { opacity: 0; transform: translateY(-20px) scale(0); }
-}
-
-/* Search Modal */
-.search-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  z-index: 100;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 80px;
-}
-
-.search-modal {
-  width: 500px;
-  max-width: 90vw;
-  background: var(--modal-bg);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: var(--shadow-lg);
-}
-
-.search-input {
-  width: 100%;
-  padding: 14px 16px;
-  font-size: 15px;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  color: var(--text-primary);
-  outline: none;
-}
-
-.search-input::placeholder {
-  color: var(--text-tertiary);
-}
-
-.search-results {
-  max-height: 350px;
-  overflow-y: auto;
-}
-
-.search-result {
-  width: 100%;
-  padding: 10px 16px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.1s ease;
-}
-
-.search-result:hover {
-  background: var(--accent);
-}
-
-.search-result.selected {
-  background: var(--selection-bg);
-  color: var(--selection-text);
-}
-
-.search-result.selected .result-title {
-  color: var(--selection-text);
-}
-
-.search-result.selected .result-dir {
-  color: var(--selection-text);
-  opacity: 0.7;
-}
-
-.result-badge {
-  font-size: 9px;
-  padding: 2px 5px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-.result-badge.live {
-  background: var(--success);
-  color: #000;
-}
-
-.result-badge.unlisted {
-  background: #6366f1;
-  color: #fff;
-}
-
-.result-badge.protected {
-  background: #8b5cf6;
-  color: #fff;
-}
-
-.result-words {
-  font-size: 9px;
-  font-family: 'SF Mono', monospace;
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum';
-  color: var(--text-tertiary);
-  flex-shrink: 0;
-}
-
-.result-title {
-  flex: 1;
-  font-size: 13px;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.result-dir {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  font-family: 'SF Mono', monospace;
-}
-
-.no-results {
-  padding: 20px;
-  text-align: center;
-  color: var(--text-tertiary);
-}
-
-.search-hint {
-  padding: 8px 16px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  gap: 16px;
-  font-size: 10px;
-  color: var(--text-tertiary);
-}
-
-/* Modal animations - using spring timing */
-.modal-enter-active,
-.modal-leave-active {
-  transition: all var(--transition-normal);
-}
-
-.modal-enter-active .search-modal,
-.modal-leave-active .search-modal {
-  transition: all var(--transition-normal);
-}
-
-.modal-leave-active {
-  transition: all 0.15s ease;
-}
-
-.modal-leave-active .search-modal {
-  transition: all 0.15s ease;
-}
-
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-
-.modal-enter-from .search-modal {
-  transform: scale(0.96) translateY(-10px);
-  opacity: 0;
-}
-
-.modal-leave-to .search-modal {
-  transform: scale(0.98) translateY(-4px);
-  opacity: 0;
-}
-
-/* Help Modal */
-.help-modal {
-  width: 480px;
-  max-width: 90vw;
-  background: var(--modal-bg);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-  padding: var(--space-5);
-  box-shadow: var(--shadow-lg);
-  animation: scaleIn 0.25s var(--ease-out-expo);
-}
-
-.help-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 16px;
-  text-align: center;
-}
-
-.help-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-}
-
-.help-section-title {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.75px;
-  margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.help-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  margin-bottom: 6px;
-}
-
-.help-row span {
-  margin-left: auto;
-  color: var(--text-tertiary);
-}
-
-kbd {
-  display: inline-block;
-  padding: 2px 6px;
-  font-family: 'SF Mono', monospace;
-  font-size: 10px;
-  background: var(--kbd-bg);
-  border: 1px solid var(--kbd-border);
-  border-radius: 4px;
-  color: var(--text-primary);
-}
-
-.help-hint {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-  text-align: center;
-  font-size: 10px;
-  color: var(--text-tertiary);
-}
-
-.help-hint kbd {
-  font-size: 9px;
-  padding: 1px 4px;
-}
-
-.help-divider {
-  margin: 12px 0;
-  border-top: 1px solid var(--border);
-}
-
-.visibility-spectrum {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.vis-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 10px;
-}
-
-.vis-badge {
-  font-size: 8px;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 3px;
-  min-width: 80px;
-  text-align: center;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-}
-
-.vis-public {
-  background: var(--success);
-  color: #000;
-}
-
-.vis-unlisted {
-  background: #6366f1;
-  color: #fff;
-}
-
-.vis-protected {
-  background: #8b5cf6;
-  color: #fff;
-}
-
-.vis-desc {
-  color: var(--text-tertiary);
-}
-
-.vis-desc code {
-  font-family: 'SF Mono', monospace;
-  font-size: 9px;
-  background: var(--kbd-bg);
-  padding: 1px 4px;
-  border-radius: 2px;
 }
 
 /* Status Bar */
@@ -1363,11 +668,11 @@ kbd {
   background: var(--border-light);
 }
 
-.status-item.connected svg {
+.status-item.connected :deep(svg) {
   color: var(--success);
 }
 
-.status-item.muted svg {
+.status-item.muted :deep(svg) {
   opacity: 0.4;
 }
 
@@ -1392,58 +697,24 @@ kbd {
   color: var(--text-primary);
 }
 
-/* Native-feeling tooltips (macOS HUD style) */
-[data-tip] {
-  position: relative;
-}
-
-[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 50%;
-  transform: translateX(-50%) translateY(-2px);
-  padding: 2px 7px;
-  background: color-mix(in srgb, var(--bg-solid, #1a1a1e) 92%, white);
-  border: 0.5px solid color-mix(in srgb, var(--border-light) 60%, transparent);
-  border-radius: 3px;
-  font-size: 11px;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
-  font-weight: 400;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.12s ease, transform 0.12s ease;
-  z-index: 1000;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
-  -webkit-font-smoothing: antialiased;
-}
-
-[data-tip]:hover::after {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-  transition-delay: 0.6s;
-}
-
 /* Keep tooltips from overflowing left edge */
-.status-left [data-tip]::after {
+.status-left :deep([data-tip])::after {
   left: 0;
   transform: translateX(0) translateY(-2px);
 }
 
-.status-left [data-tip]:hover::after {
+.status-left :deep([data-tip]):hover::after {
   transform: translateX(0) translateY(0);
 }
 
 /* Keep tooltips from overflowing right edge */
-.status-right [data-tip]::after {
+.status-right :deep([data-tip])::after {
   left: auto;
   right: 0;
   transform: translateX(0) translateY(-2px);
 }
 
-.status-right [data-tip]:hover::after {
+.status-right :deep([data-tip]):hover::after {
   transform: translateX(0) translateY(0);
 }
 
@@ -1538,4 +809,17 @@ kbd {
   cursor: default;
 }
 
+/* Native macOS window unfocused dimming */
+.app.unfocused .sidebar,
+.app.unfocused .panel-tabs,
+.app.unfocused .statusbar {
+  opacity: 0.55;
+  transition: opacity 0.2s ease;
+}
+
+.sidebar,
+.panel-tabs,
+.statusbar {
+  transition: opacity 0.2s ease;
+}
 </style>

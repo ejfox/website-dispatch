@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { PhImageSquare, PhCheck, PhX, PhArrowsClockwise, PhPencilSimple, PhSparkle } from '@phosphor-icons/vue'
+import { PhCheck, PhX, PhPencilSimple, PhSparkle } from '@phosphor-icons/vue'
 
 interface AltTextSuggestion {
   image_url: string
@@ -41,8 +41,8 @@ const sorted = computed(() => {
   })
 })
 
-const confidentCount = computed(() => suggestions.value.filter(s => s.confidence >= 0.8).length)
-const reviewCount = computed(() => suggestions.value.filter(s => s.confidence < 0.8).length)
+const confidentCount = computed(() => suggestions.value.filter((s) => s.confidence >= 0.8).length)
+const reviewCount = computed(() => suggestions.value.filter((s) => s.confidence < 0.8).length)
 const acceptedCount = computed(() => accepted.value.size)
 
 function thumbnailUrl(url: string): string {
@@ -106,7 +106,10 @@ function startEdit(idx: number) {
   editingIdx.value = idx
   nextTick(() => {
     const el = document.querySelector(`.alt-edit-${idx}`) as HTMLTextAreaElement
-    if (el) { el.focus(); el.select() }
+    if (el) {
+      el.focus()
+      el.select()
+    }
   })
 }
 
@@ -121,7 +124,7 @@ async function applyAccepted() {
 
   applying.value = true
   try {
-    const applied = await invoke<number>('apply_alt_text', {
+    await invoke<number>('apply_alt_text', {
       filePath: props.filePath,
       suggestions: toApply,
     })
@@ -169,14 +172,14 @@ generate()
         <!-- Summary bar -->
         <div class="summary-bar">
           <span v-if="confidentCount > 0" class="summary-chip confident">
-            <PhCheck :size="10" weight="bold" /> {{ confidentCount }} confident
+            <PhCheck :size="10" weight="bold" />
+            {{ confidentCount }} confident
           </span>
           <span v-if="reviewCount > 0" class="summary-chip review">
-            <PhPencilSimple :size="10" weight="bold" /> {{ reviewCount }} needs review
+            <PhPencilSimple :size="10" weight="bold" />
+            {{ reviewCount }} needs review
           </span>
-          <span v-if="skippedCount > 0" class="summary-chip skipped">
-            {{ skippedCount }} skipped
-          </span>
+          <span v-if="skippedCount > 0" class="summary-chip skipped">{{ skippedCount }} skipped</span>
           <button v-if="acceptedCount < suggestions.length" class="accept-all-btn" @click="acceptAll">
             Accept all
           </button>
@@ -238,11 +241,7 @@ generate()
               >
                 <PhCheck :size="14" weight="bold" />
               </button>
-              <button
-                class="action-btn edit"
-                @click="startEdit(item.originalIdx)"
-                title="Edit"
-              >
+              <button class="action-btn edit" @click="startEdit(item.originalIdx)" title="Edit">
                 <PhPencilSimple :size="12" weight="bold" />
               </button>
             </div>
@@ -314,7 +313,9 @@ generate()
   gap: 10px;
 }
 
-.header-icon { color: #a78bfa; }
+.header-icon {
+  color: #a78bfa;
+}
 
 .modal-header h2 {
   font-size: 14px;
@@ -337,7 +338,10 @@ generate()
   border-radius: 4px;
   display: flex;
 }
-.close-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.05); }
+.close-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
 
 /* Error */
 .error-banner {
@@ -356,7 +360,7 @@ generate()
 
 .progress-bar {
   height: 3px;
-  background: rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.06);
   border-radius: 2px;
   overflow: hidden;
   margin-bottom: 12px;
@@ -371,8 +375,12 @@ generate()
 }
 
 @keyframes indeterminate {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(350%); }
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
 }
 
 .progress-text {
@@ -390,14 +398,18 @@ generate()
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Summary bar */
 .summary-bar {
   padding: 8px 16px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -434,13 +446,13 @@ generate()
   font-size: 10px;
   padding: 2px 10px;
   background: none;
-  border: 1px solid rgba(255,255,255,0.15);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   color: var(--text-secondary);
   border-radius: 10px;
   cursor: pointer;
 }
 .accept-all-btn:hover {
-  border-color: rgba(255,255,255,0.3);
+  border-color: rgba(255, 255, 255, 0.3);
   color: var(--text-primary);
 }
 
@@ -455,12 +467,12 @@ generate()
   display: flex;
   gap: 10px;
   padding: 8px 16px;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   transition: background 0.15s;
 }
 
 .review-item:hover {
-  background: rgba(255,255,255,0.02);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .review-item.is-accepted {
@@ -478,7 +490,7 @@ generate()
   height: 56px;
   border-radius: 4px;
   overflow: hidden;
-  background: rgba(255,255,255,0.04);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .review-thumb img {
@@ -511,10 +523,22 @@ generate()
   border-radius: 3px;
 }
 
-.conf-badge.high { background: rgba(34,197,94,0.2); color: #4ade80; }
-.conf-badge.good { background: rgba(34,197,94,0.12); color: #86efac; }
-.conf-badge.low { background: rgba(251,191,36,0.15); color: #fbbf24; }
-.conf-badge.poor { background: rgba(239,68,68,0.15); color: #fca5a5; }
+.conf-badge.high {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
+.conf-badge.good {
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
+}
+.conf-badge.low {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+.conf-badge.poor {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+}
 
 .line-num {
   font-size: 9px;
@@ -569,7 +593,7 @@ generate()
 .action-btn {
   width: 26px;
   height: 26px;
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
   background: none;
   color: var(--text-tertiary);
@@ -581,7 +605,7 @@ generate()
 }
 
 .action-btn:hover {
-  border-color: rgba(255,255,255,0.2);
+  border-color: rgba(255, 255, 255, 0.2);
   color: var(--text-secondary);
 }
 
@@ -639,11 +663,11 @@ generate()
 }
 
 .btn.secondary {
-  background: rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text-secondary);
 }
 .btn.secondary:hover {
-  background: rgba(255,255,255,0.1);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .btn.primary {

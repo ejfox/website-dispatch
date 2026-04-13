@@ -405,10 +405,10 @@ pub async fn check_credentials() -> bool {
 pub fn extract_local_media(content: &str, source_dir: &str) -> Vec<LocalMediaRef> {
     let mut refs = Vec::new();
 
-    // Regex patterns for media references
-    let md_image_re = regex::Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap();
-    let html_img_re = regex::Regex::new(r#"<img[^>]+src=["']([^"']+)["'][^>]*>"#).unwrap();
-    let html_video_re = regex::Regex::new(r#"<video[^>]+src=["']([^"']+)["'][^>]*>"#).unwrap();
+    // Shared compiled regex patterns
+    let md_image_re = &*crate::patterns::MD_IMAGE;
+    let html_img_re = &*crate::patterns::HTML_IMG;
+    let html_video_re = &*crate::patterns::HTML_VIDEO;
 
     for (line_num, line) in content.lines().enumerate() {
         // Skip lines with cloudinary URLs or https URLs
@@ -496,7 +496,7 @@ fn resolve_path(path: &str, source_dir: &str) -> Option<String> {
         Path::new(source_dir).join(stripped)
     } else if let Some(stripped) = path.strip_prefix('/') {
         // Absolute from vault root - need to find vault root
-        let config = crate::Config::default();
+        let config = crate::Config::from_app_config().ok()?;
         Path::new(&config.vault_path).join(stripped)
     } else {
         Path::new(source_dir).join(path)
@@ -545,4 +545,42 @@ pub fn apply_fixes_to_file(file_path: &str, fixes: &[(String, String)]) -> Resul
     fs::write(file_path, new_content).map_err(|e| format!("Failed to write file: {}", e))?;
 
     Ok(())
+}
+
+/// List all folders in Cloudinary (for folder picker UI)
+pub async fn list_folders() -> Result<Vec<String>, String> {
+    let config = get_config()?;
+
+    let url = format!(
+        "https://api.cloudinary.com/v1_1/{}/folders",
+        config.cloud_name
+    );
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&url)
+        .basic_auth(&config.api_key, Some(&config.api_secret))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status, body));
+    }
+
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let folders = json["folders"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|f| f["path"].as_str().map(|s| s.to_string()))
+        .collect();
+
+    Ok(folders)
 }

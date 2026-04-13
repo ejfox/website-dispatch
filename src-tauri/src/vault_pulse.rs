@@ -2,7 +2,6 @@ use crate::config;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
 use walkdir::WalkDir;
 
 /// A signal detected from vault observation — never actionable toward publishing,
@@ -38,7 +37,7 @@ pub struct RecentEdit {
 }
 
 pub fn scan_vault() -> Result<VaultPulse, String> {
-    let app_config = config::get();
+    let app_config = config::get()?;
     let vault_path = &app_config.vault.path;
     let publishable_dirs = &app_config.vault.publishable_dirs;
     let excluded_dirs = &app_config.vault.excluded_dirs;
@@ -311,7 +310,7 @@ fn parse_frontmatter_light(content: &str) -> (Option<String>, Vec<String>) {
         // Also handle YAML list-style tags
         if line.starts_with("- ") && !tags.is_empty() {
             // We're probably in a tags list
-            let t = line.strip_prefix("- ").unwrap().trim().trim_matches('"');
+            let t = line.strip_prefix("- ").unwrap_or(line).trim().trim_matches('"');
             if !t.is_empty() {
                 tags.push(t.to_string());
             }

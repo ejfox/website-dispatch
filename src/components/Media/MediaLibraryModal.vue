@@ -70,7 +70,7 @@ const copiedText = ref<string | null>(null)
 
 // Folder state
 const folders = ref<string[]>([])
-const selectedFolder = ref<string | null>('blog')  // Default to blog folder
+const selectedFolder = ref<string | null>('blog') // Default to blog folder
 const loadingFolders = ref(false)
 
 // Usage state
@@ -86,7 +86,7 @@ const detailUsage = ref<AssetUsage[]>([])
 const filteredAssets = computed(() => {
   if (!showUnusedOnly.value || !usageData.value) return assets.value
 
-  return assets.value.filter(asset => {
+  return assets.value.filter((asset) => {
     const usage = usageData.value?.usage_map.by_asset[asset.public_id]
     return !usage || usage.length === 0
   })
@@ -137,20 +137,20 @@ async function loadAssets(append = false) {
       }
       result = await invoke('cloudinary_search', {
         query: expr,
-        maxResults: 50
+        maxResults: 50,
       })
     } else if (selectedFolder.value) {
       // Search by folder
       result = await invoke('cloudinary_search', {
         query: `folder:${selectedFolder.value}/*`,
-        maxResults: 50
+        maxResults: 50,
       })
     } else {
       const resType = resourceType.value === 'all' ? 'image' : resourceType.value
       result = await invoke('cloudinary_list_assets', {
         resourceType: resType,
         maxResults: 50,
-        cursor: append ? nextCursor.value : null
+        cursor: append ? nextCursor.value : null,
       })
     }
 
@@ -250,14 +250,18 @@ function handleKeydown(e: KeyboardEvent) {
 function copyUrl(asset: CloudinaryAsset) {
   navigator.clipboard.writeText(asset.secure_url)
   copiedText.value = 'URL'
-  setTimeout(() => { copiedText.value = null }, 1500)
+  setTimeout(() => {
+    copiedText.value = null
+  }, 1500)
 }
 
 function copyMarkdown(asset: CloudinaryAsset, alt = '') {
   const md = `![${alt}](${asset.secure_url})`
   navigator.clipboard.writeText(md)
   copiedText.value = 'Markdown'
-  setTimeout(() => { copiedText.value = null }, 1500)
+  setTimeout(() => {
+    copiedText.value = null
+  }, 1500)
 }
 
 function formatBytes(bytes: number): string {
@@ -268,16 +272,14 @@ function formatBytes(bytes: number): string {
 
 function getThumbnailUrl(asset: CloudinaryAsset): string {
   if (asset.resource_type === 'video') {
-    return asset.secure_url.replace('/upload/', '/upload/c_fill,w_160,h_100,g_auto/')
-      .replace(/\.[^.]+$/, '.jpg')
+    return asset.secure_url.replace('/upload/', '/upload/c_fill,w_160,h_100,g_auto/').replace(/\.[^.]+$/, '.jpg')
   }
   return asset.secure_url.replace('/upload/', '/upload/c_fill,w_160,h_100,g_auto/')
 }
 
 function getPreviewUrl(asset: CloudinaryAsset): string {
   if (asset.resource_type === 'video') {
-    return asset.secure_url.replace('/upload/', '/upload/c_limit,w_600/')
-      .replace(/\.[^.]+$/, '.jpg')
+    return asset.secure_url.replace('/upload/', '/upload/c_limit,w_600/').replace(/\.[^.]+$/, '.jpg')
   }
   return asset.secure_url.replace('/upload/', '/upload/c_limit,w_600/')
 }
@@ -534,11 +536,13 @@ onMounted(() => {
   z-index: 10;
 }
 
-.toast-enter-active, .toast-leave-active {
+.toast-enter-active,
+.toast-leave-active {
   transition: all 0.2s ease;
 }
 
-.toast-enter-from, .toast-leave-to {
+.toast-enter-from,
+.toast-leave-to {
   opacity: 0;
   transform: translateX(-50%) translateY(-10px);
 }

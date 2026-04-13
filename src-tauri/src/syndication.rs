@@ -108,10 +108,18 @@ pub fn post_to_mastodon(post: &PostContent) -> SyndicationResult {
 
     let client = reqwest::blocking::Client::new();
     let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-    );
+    let auth_value = match HeaderValue::from_str(&format!("Bearer {}", token)) {
+        Ok(v) => v,
+        Err(e) => {
+            return SyndicationResult {
+                platform: "mastodon".into(),
+                success: false,
+                url: None,
+                error: Some(format!("Invalid auth token: {}", e)),
+            }
+        }
+    };
+    headers.insert(AUTHORIZATION, auth_value);
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     match client.post(&url).headers(headers).json(&body).send() {
@@ -167,10 +175,18 @@ pub fn post_to_mastodon_with_text(status_text: &str) -> SyndicationResult {
 
     let client = reqwest::blocking::Client::new();
     let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-    );
+    let auth_value = match HeaderValue::from_str(&format!("Bearer {}", token)) {
+        Ok(v) => v,
+        Err(e) => {
+            return SyndicationResult {
+                platform: "mastodon".into(),
+                success: false,
+                url: None,
+                error: Some(format!("Invalid auth token: {}", e)),
+            }
+        }
+    };
+    headers.insert(AUTHORIZATION, auth_value);
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     match client.post(&url).headers(headers).json(&body).send() {
@@ -280,8 +296,7 @@ pub struct OgImageVariants {
 /// Generate 4 OG image variants by calling the Node script in the website repo.
 /// Returns file paths to the generated PNGs.
 pub fn generate_og_variants(slug: &str, batch: u32) -> Result<OgImageVariants, String> {
-    let config = crate::config::get();
-    let target = crate::config::default_target();
+    let target = crate::config::default_target()?;
     let repo_path = &target.repo_path;
     let script = format!("{}/scripts/og-image/index.mjs", repo_path);
 
@@ -379,7 +394,7 @@ pub fn upload_og_image(file_path: &str, slug: &str) -> Result<String, String> {
         .ok_or_else(|| "No URL in Cloudinary response".to_string())?;
 
     // Write to data/og-images.json in the website repo so blog:process picks it up
-    let target = crate::config::default_target();
+    let target = crate::config::default_target()?;
     let og_map_path = format!("{}/data/og-images.json", target.repo_path);
     if let Ok(mut map) = std::fs::read_to_string(&og_map_path)
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)))

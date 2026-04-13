@@ -93,7 +93,7 @@ pub struct Nudge {
 // Database singleton
 // ---------------------------------------------------------------------------
 
-static DB: OnceLock<Mutex<Connection>> = OnceLock::new();
+static DB: OnceLock<Result<Mutex<Connection>, String>> = OnceLock::new();
 
 fn db_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
@@ -102,18 +102,23 @@ fn db_path() -> PathBuf {
         .join("journal.db")
 }
 
-fn get_db() -> &'static Mutex<Connection> {
-    DB.get_or_init(|| {
-        let path = db_path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let conn = Connection::open(&path).expect("Failed to open journal database");
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-            .expect("Failed to set pragmas");
-        init_schema(&conn);
-        Mutex::new(conn)
-    })
+fn init_db() -> Result<Mutex<Connection>, String> {
+    let path = db_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let conn = Connection::open(&path)
+        .map_err(|e| format!("Failed to open journal database: {}", e))?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+        .map_err(|e| format!("Failed to set pragmas: {}", e))?;
+    init_schema(&conn);
+    Ok(Mutex::new(conn))
+}
+
+fn get_db() -> Result<&'static Mutex<Connection>, String> {
+    DB.get_or_init(|| init_db())
+        .as_ref()
+        .map_err(|e| e.clone())
 }
 
 fn init_schema(conn: &Connection) {
@@ -167,7 +172,7 @@ pub fn record_event(
     let day_of_week = local.weekday().num_days_from_monday() as i32;
     let tags_str = tags.join(",");
 
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
     db.execute(
         "INSERT INTO events (timestamp, local_date, local_hour, day_of_week, event, slug, title, word_count, tags, content_type, url, target_id, visibility)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
@@ -197,7 +202,7 @@ pub fn record_event(
 // ---------------------------------------------------------------------------
 
 pub fn get_recent_entries(limit: usize) -> Result<Vec<JournalEntry>, String> {
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
     let mut stmt = db
         .prepare(
             "SELECT id, timestamp, event, slug, title, word_count, tags, content_type, url, target_id, visibility
@@ -232,7 +237,7 @@ pub fn get_recent_entries(limit: usize) -> Result<Vec<JournalEntry>, String> {
 
 /// Returns a map of "YYYY-MM-DD" -> publish count for the last `days` days.
 pub fn get_heatmap(days: u32) -> Result<Vec<(String, u32)>, String> {
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
     let cutoff = Local::now() - chrono::Duration::days(days as i64);
     let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
@@ -262,7 +267,7 @@ pub fn get_heatmap(days: u32) -> Result<Vec<(String, u32)>, String> {
 // ---------------------------------------------------------------------------
 
 pub fn get_stats() -> Result<JournalStats, String> {
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
 
     // Total counts by event type
     let total_publishes: u32 = db
@@ -595,7 +600,7 @@ fn compute_current_streak(dates: &[String], today: &str) -> (u32, Option<String>
 
     // The streak must include today or yesterday to be "current"
     let yesterday = today_d - chrono::Duration::days(1);
-    let last = *parsed.last().unwrap();
+    let last = parsed.last().copied().unwrap_or(today_d);
     if last < yesterday {
         return (0, None);
     }
@@ -698,11 +703,9 @@ fn compute_weekly_streaks(dates: &[String]) -> (u32, u32) {
         last_week_date.iso_week().week(),
     );
 
-    let last_active = weeks.last().unwrap();
-    let current_streak = if *last_active == this_week || *last_active == last_week {
-        current
-    } else {
-        0
+    let current_streak = match weeks.last() {
+        Some(last_active) if *last_active == this_week || *last_active == last_week => current,
+        _ => 0,
     };
 
     (current_streak, longest)
@@ -921,7 +924,7 @@ fn format_words_friendly(words: i64) -> String {
 // ---------------------------------------------------------------------------
 
 pub fn backfill_from_git(repo_path: &str, domain: &str) -> Result<u32, String> {
-    let db = get_db().lock().map_err(|e| format!("DB lock: {}", e))?;
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
 
     // Only backfill if the DB is empty
     let count: i64 = db
@@ -940,11 +943,10 @@ pub fn backfill_from_git(repo_path: &str, domain: &str) -> Result<u32, String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut inserted = 0u32;
-    let re = regex::Regex::new(r"^(\S+)\s+Publish:\s+(.+)$").unwrap();
 
     for line in stdout.lines().rev() {
         // Process oldest first
-        if let Some(cap) = re.captures(line) {
+        if let Some(cap) = crate::patterns::GIT_PUBLISH_LOG.captures(line) {
             let ts = &cap[1];
             let slug = cap[2].trim();
 

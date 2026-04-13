@@ -1,4 +1,3 @@
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -40,13 +39,9 @@ fn extract_cloudinary_urls(content: &str) -> Vec<(String, usize, String)> {
     // Match Cloudinary URLs in various formats
     // https://res.cloudinary.com/CLOUD_NAME/image/upload/...
     // https://res.cloudinary.com/CLOUD_NAME/video/upload/...
-    let url_re = Regex::new(
-        r#"https://res\.cloudinary\.com/([^/]+)/(image|video|raw)/upload/(?:[^/]+/)*([^\s\)"'\]]+)"#
-    ).unwrap();
-
     for (line_num, line) in content.lines().enumerate() {
-        for cap in url_re.captures_iter(line) {
-            let full_url = cap.get(0).map(|m| m.as_str()).unwrap_or("");
+        for cap in crate::patterns::CLOUDINARY_URL.captures_iter(line) {
+            let _full_url = cap.get(0).map(|m| m.as_str()).unwrap_or("");
             let public_id = cap.get(3).map(|m| m.as_str()).unwrap_or("");
 
             // Remove file extension from public_id
@@ -82,7 +77,7 @@ fn extract_title(content: &str) -> Option<String> {
 /// Scan all markdown files in the vault for Cloudinary URLs
 pub fn scan_vault_for_usage() -> Result<UsageScanResult, String> {
     let start = std::time::Instant::now();
-    let config = Config::default();
+    let config = Config::from_app_config()?;
 
     let mut by_asset: HashMap<String, Vec<AssetUsage>> = HashMap::new();
     let mut by_post: HashMap<String, Vec<String>> = HashMap::new();
@@ -215,21 +210,3 @@ pub fn get_post_assets(post_path: &str) -> Result<Vec<String>, String> {
         .unwrap_or_default())
 }
 
-/// Get list of Cloudinary folders from a list of public_ids
-pub fn extract_folders(public_ids: &[String]) -> Vec<String> {
-    let mut folders: Vec<String> = public_ids
-        .iter()
-        .filter_map(|id| {
-            let parts: Vec<&str> = id.split('/').collect();
-            if parts.len() > 1 {
-                Some(parts[..parts.len() - 1].join("/"))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    folders.sort();
-    folders.dedup();
-    folders
-}

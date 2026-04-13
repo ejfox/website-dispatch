@@ -1,27 +1,25 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { PhLockSimple, PhEye, PhClock, PhCheckCircle, PhFolderOpen, PhPencilSimple, PhTextAa, PhCalendarBlank, PhTextAlignLeft, PhListNumbers, PhStack, PhBroadcast, PhFileText, PhClockCounterClockwise, PhNotebook } from '@phosphor-icons/vue'
-
-interface MarkdownFile {
-  path: string
-  filename: string
-  title: string | null
-  dek: string | null
-  date: string | null
-  tags: string[]
-  created: number
-  modified: number
-  word_count: number
-  is_safe: boolean
-  warnings: string[]
-  published_url: string | null
-  published_date: number | null
-  source_dir: string
-  unlisted: boolean
-  password: string | null
-  publish_at: string | null
-  content_type: string
-}
+import { invoke } from '@tauri-apps/api/core'
+import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
+import {
+  PhLockSimple,
+  PhEye,
+  PhClock,
+  PhCheckCircle,
+  PhFolderOpen,
+  PhPencilSimple,
+  PhTextAa,
+  PhCalendarBlank,
+  PhTextAlignLeft,
+  PhListNumbers,
+  PhStack,
+  PhBroadcast,
+  PhFileText,
+  PhClockCounterClockwise,
+  PhNotebook,
+} from '@phosphor-icons/vue'
+import type { MarkdownFile } from '../types'
 
 const props = defineProps<{
   files: MarkdownFile[]
@@ -41,16 +39,16 @@ const filteredFiles = computed(() => {
 
   // Filter
   if (filter.value === 'published') {
-    result = result.filter(f => f.published_url)
+    result = result.filter((f) => f.published_url)
   } else if (filter.value === 'drafts') {
-    result = result.filter(f => !f.published_url)
+    result = result.filter((f) => !f.published_url)
   } else if (filter.value === 'scheduled') {
-    result = result.filter(f => f.publish_at && !f.published_url)
+    result = result.filter((f) => f.publish_at && !f.published_url)
   }
 
   // Hide weeknotes if toggled off
   if (!showWeeknotes.value) {
-    result = result.filter(f => f.content_type !== 'weeknote')
+    result = result.filter((f) => f.content_type !== 'weeknote')
   }
 
   // Sort
@@ -79,9 +77,9 @@ const filteredFiles = computed(() => {
 
 const counts = computed(() => ({
   all: props.files.length,
-  published: props.files.filter(f => f.published_url).length,
-  drafts: props.files.filter(f => !f.published_url).length,
-  scheduled: props.files.filter(f => f.publish_at && !f.published_url).length
+  published: props.files.filter((f) => f.published_url).length,
+  drafts: props.files.filter((f) => !f.published_url).length,
+  scheduled: props.files.filter((f) => f.publish_at && !f.published_url).length,
 }))
 
 // Group files by time period (only for 'recent' sort)
@@ -148,6 +146,28 @@ function formatWordCount(count: number): string {
   return `${count}`
 }
 
+async function showContextMenu(file: MarkdownFile, e: MouseEvent) {
+  e.preventDefault()
+  const items = [
+    await MenuItem.new({ text: 'Open in Obsidian', action: () => invoke('open_in_obsidian', { path: file.path }) }),
+    await MenuItem.new({
+      text: 'Open in Editor',
+      action: () => invoke('open_in_app', { path: file.path, app: 'iA Writer' }),
+    }),
+    await PredefinedMenuItem.new({ item: 'Separator' }),
+    await MenuItem.new({ text: 'Copy Path', action: () => navigator.clipboard.writeText(file.path) }),
+  ]
+  if (file.published_url) {
+    items.push(
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await MenuItem.new({ text: 'View on Site', action: () => window.open(file.published_url!, '_blank') }),
+      await MenuItem.new({ text: 'Copy URL', action: () => navigator.clipboard.writeText(file.published_url!) }),
+    )
+  }
+  const menu = await Menu.new({ items })
+  await menu.popup()
+}
+
 function getAgeColor(ts: number): string {
   const days = Math.min(Math.floor((Date.now() / 1000 - ts) / 86400), 365)
   const t = days / 365
@@ -165,32 +185,46 @@ function getAgeColor(ts: number): string {
   <aside class="sidebar" :class="{ compact }">
     <div class="control-bar" data-tauri-drag-region>
       <div class="filters">
-        <button
-          :class="{ active: filter === 'all' }"
-          @click="filter = 'all'"
-        ><PhStack :size="9" weight="bold" /> {{ counts.all }}</button>
-        <button
-          :class="{ active: filter === 'published' }"
-          @click="filter = 'published'"
-        ><PhBroadcast :size="9" weight="bold" /> {{ counts.published }}</button>
-        <button
-          :class="{ active: filter === 'drafts' }"
-          @click="filter = 'drafts'"
-        ><PhFileText :size="9" weight="bold" /> {{ counts.drafts }}</button>
-        <button
-          v-if="counts.scheduled > 0"
-          :class="{ active: filter === 'scheduled' }"
-          @click="filter = 'scheduled'"
-        ><PhClock :size="9" weight="bold" /> {{ counts.scheduled }}</button>
+        <button :class="{ active: filter === 'all' }" @click="filter = 'all'">
+          <PhStack :size="9" weight="bold" />
+          {{ counts.all }}
+        </button>
+        <button :class="{ active: filter === 'published' }" @click="filter = 'published'">
+          <PhBroadcast :size="9" weight="bold" />
+          {{ counts.published }}
+        </button>
+        <button :class="{ active: filter === 'drafts' }" @click="filter = 'drafts'">
+          <PhFileText :size="9" weight="bold" />
+          {{ counts.drafts }}
+        </button>
+        <button v-if="counts.scheduled > 0" :class="{ active: filter === 'scheduled' }" @click="filter = 'scheduled'">
+          <PhClock :size="9" weight="bold" />
+          {{ counts.scheduled }}
+        </button>
       </div>
       <div class="sort-divider"></div>
       <div class="sort-row">
-        <button :class="{ active: sort === 'recent' }" @click="sort = 'recent'" data-tip="Recent"><PhClockCounterClockwise :size="9" weight="bold" /></button>
-        <button :class="{ active: sort === 'created' }" @click="sort = 'created'" data-tip="Created"><PhCalendarBlank :size="9" weight="bold" /></button>
-        <button :class="{ active: sort === 'title' }" @click="sort = 'title'" data-tip="Title"><PhTextAlignLeft :size="9" weight="bold" /></button>
-        <button :class="{ active: sort === 'words' }" @click="sort = 'words'" data-tip="Words"><PhListNumbers :size="9" weight="bold" /></button>
+        <button :class="{ active: sort === 'recent' }" @click="sort = 'recent'" data-tip="Recent">
+          <PhClockCounterClockwise :size="9" weight="bold" />
+        </button>
+        <button :class="{ active: sort === 'created' }" @click="sort = 'created'" data-tip="Created">
+          <PhCalendarBlank :size="9" weight="bold" />
+        </button>
+        <button :class="{ active: sort === 'title' }" @click="sort = 'title'" data-tip="Title">
+          <PhTextAlignLeft :size="9" weight="bold" />
+        </button>
+        <button :class="{ active: sort === 'words' }" @click="sort = 'words'" data-tip="Words">
+          <PhListNumbers :size="9" weight="bold" />
+        </button>
         <div class="sort-divider"></div>
-        <button :class="{ active: showWeeknotes }" class="weeknote-toggle" @click="showWeeknotes = !showWeeknotes" data-tip="Week Notes"><PhNotebook :size="9" weight="bold" /></button>
+        <button
+          :class="{ active: showWeeknotes }"
+          class="weeknote-toggle"
+          @click="showWeeknotes = !showWeeknotes"
+          data-tip="Week Notes"
+        >
+          <PhNotebook :size="9" weight="bold" />
+        </button>
       </div>
     </div>
 
@@ -209,37 +243,85 @@ function getAgeColor(ts: number): string {
           :class="{
             selected: selected?.path === file.path,
             published: !!file.published_url,
-            weeknote: file.content_type === 'weeknote'
+            weeknote: file.content_type === 'weeknote',
           }"
           :style="{ '--age': getAgeColor(file.created) }"
           @click="emit('select', file)"
+          @contextmenu="showContextMenu(file, $event)"
         >
           <div class="age-bar"></div>
           <div class="content">
             <div class="row">
               <span v-if="file.content_type === 'weeknote'" class="weeknote-badge">WEEK</span>
-              <span v-if="file.password && !file.published_url" class="protected-badge-draft" data-tip="Will be password-protected"><PhLockSimple :size="10" weight="fill" /></span>
-              <span v-else-if="file.unlisted && !file.published_url" class="unlisted-badge-draft" data-tip="Will be unlisted"><PhEye :size="10" weight="fill" /></span>
+              <span
+                v-if="file.password && !file.published_url"
+                class="protected-badge-draft"
+                data-tip="Will be password-protected"
+              >
+                <PhLockSimple :size="10" weight="fill" />
+              </span>
+              <span
+                v-else-if="file.unlisted && !file.published_url"
+                class="unlisted-badge-draft"
+                data-tip="Will be unlisted"
+              >
+                <PhEye :size="10" weight="fill" />
+              </span>
               <span class="title" :title="formatTitle(file)">{{ formatTitle(file) }}</span>
-              <span v-if="file.published_url && file.warnings.includes('Modified since publish')" class="modified-badge">MODIFIED</span>
-              <span v-else-if="file.published_url && file.password" class="protected-badge"><PhLockSimple :size="9" weight="bold" /> PROTECTED</span>
-              <span v-else-if="file.published_url && file.unlisted" class="unlisted-badge"><PhEye :size="9" weight="bold" /> UNLISTED</span>
-              <span v-else-if="file.published_url" class="live-badge"><PhCheckCircle :size="9" weight="fill" /> LIVE</span>
-              <span v-else-if="file.publish_at" class="scheduled-badge"><PhClock :size="9" weight="bold" /> SCHEDULED</span>
+              <span
+                v-if="file.published_url && file.warnings.includes('Modified since publish')"
+                class="modified-badge"
+              >
+                MODIFIED
+              </span>
+              <span v-else-if="file.published_url && file.password" class="protected-badge">
+                <PhLockSimple :size="9" weight="bold" />
+                PROTECTED
+              </span>
+              <span v-else-if="file.published_url && file.unlisted" class="unlisted-badge">
+                <PhEye :size="9" weight="bold" />
+                UNLISTED
+              </span>
+              <span v-else-if="file.published_url" class="live-badge">
+                <PhCheckCircle :size="9" weight="fill" />
+                LIVE
+              </span>
+              <span v-else-if="file.publish_at" class="scheduled-badge">
+                <PhClock :size="9" weight="bold" />
+                SCHEDULED
+              </span>
             </div>
             <div v-if="file.dek" class="dek">{{ file.dek }}</div>
             <div class="filename">{{ file.source_dir ? file.source_dir + '/' : '' }}{{ file.filename }}</div>
             <div class="meta">
-              <span v-if="file.source_dir" class="dir"><PhFolderOpen :size="8" weight="duotone" /> {{ file.source_dir }}/</span>
+              <span v-if="file.source_dir" class="dir">
+                <PhFolderOpen :size="8" weight="duotone" />
+                {{ file.source_dir }}/
+              </span>
               <template v-if="file.published_date">
-                <span class="pub-date"><PhBroadcast :size="8" weight="fill" /> {{ formatAge(file.published_date) }}</span>
-                <span v-if="file.warnings.includes('Modified since publish')" class="edit-date"><PhPencilSimple :size="8" weight="fill" /> {{ formatAge(file.modified) }}</span>
+                <span class="pub-date">
+                  <PhBroadcast :size="8" weight="fill" />
+                  {{ formatAge(file.published_date) }}
+                </span>
+                <span v-if="file.warnings.includes('Modified since publish')" class="edit-date">
+                  <PhPencilSimple :size="8" weight="fill" />
+                  {{ formatAge(file.modified) }}
+                </span>
               </template>
               <template v-else>
-                <span class="create-date"><PhCalendarBlank :size="8" weight="duotone" /> {{ formatAge(file.created) }}</span>
-                <span class="edit-date"><PhPencilSimple :size="8" weight="duotone" /> {{ formatAge(file.modified) }}</span>
+                <span class="create-date">
+                  <PhCalendarBlank :size="8" weight="duotone" />
+                  {{ formatAge(file.created) }}
+                </span>
+                <span class="edit-date">
+                  <PhPencilSimple :size="8" weight="duotone" />
+                  {{ formatAge(file.modified) }}
+                </span>
               </template>
-              <span class="word-count"><PhTextAa :size="8" weight="duotone" /> {{ formatWordCount(file.word_count) }}w</span>
+              <span class="word-count">
+                <PhTextAa :size="8" weight="duotone" />
+                {{ formatWordCount(file.word_count) }}w
+              </span>
             </div>
           </div>
         </button>
@@ -389,7 +471,9 @@ function getAgeColor(ts: number): string {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .list {
@@ -424,23 +508,6 @@ function getAgeColor(ts: number): string {
   font-size: 8px;
 }
 
-.list::-webkit-scrollbar {
-  width: 5px;
-}
-
-.list::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.list::-webkit-scrollbar-thumb {
-  background: var(--border-light);
-  border-radius: 3px;
-}
-
-.list::-webkit-scrollbar-thumb:hover {
-  background: var(--text-tertiary);
-}
-
 .item {
   width: 100%;
   display: flex;
@@ -455,7 +522,7 @@ function getAgeColor(ts: number): string {
 }
 
 .item:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .item:active {
@@ -463,8 +530,8 @@ function getAgeColor(ts: number): string {
 }
 
 .item.selected {
-  background: rgba(255, 255, 255, 0.06);
-  border-left: 2px solid rgba(10, 132, 255, 0.6);
+  background: rgba(10, 132, 255, 0.15);
+  border-left: 2px solid rgba(10, 132, 255, 0.8);
   border-bottom-color: rgba(255, 255, 255, 0.04);
 }
 

@@ -39,11 +39,7 @@ const unusedCountLabel = () => {
         <span class="folder-icon">📁</span>
         <span>All Assets</span>
       </button>
-      <button
-        class="folder-item"
-        :class="{ active: showUnusedOnly }"
-        @click="emit('toggleUnused')"
-      >
+      <button class="folder-item" :class="{ active: showUnusedOnly }" @click="emit('toggleUnused')">
         <span class="folder-icon">👻</span>
         <span>Unused</span>
         <span v-if="usageData" class="folder-count">{{ unusedCountLabel() }}</span>

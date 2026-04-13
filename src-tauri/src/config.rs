@@ -139,22 +139,24 @@ pub fn init() {
     let _ = CONFIG.set(RwLock::new(config));
 }
 
-pub fn get() -> AppConfig {
-    CONFIG
+pub fn get() -> Result<AppConfig, String> {
+    let lock = CONFIG
         .get()
-        .expect("config::init() must be called first")
+        .ok_or_else(|| "config::init() must be called first".to_string())?;
+    let guard = lock
         .read()
-        .expect("config lock poisoned")
-        .clone()
+        .map_err(|e| format!("config lock poisoned: {}", e))?;
+    Ok(guard.clone())
 }
 
 pub fn update(config: AppConfig) -> Result<(), String> {
     save_config(&config)?;
-    let mut lock = CONFIG
+    let rw = CONFIG
         .get()
-        .expect("config::init() must be called first")
+        .ok_or_else(|| "config::init() must be called first".to_string())?;
+    let mut lock = rw
         .write()
-        .expect("config lock poisoned");
+        .map_err(|e| format!("config lock poisoned: {}", e))?;
     *lock = config;
     Ok(())
 }
@@ -164,22 +166,22 @@ pub fn get_config_file_path() -> String {
 }
 
 /// Get the default publish target, or the first one
-pub fn default_target() -> PublishTarget {
-    let config = get();
+pub fn default_target() -> Result<PublishTarget, String> {
+    let config = get()?;
     config
         .publish_targets
         .iter()
         .find(|t| t.is_default)
         .or(config.publish_targets.first())
         .cloned()
-        .expect("No publish targets configured")
+        .ok_or_else(|| "No publish targets configured".to_string())
 }
 
 /// Resolve a target by optional ID (None = default)
 pub fn resolve_target(target_id: Option<&str>) -> Result<PublishTarget, String> {
-    let config = get();
+    let config = get()?;
     match target_id {
-        None => Ok(default_target()),
+        None => default_target(),
         Some(id) => config
             .publish_targets
             .iter()

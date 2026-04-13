@@ -101,15 +101,6 @@ pub fn set_file(path: &str) {
     }
 }
 
-pub fn open_preview() -> Result<String, String> {
-    let url = format!("http://localhost:{}", PORT);
-    Command::new("open")
-        .arg(&url)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(url)
-}
-
 // Stop the server when the app closes
 pub fn stop_server() {
     let mut server = get_node_server().lock().unwrap_or_else(|e| e.into_inner());

@@ -22,9 +22,7 @@ const error = ref<string | null>(null)
 const batch = ref(0)
 
 // Convert file paths to displayable URLs (Tauri asset protocol)
-const variantUrls = computed(() =>
-  (variants.value?.paths || []).map(p => convertFileSrc(p))
-)
+const variantUrls = computed(() => (variants.value?.paths || []).map((p) => convertFileSrc(p)))
 
 async function generate() {
   generating.value = true
@@ -92,7 +90,8 @@ generate()
 
     <!-- Generating -->
     <div v-if="generating && !variants" class="picker-loading">
-      <PhSparkle :size="14" weight="fill" class="spin" /> Rendering 4 variants...
+      <PhSparkle :size="14" weight="fill" class="spin" />
+      Rendering 4 variants...
     </div>
 
     <!-- Gallery -->
@@ -114,16 +113,13 @@ generate()
 
     <!-- Uploaded success -->
     <div v-if="uploadedUrl" class="picker-success">
-      <PhCheck :size="12" weight="bold" /> Uploaded
+      <PhCheck :size="12" weight="bold" />
+      Uploaded
     </div>
 
     <!-- Actions -->
     <div v-if="variants && !uploadedUrl" class="picker-actions">
-      <button
-        class="upload-btn"
-        :disabled="selectedIdx === null || uploading"
-        @click="uploadSelected"
-      >
+      <button class="upload-btn" :disabled="selectedIdx === null || uploading" @click="uploadSelected">
         <PhUpload :size="12" weight="bold" />
         {{ uploading ? 'Uploading...' : 'Use this one' }}
       </button>
@@ -144,7 +140,9 @@ generate()
   margin-bottom: 8px;
 }
 
-.header-icon { color: #a78bfa; }
+.header-icon {
+  color: #a78bfa;
+}
 
 .header-title {
   font-size: 10px;
@@ -168,19 +166,36 @@ generate()
   padding: 3px 8px;
   font-size: 10px;
   font-family: inherit;
-  background: rgba(255,255,255,0.05);
+  background: rgba(255, 255, 255, 0.05);
   color: var(--text-secondary);
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 4px;
   cursor: pointer;
 }
 
-.reroll-btn:hover { border-color: rgba(255,255,255,0.2); }
-.reroll-btn:disabled { opacity: 0.4; cursor: wait; }
+.reroll-btn:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.reroll-btn:disabled {
+  opacity: 0.4;
+  cursor: wait;
+}
 
-.spinning { animation: spin 0.8s linear infinite; }
-.spin { animation: spin 1.5s linear infinite; color: #a78bfa; }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.spinning {
+  animation: spin 0.8s linear infinite;
+}
+.spin {
+  animation: spin 1.5s linear infinite;
+  color: #a78bfa;
+}
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 .picker-error {
   font-size: 10px;
@@ -211,12 +226,21 @@ generate()
   overflow: hidden;
   cursor: pointer;
   border: 2px solid transparent;
-  transition: border-color 0.15s, opacity 0.15s;
+  transition:
+    border-color 0.15s,
+    opacity 0.15s;
 }
 
-.variant-card:hover { border-color: rgba(255,255,255,0.15); }
-.variant-card.selected { border-color: #ef4444; }
-.variant-card.generating { opacity: 0.4; pointer-events: none; }
+.variant-card:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+.variant-card.selected {
+  border-color: #ef4444;
+}
+.variant-card.generating {
+  opacity: 0.4;
+  pointer-events: none;
+}
 
 .variant-card img {
   width: 100%;
@@ -232,7 +256,7 @@ generate()
   left: 3px;
   font-size: 8px;
   font-family: monospace;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0, 0, 0, 0.6);
   color: var(--text-tertiary);
   padding: 1px 4px;
   border-radius: 2px;
@@ -244,7 +268,7 @@ generate()
   left: 50%;
   transform: translate(-50%, -50%);
   color: #ef4444;
-  background: rgba(0,0,0,0.5);
+  background: rgba(0, 0, 0, 0.5);
   border-radius: 50%;
   width: 28px;
   height: 28px;
@@ -281,6 +305,11 @@ generate()
   cursor: pointer;
 }
 
-.upload-btn:hover { background: #6d28d9; }
-.upload-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.upload-btn:hover {
+  background: #6d28d9;
+}
+.upload-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 </style>

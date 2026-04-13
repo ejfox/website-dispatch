@@ -68,21 +68,15 @@ const emit = defineEmits<{
       </div>
 
       <div class="detail-actions">
-        <button @click="emit('copyMarkdown', asset)" class="action-btn primary">
-          Copy Markdown
-        </button>
-        <button @click="emit('copyUrl', asset)" class="action-btn">
-          Copy URL
-        </button>
+        <button @click="emit('copyMarkdown', asset)" class="action-btn primary">Copy Markdown</button>
+        <button @click="emit('copyUrl', asset)" class="action-btn">Copy URL</button>
       </div>
 
       <div class="detail-usage">
         <div class="usage-header">
           <span>Used in {{ usage.length }} post{{ usage.length === 1 ? '' : 's' }}</span>
         </div>
-        <div v-if="usage.length === 0" class="usage-empty">
-          Not used in any posts
-        </div>
+        <div v-if="usage.length === 0" class="usage-empty">Not used in any posts</div>
         <div v-else class="usage-list">
           <div v-for="usageItem in usage" :key="usageItem.post_path + usageItem.line_number" class="usage-item">
             <span class="usage-title">{{ usageItem.post_title || usageItem.post_path.split('/').pop() }}</span>
@@ -108,11 +102,13 @@ const emit = defineEmits<{
   flex-shrink: 0;
 }
 
-.slide-enter-active, .slide-leave-active {
+.slide-enter-active,
+.slide-leave-active {
   transition: all 0.2s ease;
 }
 
-.slide-enter-from, .slide-leave-to {
+.slide-enter-from,
+.slide-leave-to {
   transform: translateX(100%);
   opacity: 0;
 }

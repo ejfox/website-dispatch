@@ -64,11 +64,16 @@ const emit = defineEmits<{
 
   <div class="modal-footer">
     <span class="hint">
-      <kbd>↑↓←→</kbd> navigate
-      <kbd>Enter</kbd> details
-      <kbd>c</kbd> copy URL
-      <kbd>i</kbd> copy markdown
-      <kbd>u</kbd> toggle unused
+      <kbd>↑↓←→</kbd>
+      navigate
+      <kbd>Enter</kbd>
+      details
+      <kbd>c</kbd>
+      copy URL
+      <kbd>i</kbd>
+      copy markdown
+      <kbd>u</kbd>
+      toggle unused
     </span>
   </div>
 </template>

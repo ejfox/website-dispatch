@@ -1,4 +1,3 @@
-use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 
@@ -86,46 +85,14 @@ fn get_image_url(url: &str) -> String {
     format!("{}/upload/c_scale,w_1280,f_jpg,q_auto/{}", parts[0], parts[1])
 }
 
-// ---------------------------------------------------------------------------
-// Junk alt text detection
-// ---------------------------------------------------------------------------
-
-/// Returns true if alt text is empty or junk (filenames, timestamps, UUIDs).
-fn is_junk_alt(alt: &str) -> bool {
-    let alt = alt.trim();
-    if alt.is_empty() {
-        return true;
-    }
-    let junk_re = Regex::new(
-        r"(?i)^(Screenshot|Screen Shot|Pasted image|IMG_|DSC|DJI_|DSCF|CleanShot|Untitled|image\d*)"
-    ).unwrap();
-    if junk_re.is_match(alt) {
-        return true;
-    }
-    let uuid_re = Regex::new(r"^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}").unwrap();
-    if uuid_re.is_match(alt) {
-        return true;
-    }
-    let filename_re = Regex::new(r"(?i)^[A-Za-z0-9_.-]+\.(png|jpe?g|gif|webp|svg|tiff?)$").unwrap();
-    if filename_re.is_match(alt) {
-        return true;
-    }
-    let date_re = Regex::new(r"^\d{4}-\d{2}-\d{2}").unwrap();
-    if date_re.is_match(alt) {
-        return true;
-    }
-    false
-}
-
 /// Find all images with missing or junk alt text in a markdown string.
 pub fn find_missing_alt_images(content: &str) -> Vec<(String, String, usize)> {
-    let re = Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap();
     let mut results = Vec::new();
 
     for (line_idx, line) in content.lines().enumerate() {
-        for caps in re.captures_iter(line) {
+        for caps in crate::patterns::MD_IMAGE.captures_iter(line) {
             let alt = caps.get(1).unwrap().as_str();
-            if !is_junk_alt(alt) {
+            if !crate::vault::is_junk_alt(alt) {
                 continue;
             }
             let full_match = caps.get(0).unwrap().as_str().to_string();
@@ -312,14 +279,13 @@ pub fn apply_suggestions(file_path: &str, suggestions: &[AltTextSuggestion]) -> 
     let mut content =
         std::fs::read_to_string(file_path).map_err(|e| format!("Failed to read file: {}", e))?;
 
-    let re = Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap();
     let mut applied = 0;
 
     for suggestion in suggestions {
         // Find any image tag with this URL (regardless of current alt text)
         let new_tag = format!("![{}]({})", suggestion.alt_text, suggestion.image_url);
         let mut found = false;
-        if let Some(caps) = re.captures_iter(&content.clone()).find(|c| {
+        if let Some(caps) = crate::patterns::MD_IMAGE.captures_iter(&content.clone()).find(|c| {
             c.get(2).map(|m| m.as_str()) == Some(&suggestion.image_url)
         }) {
             let old_tag = caps.get(0).unwrap().as_str().to_string();
@@ -365,16 +331,15 @@ fn extract_public_id(url: &str) -> Option<String> {
         .iter()
         .filter(|p| {
             // Skip version segments (v1234567) and transform segments (c_scale,w_512)
-            if Regex::new(r"^v\d+$").unwrap().is_match(p) { return false; }
-            if p.contains(',') || Regex::new(r"^[cwhfqget]_").unwrap().is_match(p) { return false; }
+            if crate::patterns::CLOUDINARY_VERSION.is_match(p) { return false; }
+            if p.contains(',') || crate::patterns::CLOUDINARY_TRANSFORM.is_match(p) { return false; }
             true
         })
         .copied()
         .collect();
     let joined = filtered.join("/");
     // Strip file extension
-    let re = Regex::new(r"\.(jpg|jpeg|png|gif|webp|svg|tiff?|bmp)$").unwrap();
-    Some(re.replace(&joined, "").to_string())
+    Some(crate::patterns::IMAGE_FILE_EXT.replace(&joined, "").to_string())
 }
 
 /// Push alt text to Cloudinary's context metadata (blocking, best-effort).
