@@ -12,12 +12,8 @@ import {
   PhTextAa,
   PhCalendarBlank,
   PhTextAlignLeft,
-  PhListNumbers,
-  PhStack,
   PhBroadcast,
-  PhFileText,
   PhClockCounterClockwise,
-  PhNotebook,
 } from '@phosphor-icons/vue'
 import type { MarkdownFile } from '../types'
 
@@ -185,24 +181,10 @@ function getAgeColor(ts: number): string {
   <aside class="sidebar" :class="{ compact }">
     <div class="control-bar" data-tauri-drag-region>
       <div class="filters">
-        <button :class="{ active: filter === 'all' }" @click="filter = 'all'">
-          <PhStack :size="9" weight="bold" />
-          {{ counts.all }}
-        </button>
-        <button :class="{ active: filter === 'published' }" @click="filter = 'published'">
-          <PhBroadcast :size="9" weight="bold" />
-          {{ counts.published }}
-        </button>
-        <button :class="{ active: filter === 'drafts' }" @click="filter = 'drafts'">
-          <PhFileText :size="9" weight="bold" />
-          {{ counts.drafts }}
-        </button>
-        <button v-if="counts.scheduled > 0" :class="{ active: filter === 'scheduled' }" @click="filter = 'scheduled'">
-          <PhClock :size="9" weight="bold" />
-          {{ counts.scheduled }}
-        </button>
+        <button :class="{ active: filter === 'all' }" @click="filter = 'all'">All {{ counts.all }}</button>
+        <button :class="{ active: filter === 'published' }" @click="filter = 'published'">Live {{ counts.published }}</button>
+        <button :class="{ active: filter === 'drafts' }" @click="filter = 'drafts'">Drafts {{ counts.drafts }}</button>
       </div>
-      <div class="sort-divider"></div>
       <div class="sort-row">
         <button :class="{ active: sort === 'recent' }" @click="sort = 'recent'" data-tip="Recent">
           <PhClockCounterClockwise :size="9" weight="bold" />
@@ -212,18 +194,6 @@ function getAgeColor(ts: number): string {
         </button>
         <button :class="{ active: sort === 'title' }" @click="sort = 'title'" data-tip="Title">
           <PhTextAlignLeft :size="9" weight="bold" />
-        </button>
-        <button :class="{ active: sort === 'words' }" @click="sort = 'words'" data-tip="Words">
-          <PhListNumbers :size="9" weight="bold" />
-        </button>
-        <div class="sort-divider"></div>
-        <button
-          :class="{ active: showWeeknotes }"
-          class="weeknote-toggle"
-          @click="showWeeknotes = !showWeeknotes"
-          data-tip="Week Notes"
-        >
-          <PhNotebook :size="9" weight="bold" />
         </button>
       </div>
     </div>
@@ -332,11 +302,9 @@ function getAgeColor(ts: number): string {
 
 <style scoped>
 .sidebar {
-  flex: 0.382; /* Golden ratio: smaller section */
-  min-width: 280px;
-  max-width: 500px;
+  /* Span both sidebar grid rows (bar + content) */
+  grid-area: sidebar-bar / sidebar-bar / sidebar / sidebar;
   border-right: 1px solid var(--border);
-  /* Arc-style soft gradient */
   background: linear-gradient(
     180deg,
     var(--bg-secondary) 0%,
@@ -346,9 +314,10 @@ function getAgeColor(ts: number): string {
   -webkit-backdrop-filter: blur(16px) saturate(180%);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
-/* Unified control bar: filters + sort in one row */
+/* Titlebar-aligned control bar */
 .control-bar {
   display: flex;
   align-items: flex-end;
@@ -356,10 +325,10 @@ function getAgeColor(ts: number): string {
   background: var(--bg-tertiary);
   flex-shrink: 0;
   -webkit-app-region: drag;
-  /* Traffic light inset: 12px position + 54px buttons + 12px margin */
+  /* Clear traffic lights: 12px offset + 14px button + gap */
   padding-left: 78px;
   height: 44px;
-  padding-top: 8px;
+  padding-top: 14px;
   padding-bottom: 4px;
 }
 
@@ -393,13 +362,6 @@ function getAgeColor(ts: number): string {
   font-weight: 600;
 }
 
-.sort-divider {
-  width: 1px;
-  height: 14px;
-  background: var(--border-light);
-  flex-shrink: 0;
-}
-
 .sort-row {
   display: flex;
   gap: 0;
@@ -429,23 +391,6 @@ function getAgeColor(ts: number): string {
   color: var(--text-primary);
 }
 
-.sort-row .sort-divider {
-  width: 1px;
-  height: 10px;
-  background: var(--border-light);
-  flex-shrink: 0;
-  align-self: center;
-}
-
-.weeknote-toggle.active {
-  color: #f59e0b !important;
-}
-
-.weeknote-toggle[data-tip]::after {
-  left: auto;
-  right: 0;
-  transform: translateX(0) translateY(-2px);
-}
 
 .weeknote-toggle[data-tip]:hover::after {
   transform: translateX(0) translateY(0);

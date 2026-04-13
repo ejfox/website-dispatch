@@ -27,7 +27,7 @@
         "width": 700,
         "height": 600,
         "resizable": true,
-        "transparent": true,
+        "transparent": false,
         "visible": true,
         "useHttpsScheme": true,
         "decorations": true,

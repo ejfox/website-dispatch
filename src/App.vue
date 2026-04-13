@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { FileText, Search, RefreshCw, Zap, Settings, Plus } from 'lucide-vue-next'
+import { FileText, Search, RefreshCw, Settings, Plus } from 'lucide-vue-next'
 import {
   PhRows,
   PhSquaresFour,
@@ -14,7 +14,6 @@ import {
   PhTextAa,
   PhGitBranch,
   PhImageSquare,
-  PhFlame,
 } from '@phosphor-icons/vue'
 import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
@@ -32,6 +31,8 @@ import { useConnectionStatus } from './composables/useConnectionStatus'
 const files = ref<MarkdownFile[]>([])
 const selectedFile = ref<MarkdownFile | null>(null)
 const loading = ref(true)
+
+const appVersion = __APP_VERSION__
 
 // Search state
 const searchOpen = ref(false)
@@ -78,26 +79,6 @@ const { appConfig, fetchConfig: loadConfig } = useAppConfig()
 // Compact mode preference (auto-syncs with localStorage)
 const compactMode = useLocalStorage('dispatch-compact', false)
 
-// Stats computations
-const stats = computed(() => {
-  const now = Date.now() / 1000
-  const dayAgo = now - 86400
-  const weekAgo = now - 86400 * 7
-
-  const liveFiles = files.value.filter((f) => f.published_url)
-  const todayPublished = liveFiles.filter((f) => f.published_date && f.published_date > dayAgo)
-  const weekPublished = liveFiles.filter((f) => f.published_date && f.published_date > weekAgo)
-
-  return {
-    total: files.value.length,
-    live: liveFiles.length,
-    drafts: files.value.length - liveFiles.length,
-    totalWords: files.value.reduce((sum, f) => sum + f.word_count, 0),
-    todayPublished: todayPublished.length,
-    weekPublished: weekPublished.length,
-    weekWords: weekPublished.reduce((sum, f) => sum + f.word_count, 0),
-  }
-})
 
 function openSearch() {
   searchOpen.value = true
@@ -283,7 +264,6 @@ onUnmounted(() => {
 
     <main class="main">
       <FileList
-        v-if="rightTab === 'preview'"
         :files="files"
         :selected="selectedFile"
         :loading="loading"
@@ -301,30 +281,18 @@ onUnmounted(() => {
           <button :class="{ active: rightTab === 'preview' }" @click="rightTab = 'preview'">Preview</button>
           <button :class="{ active: rightTab === 'media' }" @click="rightTab = 'media'">Media</button>
           <button :class="{ active: rightTab === 'journal' }" @click="rightTab = 'journal'">Journal</button>
-          <div class="titlebar-stats" v-if="journalStats" data-tauri-drag-region>
-            <span v-if="journalStats.current_streak_days >= 2" class="streak-pill">
-              <PhFlame :size="9" weight="fill" />
-              {{ journalStats.current_streak_days }}d
-            </span>
-            <Zap :size="10" />
-            <span>{{ journalStats.publishes_this_week || stats.weekPublished }} this week</span>
-          </div>
-          <div class="titlebar-stats" v-else-if="stats.weekPublished > 0" data-tauri-drag-region>
-            <Zap :size="10" />
-            <span>{{ stats.weekPublished }} this week</span>
-          </div>
           <div class="panel-tabs-spacer" data-tauri-drag-region></div>
           <div class="titlebar-btns">
-            <button @click="openNewPost" class="titlebar-btn" title="New Post (n)">
+            <button @click="openNewPost" class="titlebar-btn" data-tip="New Post">
               <Plus :size="13" />
             </button>
-            <button @click="openSearch" class="titlebar-btn" title="Search (⌘K)">
+            <button @click="openSearch" class="titlebar-btn" data-tip="Search">
               <Search :size="13" />
             </button>
-            <button @click="loadFiles" class="titlebar-btn" :class="{ spinning: loading }" title="Refresh (r)">
+            <button @click="loadFiles" class="titlebar-btn" :class="{ spinning: loading }" data-tip="Refresh">
               <RefreshCw :size="13" />
             </button>
-            <button @click="showSettings = true" class="titlebar-btn" title="Settings (,)">
+            <button @click="showSettings = true" class="titlebar-btn" data-tip="Settings">
               <Settings :size="13" />
             </button>
           </div>
@@ -456,44 +424,59 @@ onUnmounted(() => {
           <PhDeviceMobile :size="10" weight="fill" />
           {{ companionUrl.replace('http://', '') }}
         </span>
+        <span class="status-divider"></span>
+        <span class="status-item muted">v{{ appVersion }}</span>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* === LAYOUT SYSTEM ===
+   The entire app is a CSS Grid with fixed regions.
+   Nothing inside needs to know about traffic lights or titlebar height.
+   The grid handles it all.
+
+   ┌──────────────┬──────────────────────────┐
+   │  sidebar-bar │  panel-tabs              │  ← 44px titlebar row
+   ├──────────────┼──────────────────────────┤
+   │  sidebar     │  panel-content           │  ← fills remaining space
+   ├──────────────┴──────────────────────────┤
+   │  statusbar                              │  ← 22px status row
+   └─────────────────────────────────────────┘
+*/
+
 .app {
   height: 100vh;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: clamp(240px, 38.2%, 400px) 1fr;
+  grid-template-rows: 44px 1fr 22px;
+  grid-template-areas:
+    "sidebar-bar  panel-bar"
+    "sidebar      panel"
+    "status       status";
+  overflow: hidden;
 }
 
 .main {
-  flex: 1;
-  display: flex;
-  overflow: hidden;
+  display: contents;
 }
 
 .right-panel {
-  flex: 0.618; /* Golden ratio: larger section */
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  display: contents;
 }
 
+/* --- Titlebar row (44px) --- */
 .panel-tabs {
+  grid-area: panel-bar;
   display: flex;
   align-items: flex-end;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
-  flex-shrink: 0;
   -webkit-app-region: drag;
-  height: 44px;
   padding-top: 8px;
   overflow: hidden;
 }
-
-
 
 .panel-tabs button {
   padding: 6px 12px;
@@ -531,7 +514,6 @@ onUnmounted(() => {
   gap: 2px;
   margin-right: 8px;
   align-self: center;
-  margin-top: auto;
   margin-bottom: 4px;
   flex-shrink: 0;
 }
@@ -570,7 +552,7 @@ onUnmounted(() => {
 }
 
 .panel-content {
-  flex: 1;
+  grid-area: panel;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -620,7 +602,7 @@ onUnmounted(() => {
 
 /* Status Bar */
 .statusbar {
-  height: 22px;
+  grid-area: status;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
   display: flex;
@@ -724,33 +706,6 @@ onUnmounted(() => {
 }
 
 /* Titlebar Stats */
-.titlebar-stats {
-  -webkit-app-region: no-drag;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  color: var(--success);
-  background: color-mix(in srgb, var(--success) 15%, transparent);
-  padding: 2px 8px;
-  border-radius: 10px;
-  margin-left: 8px;
-  flex-shrink: 1;
-  overflow: hidden;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.streak-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  color: #f59e0b;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  margin-right: 2px;
-}
-
 /* New Post Modal */
 .new-post-header {
   padding: 12px 16px 0;
