@@ -490,12 +490,16 @@ onUnmounted(() => {
   -webkit-app-region: drag;
   height: 44px;
   padding-top: 8px;
+  overflow: hidden;
 }
+
+
 
 .panel-tabs button {
   padding: 6px 12px;
   font-size: 11px;
   font-weight: 500;
+  flex-shrink: 0;
   background: transparent;
   border: none;
   color: var(--text-tertiary);
@@ -529,6 +533,7 @@ onUnmounted(() => {
   align-self: center;
   margin-top: auto;
   margin-bottom: 4px;
+  flex-shrink: 0;
 }
 
 .titlebar-btn {
@@ -730,6 +735,10 @@ onUnmounted(() => {
   padding: 2px 8px;
   border-radius: 10px;
   margin-left: 8px;
+  flex-shrink: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .streak-pill {
