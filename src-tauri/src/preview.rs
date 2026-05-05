@@ -6,27 +6,23 @@ use std::time::Duration;
 const PORT: u16 = 6419;
 
 fn get_preview_server_path() -> String {
-    // In dev: use CARGO_MANIFEST_DIR (src-tauri/) to find project root
-    let dev_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../preview-server.mjs");
-    if std::path::Path::new(dev_path).exists() {
-        return dev_path.to_string();
-    }
-    // In production: look next to the executable
+    // Prefer the bundled copy when running from a packaged .app — that way
+    // a portable Dispatch.app stays self-contained instead of silently using
+    // the developer's source tree if it happens to be on the same machine.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let prod_path = dir.join("preview-server.mjs");
-            if prod_path.exists() {
-                return prod_path.to_string_lossy().to_string();
-            }
-            // macOS .app bundle: check Resources
             let resources_path = dir.join("../Resources/preview-server.mjs");
             if resources_path.exists() {
                 return resources_path.to_string_lossy().to_string();
             }
+            let prod_path = dir.join("preview-server.mjs");
+            if prod_path.exists() {
+                return prod_path.to_string_lossy().to_string();
+            }
         }
     }
-    // Fallback to dev path even if not found (will error on spawn)
-    dev_path.to_string()
+    // Dev fallback: project root via CARGO_MANIFEST_DIR.
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../preview-server.mjs").to_string()
 }
 
 // Global state for the Node.js server process
