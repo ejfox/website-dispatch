@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.2 — 2026-05-05
+
+Workflow integration — Dispatch starts to disappear into the OS.
+
+### Added
+- **Sketchybar JSON cache.** Dispatch writes a snapshot to
+  `~/Library/Caches/com.ejfox.dispatch/sketchybar.json` on every vault
+  scan / publish / unpublish. Contains: pending count, current streak,
+  modified-since-publish flag, live/draft counts, last-publish timestamp.
+- **Sketchybar plugin enrichment** (`~/.config/sketchybar/plugins/dispatch.sh`):
+  - Streak chip (`🔥3d`) shown alongside pending count when active.
+  - Amber icon when any LIVE post has been edited locally without
+    republishing — silent reminder that something is stale.
+  - Reads from the new JSON cache (zero HTTP). Falls back to the
+    previous RSS-vs-vault heuristic when the cache is missing.
+- **Auto-refresh on vault changes.** Rust-side `notify-debouncer-mini`
+  watcher on the vault path emits a `vault-changed` event on .md
+  create/modify/delete; frontend reloads the file list + journal stats
+  and shows a throttled "Vault updated" toast. No more manual ⌘R after
+  writing in Obsidian.
+
 ## 0.5.1 — 2026-05-05
 
 Magical ⌘K — five additions that compound into a Raycast-grade palette.

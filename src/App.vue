@@ -235,6 +235,20 @@ onMounted(async () => {
   })
   listen('menu-search', () => openSearch())
 
+  // Auto-refresh on vault file changes (fs::notify watcher in Rust).
+  // Debounced 500ms server-side; we still throttle the toast so a flurry
+  // of saves doesn't spam the UI.
+  let lastVaultToastAt = 0
+  listen('vault-changed', () => {
+    loadFiles()
+    refreshJournalStats()
+    const now = Date.now()
+    if (now - lastVaultToastAt > 8000) {
+      lastVaultToastAt = now
+      toasts.info('Vault updated')
+    }
+  })
+
   // Drag-in: a .md dropped from Finder selects it (or warns if not .md).
   // Tauri's native drag-drop event is fired by WebviewWindow.
   getCurrentWindow().onDragDropEvent((event) => {

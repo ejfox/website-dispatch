@@ -28,10 +28,12 @@ mod open; // Open files in Obsidian, editors, terminal
 mod patterns; // Shared compiled regex patterns (LazyLock statics)
 mod preview; // Manages a local Node.js server for previewing posts
 mod publish; // Handles git operations to publish posts to your website
+mod sketchybar_cache; // Snapshot JSON for sketchybar / ambient surfaces
 mod syndication; // Post-publish social distribution (Mastodon, etc.)
 mod syndication_queue; // Scheduled syndication queue with background sender
 mod vault; // Scans your Obsidian vault for markdown files
 mod vault_pulse; // Read-only vault intelligence (never publishes)
+mod vault_watcher; // fs::notify-driven auto-refresh on vault changes
 mod webmention; // IndieWeb webmention sending // Gear inventory hygiene (Last_Used, Location, Scan_3D_URL)
 
 // --- DATA STRUCTURES ---
@@ -194,6 +196,10 @@ fn publish_file(
         }
     }
 
+    // Refresh the ambient cache so sketchybar reflects the new state on its
+    // next tick (~120s by default).
+    std::thread::spawn(sketchybar_cache::update);
+
     Ok(url)
 }
 
@@ -214,6 +220,8 @@ fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), String>
         target_id: target_id.as_deref(),
         visibility: "public",
     });
+
+    std::thread::spawn(sketchybar_cache::update);
 
     Ok(())
 }
@@ -907,6 +915,10 @@ pub fn run() {
     // --- START PREVIEW SERVER ---
     preview::init_server();
 
+    // --- WARM SKETCHYBAR CACHE ---
+    // Off-thread so a slow first-vault-scan doesn't block app launch.
+    std::thread::spawn(sketchybar_cache::update);
+
     // --- BUILD AND RUN THE APP ---
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -956,6 +968,13 @@ pub fn run() {
 
             // Build tray icon with menu
             menu::build_tray(app)?;
+
+            // --- VAULT FILE WATCHER ---
+            // Auto-emits `vault-changed` to the frontend on .md file
+            // creation/modification/deletion so the file list refreshes
+            // without a manual ⌘R.
+            let vault_path = config::get().ok().map(|c| c.vault.path).unwrap_or_default();
+            vault_watcher::start(app.handle().clone(), vault_path);
 
             // --- HIDE WINDOW ON CLOSE ---
             // macOS convention: tray apps hide the window on Cmd+W / red close button
