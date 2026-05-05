@@ -9,15 +9,20 @@ fn get_preview_server_path() -> String {
     // Prefer the bundled copy when running from a packaged .app — that way
     // a portable Dispatch.app stays self-contained instead of silently using
     // the developer's source tree if it happens to be on the same machine.
+    //
+    // Tauri rewrites `"../preview-server.mjs"` from bundle.resources into
+    // `Resources/_up_/preview-server.mjs` (the `_up_` segment encodes one
+    // level of `../` traversal). Check both layouts.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let resources_path = dir.join("../Resources/preview-server.mjs");
-            if resources_path.exists() {
-                return resources_path.to_string_lossy().to_string();
-            }
-            let prod_path = dir.join("preview-server.mjs");
-            if prod_path.exists() {
-                return prod_path.to_string_lossy().to_string();
+            for candidate in [
+                dir.join("../Resources/_up_/preview-server.mjs"),
+                dir.join("../Resources/preview-server.mjs"),
+                dir.join("preview-server.mjs"),
+            ] {
+                if candidate.exists() {
+                    return candidate.to_string_lossy().to_string();
+                }
             }
         }
     }
