@@ -25,7 +25,8 @@ pub struct WebmentionReport {
 pub fn extract_links(html: &str, own_domain: &str) -> Vec<String> {
     let own = own_domain.trim_end_matches('/').to_lowercase();
 
-    crate::patterns::HTML_LINK.captures_iter(html)
+    crate::patterns::HTML_LINK
+        .captures_iter(html)
         .filter_map(|cap| {
             let url = cap[1].to_string();
             let lower = url.to_lowercase();
@@ -63,12 +64,18 @@ pub fn discover_endpoint(client: &Client, target: &str) -> Option<String> {
     let body = resp.text().ok()?;
 
     // 2. Check <link rel="webmention"> in HTML
-    if let Some(cap) = crate::patterns::WEBMENTION_LINK_REL_FIRST.captures(&body).or_else(|| crate::patterns::WEBMENTION_LINK_HREF_FIRST.captures(&body)) {
+    if let Some(cap) = crate::patterns::WEBMENTION_LINK_REL_FIRST
+        .captures(&body)
+        .or_else(|| crate::patterns::WEBMENTION_LINK_HREF_FIRST.captures(&body))
+    {
         return Some(resolve_url(&final_url, &cap[1]));
     }
 
     // 3. Check <a rel="webmention"> in HTML
-    if let Some(cap) = crate::patterns::WEBMENTION_A_REL_FIRST.captures(&body).or_else(|| crate::patterns::WEBMENTION_A_HREF_FIRST.captures(&body)) {
+    if let Some(cap) = crate::patterns::WEBMENTION_A_REL_FIRST
+        .captures(&body)
+        .or_else(|| crate::patterns::WEBMENTION_A_HREF_FIRST.captures(&body))
+    {
         return Some(resolve_url(&final_url, &cap[1]));
     }
 

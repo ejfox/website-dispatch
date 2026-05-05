@@ -10,7 +10,7 @@ export function useKeyboardShortcuts(options: {
   showSettings: Ref<boolean>
   newPostOpen: Ref<boolean>
   showHelp: Ref<boolean>
-  rightTab: Ref<'preview' | 'media' | 'journal'>
+  rightTab: Ref<'preview' | 'media' | 'journal' | 'gear'>
   filePreviewRef: Ref<{ openPublishConfirm: (isRepublish: boolean) => void } | null>
   openSearch: () => void
   closeSearch: () => void

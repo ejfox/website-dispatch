@@ -40,8 +40,8 @@ pub struct PostContent {
 // ---------------------------------------------------------------------------
 
 fn get_mastodon_config() -> Result<(String, String), String> {
-    let instance = std::env::var("MASTODON_INSTANCE")
-        .unwrap_or_else(|_| "mastodon.social".to_string());
+    let instance =
+        std::env::var("MASTODON_INSTANCE").unwrap_or_else(|_| "mastodon.social".to_string());
     let token = std::env::var("MASTODON_ACCESS_TOKEN")
         .map_err(|_| "MASTODON_ACCESS_TOKEN not set in .env".to_string())?;
     Ok((instance, token))
@@ -354,19 +354,25 @@ pub fn upload_og_image(file_path: &str, slug: &str) -> Result<String, String> {
     let public_id = format!("og/{}", slug.replace('/', "-"));
 
     // Read file
-    let data = std::fs::read(file_path)
-        .map_err(|e| format!("Failed to read {}: {}", file_path, e))?;
+    let data =
+        std::fs::read(file_path).map_err(|e| format!("Failed to read {}: {}", file_path, e))?;
 
     // Upload via multipart
     let ts = chrono::Utc::now().timestamp().to_string();
-    let to_sign = format!("public_id={}&timestamp={}{}", public_id, ts, config.api_secret);
+    let to_sign = format!(
+        "public_id={}&timestamp={}{}",
+        public_id, ts, config.api_secret
+    );
     use sha1::{Digest, Sha1};
     let mut hasher = Sha1::new();
     hasher.update(to_sign.as_bytes());
     let signature = format!("{:x}", hasher.finalize());
 
     let form = reqwest::blocking::multipart::Form::new()
-        .part("file", reqwest::blocking::multipart::Part::bytes(data).file_name("og.png"))
+        .part(
+            "file",
+            reqwest::blocking::multipart::Part::bytes(data).file_name("og.png"),
+        )
         .text("public_id", public_id.clone())
         .text("timestamp", ts)
         .text("api_key", config.api_key.clone())
@@ -379,7 +385,10 @@ pub fn upload_og_image(file_path: &str, slug: &str) -> Result<String, String> {
     );
 
     let client = reqwest::blocking::Client::new();
-    let resp = client.post(&url).multipart(form).send()
+    let resp = client
+        .post(&url)
+        .multipart(form)
+        .send()
         .map_err(|e| format!("Upload failed: {}", e))?;
 
     if !resp.status().is_success() {
@@ -397,10 +406,13 @@ pub fn upload_og_image(file_path: &str, slug: &str) -> Result<String, String> {
     let target = crate::config::default_target()?;
     let og_map_path = format!("{}/data/og-images.json", target.repo_path);
     if let Ok(mut map) = std::fs::read_to_string(&og_map_path)
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)))
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).map_err(std::io::Error::other))
     {
         map[slug] = serde_json::Value::String(secure_url.clone());
-        let _ = std::fs::write(&og_map_path, serde_json::to_string_pretty(&map).unwrap_or_default());
+        let _ = std::fs::write(
+            &og_map_path,
+            serde_json::to_string_pretty(&map).unwrap_or_default(),
+        );
     }
 
     Ok(secure_url)

@@ -14,23 +14,24 @@ use tauri::Manager;
 // This is how Rust organizes code into separate files.
 // Each module becomes accessible as `module_name::function_name()`
 mod alttext; // AI-powered alt text generation for images
-mod patterns; // Shared compiled regex patterns (LazyLock statics)
 mod analytics; // Umami analytics integration
 mod asset_usage; // Tracks which Cloudinary images are used in which posts
 mod cloudinary; // Uploads images/videos to Cloudinary CDN
 mod companion; // Companion web UI server for mobile access
 pub mod config; // App configuration (vault path, publish targets, editors)
+mod gear;
+mod journal; // Publishing journal, streaks, milestones
+mod menu; // Application menu bar builder
 mod obsidian; // Talks to Obsidian's Local REST API for backlinks
+mod open; // Open files in Obsidian, editors, terminal
+mod patterns; // Shared compiled regex patterns (LazyLock statics)
 mod preview; // Manages a local Node.js server for previewing posts
 mod publish; // Handles git operations to publish posts to your website
 mod syndication; // Post-publish social distribution (Mastodon, etc.)
 mod syndication_queue; // Scheduled syndication queue with background sender
 mod vault; // Scans your Obsidian vault for markdown files
-mod webmention; // IndieWeb webmention sending
-mod journal; // Publishing journal, streaks, milestones
-mod open; // Open files in Obsidian, editors, terminal
-mod menu; // Application menu bar builder
 mod vault_pulse; // Read-only vault intelligence (never publishes)
+mod webmention; // IndieWeb webmention sending // Gear inventory hygiene (Last_Used, Location, Scan_3D_URL)
 
 // --- DATA STRUCTURES ---
 // These structs define the shape of data we pass between Rust and the Vue frontend.
@@ -161,7 +162,9 @@ fn publish_file(
 ) -> Result<String, String> {
     // Check if this is a republish (file already exists in website repo)
     let target = config::resolve_target(target_id.as_deref())?;
-    let is_republish = vault::find_published_info_for_target(&target, &slug).0.is_some();
+    let is_republish = vault::find_published_info_for_target(&target, &slug)
+        .0
+        .is_some();
 
     let url = publish::publish_file(&source_path, &slug, target_id.as_deref())?;
 
@@ -176,17 +179,17 @@ fn publish_file(
             } else {
                 "public"
             };
-            let _ = journal::record_event(
+            let _ = journal::record_event(journal::EventRecord {
                 event,
-                &slug,
-                file.title.as_deref(),
-                file.word_count,
-                &file.tags,
-                &file.content_type,
-                Some(&url),
-                target_id.as_deref(),
+                slug: &slug,
+                title: file.title.as_deref(),
+                word_count: file.word_count,
+                tags: &file.tags,
+                content_type: &file.content_type,
+                url: Some(&url),
+                target_id: target_id.as_deref(),
                 visibility,
-            );
+            });
         }
     }
 
@@ -199,17 +202,17 @@ fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), String>
     publish::unpublish_file(&slug, target_id.as_deref())?;
 
     // Record in journal
-    let _ = journal::record_event(
-        "unpublish",
-        &slug,
-        None,
-        0,
-        &[],
-        "post",
-        None,
-        target_id.as_deref(),
-        "public",
-    );
+    let _ = journal::record_event(journal::EventRecord {
+        event: "unpublish",
+        slug: &slug,
+        title: None,
+        word_count: 0,
+        tags: &[],
+        content_type: "post",
+        url: None,
+        target_id: target_id.as_deref(),
+        visibility: "public",
+    });
 
     Ok(())
 }
@@ -238,6 +241,23 @@ async fn get_backlinks(filename: String) -> Result<Vec<obsidian::Backlink>, Stri
 #[tauri::command]
 async fn check_obsidian_api() -> bool {
     obsidian::check_api_status().await
+}
+
+// Play a built-in macOS system sound by name (Glass, Hero, Pop, Tink, Sosumi, etc).
+// Sounds live in /System/Library/Sounds — these are the same beeps every Mac app uses.
+#[tauri::command]
+fn play_system_sound(name: String) {
+    #[cfg(target_os = "macos")]
+    {
+        let safe: String = name.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        if safe.is_empty() {
+            return;
+        }
+        let path = format!("/System/Library/Sounds/{}.aiff", safe);
+        let _ = std::process::Command::new("/usr/bin/afplay")
+            .arg(path)
+            .spawn();
+    }
 }
 
 // Open a file in Obsidian using its URL scheme
@@ -298,7 +318,13 @@ fn create_new_post(title: String) -> Result<String, String> {
     let slug: String = title
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == ' ' { c } else { ' ' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -319,10 +345,7 @@ fn create_new_post(title: String) -> Result<String, String> {
         return Err(format!("File already exists: {}", slug));
     }
 
-    let content = format!(
-        "---\ndate: {}\n---\n\n# {}\n\n",
-        date, title
-    );
+    let content = format!("---\ndate: {}\n---\n\n# {}\n\n", date, title);
 
     fs::write(&file_path, content).map_err(|e| format!("Failed to create file: {}", e))?;
 
@@ -334,7 +357,9 @@ fn create_new_post(title: String) -> Result<String, String> {
 #[tauri::command]
 fn is_post_crowned(slug: String) -> Result<bool, String> {
     let app_config = config::get()?;
-    let target = app_config.publish_targets.first()
+    let target = app_config
+        .publish_targets
+        .first()
         .ok_or_else(|| "No publish target configured".to_string())?;
     let vue_path = format!("{}/pages/blog/{}.vue", target.repo_path, slug);
     Ok(std::path::Path::new(&vue_path).exists())
@@ -343,7 +368,9 @@ fn is_post_crowned(slug: String) -> Result<bool, String> {
 #[tauri::command]
 fn crown_post(slug: String, hue: u32) -> Result<String, String> {
     let app_config = config::get()?;
-    let target = app_config.publish_targets.first()
+    let target = app_config
+        .publish_targets
+        .first()
         .ok_or_else(|| "No publish target configured".to_string())?;
 
     let vue_path = format!("{}/pages/blog/{}.vue", target.repo_path, slug);
@@ -353,8 +380,9 @@ fn crown_post(slug: String, hue: u32) -> Result<String, String> {
     }
 
     // Derive names from slug
-    let name = slug.split('/').last().unwrap_or(&slug);
-    let title_case: String = name.replace('-', " ")
+    let name = slug.split('/').next_back().unwrap_or(&slug);
+    let title_case: String = name
+        .replace('-', " ")
         .split_whitespace()
         .map(|w| {
             let mut c = w.chars();
@@ -377,7 +405,8 @@ fn crown_post(slug: String, hue: u32) -> Result<String, String> {
         .replace("__CSS_CLASS__", &css_class);
 
     // Create directory and write file
-    let parent = std::path::Path::new(&vue_path).parent()
+    let parent = std::path::Path::new(&vue_path)
+        .parent()
         .ok_or_else(|| "Invalid path".to_string())?;
     fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
     fs::write(&vue_path, template).map_err(|e| format!("Failed to write crowned post: {}", e))?;
@@ -786,7 +815,10 @@ fn generate_promo_image(title: String, url: String) -> Result<String, String> {
 
 // Generate 4 OG image variants for a post
 #[tauri::command]
-fn generate_og_variants(slug: String, batch: Option<u32>) -> Result<syndication::OgImageVariants, String> {
+fn generate_og_variants(
+    slug: String,
+    batch: Option<u32>,
+) -> Result<syndication::OgImageVariants, String> {
     syndication::generate_og_variants(&slug, batch.unwrap_or(0))
 }
 
@@ -859,9 +891,7 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         // --- APPLICATION MENU BAR ---
         // macOS apps need a proper menu bar for Cmd+C/V/Z to work in text fields.
-        .menu(|handle| {
-            menu::build_app_menu(handle)
-        })
+        .menu(menu::build_app_menu)
         // Handle custom menu item clicks — emit events to the frontend
         .on_menu_event(menu::handle_menu_event)
         .setup(|app| {
@@ -967,6 +997,13 @@ pub fn run() {
             generate_promo_image,
             generate_og_variants,
             upload_og_image,
+            gear::list_gear,
+            gear::mark_gear_used,
+            gear::update_gear_location,
+            gear::set_gear_scan_url,
+            gear::gear_pending_changes,
+            gear::commit_gear_changes,
+            play_system_sound,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

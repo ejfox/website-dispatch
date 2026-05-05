@@ -152,9 +152,13 @@ pub fn publish_file(
     let target = config::resolve_target(target_id)?;
     let normalized_path = source_path.replace('\\', "/");
     if !normalized_path.starts_with(&app_config.vault.path)
-        || (!normalized_path.contains("/blog/") && !normalized_path.contains("/drafts/") && !normalized_path.contains("/week-notes/"))
+        || (!normalized_path.contains("/blog/")
+            && !normalized_path.contains("/drafts/")
+            && !normalized_path.contains("/week-notes/"))
     {
-        return Err("Publish blocked: file must live in vault blog/, drafts/, or week-notes/".into());
+        return Err(
+            "Publish blocked: file must live in vault blog/, drafts/, or week-notes/".into(),
+        );
     }
 
     // Pre-flight checks

@@ -8,7 +8,7 @@ use walkdir::WalkDir;
 /// purely informational about writing patterns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultSignal {
-    pub kind: String,    // "active_draft", "growing_draft", "tag_cluster", "dormant_idea"
+    pub kind: String, // "active_draft", "growing_draft", "tag_cluster", "dormant_idea"
     pub message: String, // Human-readable observation
     pub path: Option<String>,
     pub metadata: HashMap<String, String>,
@@ -256,9 +256,9 @@ pub fn scan_vault() -> Result<VaultPulse, String> {
 
 fn count_words(content: &str) -> usize {
     // Strip frontmatter
-    let body = if content.starts_with("---") {
-        if let Some(end) = content[3..].find("---") {
-            &content[end + 6..]
+    let body = if let Some(rest) = content.strip_prefix("---") {
+        if let Some(end) = rest.find("---") {
+            &rest[end + 3..]
         } else {
             content
         }
@@ -310,7 +310,11 @@ fn parse_frontmatter_light(content: &str) -> (Option<String>, Vec<String>) {
         // Also handle YAML list-style tags
         if line.starts_with("- ") && !tags.is_empty() {
             // We're probably in a tags list
-            let t = line.strip_prefix("- ").unwrap_or(line).trim().trim_matches('"');
+            let t = line
+                .strip_prefix("- ")
+                .unwrap_or(line)
+                .trim()
+                .trim_matches('"');
             if !t.is_empty() {
                 tags.push(t.to_string());
             }

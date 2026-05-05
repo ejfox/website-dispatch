@@ -1,13 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import {
-  PhCheckCircle,
-  PhLinkSimple,
-  PhImageSquare,
-  PhTextAa,
-  PhTrophy,
-} from '@phosphor-icons/vue'
+import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhTextAa, PhTrophy } from '@phosphor-icons/vue'
 import LintReceipt from './LintReceipt.vue'
 import LocalMediaSection from './LocalMediaSection.vue'
 import AltTextReviewer from './AltTextReviewer.vue'
@@ -234,7 +228,15 @@ const formatTitle = (filename: string): string => {
 const title = computed(() => props.file.title || formatTitle(props.file.filename))
 const titleIsDerived = computed(() => !props.file.title)
 
-const slug = computed(() => props.file.filename.replace('.md', ''))
+// Extract <year>/<slug> from the file's path. website2 organizes processed
+// posts as content/processed/<year>/<slug>.json, so OG generation needs the
+// year prefix to find the JSON. Falls back to bare filename for posts that
+// aren't in a year directory (rare/legacy).
+const slug = computed(() => {
+  const baseName = props.file.filename.replace('.md', '')
+  const yearMatch = props.file.path.match(/\/blog\/(\d{4})\//)
+  return yearMatch ? `${yearMatch[1]}/${baseName}` : baseName
+})
 
 const targetUrl = computed(() => {
   const targets = publishTargets.value
@@ -244,7 +246,8 @@ const targetUrl = computed(() => {
         ?.find((t: any) => t.id === target.id)
         ?.domain?.replace(/^https?:\/\//, '') || 'ejfox.com'
     : 'ejfox.com'
-  return `${domain}/blog/${new Date().getFullYear()}/${slug.value}`
+  // slug already includes year (e.g. "2013/the-magazine-..."), so just append.
+  return `${domain}/blog/${slug.value}`
 })
 
 const isLive = computed(() => !!props.file.published_url || !!justPublished.value)

@@ -4,11 +4,11 @@
 //! scheduler that sends them at the right time, retries failures.
 
 use crate::syndication::{self, PostContent, SyndicationResult};
-use tauri::Emitter;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use tauri::Emitter;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -71,9 +71,7 @@ fn init_db() -> Result<Mutex<Connection>, String> {
 }
 
 fn get_db() -> Result<&'static Mutex<Connection>, String> {
-    DB.get_or_init(|| init_db())
-        .as_ref()
-        .map_err(|e| e.clone())
+    DB.get_or_init(init_db).as_ref().map_err(|e| e.clone())
 }
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
@@ -166,7 +164,9 @@ pub fn get_queue(status_filter: Option<&str>, limit: usize) -> Result<Vec<QueueI
         ),
     };
 
-    let mut stmt = db.prepare(&sql).map_err(|e| format!("Query failed: {}", e))?;
+    let mut stmt = db
+        .prepare(&sql)
+        .map_err(|e| format!("Query failed: {}", e))?;
     let rows = stmt
         .query_map(rusqlite::params_from_iter(filter_params.iter()), |row| {
             Ok(QueueItem {
@@ -397,7 +397,10 @@ pub async fn run_syndication_scheduler(app_handle: tauri::AppHandle) {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Syndication: failed to send {} #{}: {}", item.platform, item.id, e);
+                    eprintln!(
+                        "Syndication: failed to send {} #{}: {}",
+                        item.platform, item.id, e
+                    );
                 }
             }
         }

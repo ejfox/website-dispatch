@@ -209,4 +209,3 @@ pub fn get_post_assets(post_path: &str) -> Result<Vec<String>, String> {
         .cloned()
         .unwrap_or_default())
 }
-

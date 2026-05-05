@@ -14,9 +14,8 @@ pub static JUNK_ALT: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Matches UUID-like prefixes (8hex-4hex...).
-pub static UUID_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}").expect("valid regex")
-});
+pub static UUID_PREFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}").expect("valid regex"));
 
 /// Matches bare filenames with image extensions.
 pub static FILENAME_WITH_EXT: LazyLock<Regex> = LazyLock::new(|| {
@@ -24,44 +23,38 @@ pub static FILENAME_WITH_EXT: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Matches date-prefixed junk alt text (YYYY-MM-DD...).
-pub static DATE_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\d{4}-\d{2}-\d{2}").expect("valid regex")
-});
+pub static DATE_PREFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}").expect("valid regex"));
 
 // ---------------------------------------------------------------------------
 // Markdown patterns
 // ---------------------------------------------------------------------------
 
 /// Matches markdown images: ![alt](url)
-pub static MD_IMAGE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").expect("valid regex")
-});
+pub static MD_IMAGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").expect("valid regex"));
 
 /// Matches markdown images with non-empty alt text only: ![alt](url)
 /// (same pattern as MD_IMAGE but used in alt-text checking context)
-pub static MD_IMAGE_ALT_CHECK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"!\[([^\]]*)\]\([^)]+\)").expect("valid regex")
-});
+pub static MD_IMAGE_ALT_CHECK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"!\[([^\]]*)\]\([^)]+\)").expect("valid regex"));
 
 /// Matches markdown links (and images): (!)?\[text\](url)
 /// Group 1 = "!" if image, Group 2 = link text, Group 3 = URL
-pub static MD_LINK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(!)?\[([^\]]+)\]\(([^)]+)\)").expect("valid regex")
-});
+pub static MD_LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(!)?\[([^\]]+)\]\(([^)]+)\)").expect("valid regex"));
 
 // ---------------------------------------------------------------------------
 // HTML media patterns (cloudinary.rs)
 // ---------------------------------------------------------------------------
 
 /// Matches HTML img tags: <img ... src="..." ...>
-pub static HTML_IMG: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"<img[^>]+src=["']([^"']+)["'][^>]*>"#).expect("valid regex")
-});
+pub static HTML_IMG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"<img[^>]+src=["']([^"']+)["'][^>]*>"#).expect("valid regex"));
 
 /// Matches HTML video tags: <video ... src="..." ...>
-pub static HTML_VIDEO: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"<video[^>]+src=["']([^"']+)["'][^>]*>"#).expect("valid regex")
-});
+pub static HTML_VIDEO: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"<video[^>]+src=["']([^"']+)["'][^>]*>"#).expect("valid regex"));
 
 // ---------------------------------------------------------------------------
 // Cloudinary URL extraction (asset_usage.rs)
@@ -80,28 +73,24 @@ pub static CLOUDINARY_URL: LazyLock<Regex> = LazyLock::new(|| {
 // ---------------------------------------------------------------------------
 
 /// Matches Cloudinary version segments (v1234567).
-pub static CLOUDINARY_VERSION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^v\d+$").expect("valid regex")
-});
+pub static CLOUDINARY_VERSION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^v\d+$").expect("valid regex"));
 
 /// Matches Cloudinary transform segments (c_scale, w_512, etc.).
-pub static CLOUDINARY_TRANSFORM: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[cwhfqget]_").expect("valid regex")
-});
+pub static CLOUDINARY_TRANSFORM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[cwhfqget]_").expect("valid regex"));
 
 /// Matches common image file extensions (for stripping from public_id).
-pub static IMAGE_FILE_EXT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\.(jpg|jpeg|png|gif|webp|svg|tiff?|bmp)$").expect("valid regex")
-});
+pub static IMAGE_FILE_EXT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\.(jpg|jpeg|png|gif|webp|svg|tiff?|bmp)$").expect("valid regex"));
 
 // ---------------------------------------------------------------------------
 // Webmention patterns
 // ---------------------------------------------------------------------------
 
 /// Extracts href from HTML anchor tags.
-pub static HTML_LINK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"<a[^>]+href="(https?://[^"]+)"[^>]*>"#).expect("valid regex")
-});
+pub static HTML_LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"<a[^>]+href="(https?://[^"]+)"[^>]*>"#).expect("valid regex"));
 
 /// Matches <link rel="webmention" href="..."> (rel before href).
 pub static WEBMENTION_LINK_REL_FIRST: LazyLock<Regex> = LazyLock::new(|| {
@@ -128,9 +117,8 @@ pub static WEBMENTION_A_HREF_FIRST: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Extracts URL from Link header: <url>.
-pub static LINK_HEADER_URL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"<([^>]+)>").expect("valid regex")
-});
+pub static LINK_HEADER_URL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"<([^>]+)>").expect("valid regex"));
 
 // ---------------------------------------------------------------------------
 // Privacy detection (vault.rs weeknotes)
@@ -152,9 +140,8 @@ pub static MONEY_AMOUNT: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Matches SSN patterns (XXX-XX-XXXX).
-pub static SSN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").expect("valid regex")
-});
+pub static SSN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").expect("valid regex"));
 
 /// Matches street addresses.
 pub static STREET_ADDRESS: LazyLock<Regex> = LazyLock::new(|| {
@@ -176,6 +163,5 @@ pub static HEALTH_MEDICAL: LazyLock<Regex> = LazyLock::new(|| {
 // ---------------------------------------------------------------------------
 
 /// Matches git log lines: "TIMESTAMP Publish: SLUG"
-pub static GIT_PUBLISH_LOG: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(\S+)\s+Publish:\s+(.+)$").expect("valid regex")
-});
+pub static GIT_PUBLISH_LOG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\S+)\s+Publish:\s+(.+)$").expect("valid regex"));

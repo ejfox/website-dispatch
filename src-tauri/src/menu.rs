@@ -8,7 +8,6 @@ use super::preview;
 ///
 /// macOS apps need a proper menu bar for Cmd+C/V/Z to work in text fields.
 pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-
     // App menu ("Dispatch")
     let app_menu = Submenu::with_items(
         handle,
@@ -35,7 +34,62 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         &[
             &MenuItem::with_id(handle, "new_post", "New Post", true, Some("CmdOrCtrl+N"))?,
             &PredefinedMenuItem::separator(handle)?,
+            &MenuItem::with_id(
+                handle,
+                "open_in_obsidian",
+                "Open in Obsidian",
+                true,
+                Some("CmdOrCtrl+Shift+O"),
+            )?,
+            &MenuItem::with_id(
+                handle,
+                "reveal_in_finder",
+                "Reveal in Finder",
+                true,
+                Some("CmdOrCtrl+Shift+R"),
+            )?,
+            &PredefinedMenuItem::separator(handle)?,
             &MenuItem::with_id(handle, "refresh", "Refresh", true, Some("CmdOrCtrl+R"))?,
+        ],
+    )?;
+
+    // Publish menu — domain-specific actions, the heart of the app
+    let publish_menu = Submenu::with_items(
+        handle,
+        "Publish",
+        true,
+        &[
+            &MenuItem::with_id(handle, "publish", "Publish", true, Some("CmdOrCtrl+Return"))?,
+            &MenuItem::with_id(
+                handle,
+                "publish_unlisted",
+                "Publish as Unlisted",
+                true,
+                Some("CmdOrCtrl+Shift+Return"),
+            )?,
+            &PredefinedMenuItem::separator(handle)?,
+            &MenuItem::with_id(
+                handle,
+                "copy_public_url",
+                "Copy Public URL",
+                true,
+                Some("CmdOrCtrl+Shift+L"),
+            )?,
+            &MenuItem::with_id(
+                handle,
+                "generate_og",
+                "Generate OG Image",
+                true,
+                None::<&str>,
+            )?,
+            &PredefinedMenuItem::separator(handle)?,
+            &MenuItem::with_id(
+                handle,
+                "show_journal",
+                "Show Publishing Journal",
+                true,
+                Some("CmdOrCtrl+J"),
+            )?,
         ],
     )?;
 
@@ -64,13 +118,70 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         &[
             &MenuItem::with_id(
                 handle,
+                "toggle_sidebar",
+                "Toggle Sidebar",
+                true,
+                Some("CmdOrCtrl+0"),
+            )?,
+            &MenuItem::with_id(
+                handle,
                 "toggle_compact",
                 "Toggle Compact",
                 true,
                 Some("CmdOrCtrl+Shift+C"),
             )?,
             &PredefinedMenuItem::separator(handle)?,
+            &MenuItem::with_id(
+                handle,
+                "panel_preview",
+                "Show Preview",
+                true,
+                Some("CmdOrCtrl+1"),
+            )?,
+            &MenuItem::with_id(
+                handle,
+                "panel_media",
+                "Show Media",
+                true,
+                Some("CmdOrCtrl+2"),
+            )?,
+            &MenuItem::with_id(
+                handle,
+                "panel_journal",
+                "Show Journal",
+                true,
+                Some("CmdOrCtrl+3"),
+            )?,
+            &MenuItem::with_id(handle, "panel_gear", "Show Gear", true, Some("CmdOrCtrl+4"))?,
+            &PredefinedMenuItem::separator(handle)?,
             &MenuItem::with_id(handle, "search", "Search...", true, Some("CmdOrCtrl+K"))?,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::fullscreen(handle, None)?,
+        ],
+    )?;
+
+    // Help menu — every native Mac app has one
+    let help_menu = Submenu::with_items(
+        handle,
+        "Help",
+        true,
+        &[
+            &MenuItem::with_id(
+                handle,
+                "show_help",
+                "Dispatch Help",
+                true,
+                Some("CmdOrCtrl+/"),
+            )?,
+            &PredefinedMenuItem::separator(handle)?,
+            &MenuItem::with_id(handle, "report_issue", "Report Issue…", true, None::<&str>)?,
+            &MenuItem::with_id(
+                handle,
+                "view_on_github",
+                "View on GitHub",
+                true,
+                None::<&str>,
+            )?,
         ],
     )?;
 
@@ -88,7 +199,15 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
 
     let menu = Menu::with_items(
         handle,
-        &[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu],
+        &[
+            &app_menu,
+            &file_menu,
+            &edit_menu,
+            &view_menu,
+            &publish_menu,
+            &window_menu,
+            &help_menu,
+        ],
     )?;
 
     Ok(menu)
@@ -100,9 +219,12 @@ pub fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open_i, &quit_i])?;
 
+    // DIAGNOSTIC: try the dedicated tray.png as a template first, but fall
+    // back to the colored app icon if anything goes sideways. The fallback
+    // guarantees *some* visible icon while we figure out which path works.
     let mut tray_builder = TrayIconBuilder::new();
-    if let Some(icon) = app.default_window_icon() {
-        tray_builder = tray_builder.icon(icon.clone());
+    if let Some(window_icon) = app.default_window_icon() {
+        tray_builder = tray_builder.icon(window_icon.clone());
     }
     tray_builder
         .menu(&menu)
@@ -140,19 +262,51 @@ pub fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 
 /// Handle custom menu item clicks by emitting events to the frontend.
 pub fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
-    match event.id().as_ref() {
-        "new_post" => {
-            let _ = app.emit("menu-new-post", ());
+    let id = event.id().as_ref();
+
+    // Most items are passthrough emits with a stable naming convention.
+    let passthrough = [
+        "new_post",
+        "refresh",
+        "toggle_compact",
+        "search",
+        "open_in_obsidian",
+        "reveal_in_finder",
+        "publish",
+        "publish_unlisted",
+        "copy_public_url",
+        "generate_og",
+        "show_journal",
+        "toggle_sidebar",
+        "panel_preview",
+        "panel_media",
+        "panel_journal",
+        "panel_gear",
+        "show_help",
+    ];
+    if passthrough.contains(&id) {
+        let _ = app.emit(&format!("menu-{}", id.replace('_', "-")), ());
+        return;
+    }
+
+    // Items that open URLs directly — no need to round-trip through the frontend.
+    match id {
+        "report_issue" => {
+            let _ = open_url("https://github.com/ejfox/website-dispatch/issues/new");
         }
-        "refresh" => {
-            let _ = app.emit("menu-refresh", ());
-        }
-        "toggle_compact" => {
-            let _ = app.emit("menu-toggle-compact", ());
-        }
-        "search" => {
-            let _ = app.emit("menu-search", ());
+        "view_on_github" => {
+            let _ = open_url("https://github.com/ejfox/website-dispatch");
         }
         _ => {}
     }
+}
+
+fn open_url(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("/usr/bin/open")
+            .arg(url)
+            .spawn()?;
+    }
+    Ok(())
 }

@@ -182,7 +182,9 @@ function getAgeColor(ts: number): string {
     <div class="control-bar" data-tauri-drag-region>
       <div class="filters">
         <button :class="{ active: filter === 'all' }" @click="filter = 'all'">All {{ counts.all }}</button>
-        <button :class="{ active: filter === 'published' }" @click="filter = 'published'">Live {{ counts.published }}</button>
+        <button :class="{ active: filter === 'published' }" @click="filter = 'published'">
+          Live {{ counts.published }}
+        </button>
         <button :class="{ active: filter === 'drafts' }" @click="filter = 'drafts'">Drafts {{ counts.drafts }}</button>
       </div>
       <div class="sort-row">
@@ -390,7 +392,6 @@ function getAgeColor(ts: number): string {
   opacity: 1;
   color: var(--text-primary);
 }
-
 
 .weeknote-toggle[data-tip]:hover::after {
   transform: translateX(0) translateY(0);

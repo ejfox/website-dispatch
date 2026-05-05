@@ -82,7 +82,10 @@ fn get_image_url(url: &str) -> String {
     if parts.len() != 2 {
         return url;
     }
-    format!("{}/upload/c_scale,w_1280,f_jpg,q_auto/{}", parts[0], parts[1])
+    format!(
+        "{}/upload/c_scale,w_1280,f_jpg,q_auto/{}",
+        parts[0], parts[1]
+    )
 }
 
 /// Find all images with missing or junk alt text in a markdown string.
@@ -144,7 +147,9 @@ async fn call_anthropic(api_key: &str, image_url: &str) -> Result<String, String
         return Err(format!("Anthropic error {}: {}", status, text));
     }
 
-    let data: serde_json::Value = resp.json().await
+    let data: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
     data["content"][0]["text"]
@@ -189,7 +194,9 @@ async fn call_openai(api_key: &str, image_url: &str) -> Result<String, String> {
         return Err(format!("OpenAI error {}: {}", status, text));
     }
 
-    let data: serde_json::Value = resp.json().await
+    let data: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
     data["choices"][0]["message"]["content"]
@@ -275,7 +282,10 @@ pub async fn generate_suggestions(file_path: &str) -> Result<AltTextResult, Stri
 
 /// Apply alt text suggestions to a markdown file, writing the changes.
 /// Handles both empty alt ![](url) and junk alt ![junk](url).
-pub fn apply_suggestions(file_path: &str, suggestions: &[AltTextSuggestion]) -> Result<usize, String> {
+pub fn apply_suggestions(
+    file_path: &str,
+    suggestions: &[AltTextSuggestion],
+) -> Result<usize, String> {
     let mut content =
         std::fs::read_to_string(file_path).map_err(|e| format!("Failed to read file: {}", e))?;
 
@@ -285,9 +295,10 @@ pub fn apply_suggestions(file_path: &str, suggestions: &[AltTextSuggestion]) -> 
         // Find any image tag with this URL (regardless of current alt text)
         let new_tag = format!("![{}]({})", suggestion.alt_text, suggestion.image_url);
         let mut found = false;
-        if let Some(caps) = crate::patterns::MD_IMAGE.captures_iter(&content.clone()).find(|c| {
-            c.get(2).map(|m| m.as_str()) == Some(&suggestion.image_url)
-        }) {
+        if let Some(caps) = crate::patterns::MD_IMAGE
+            .captures_iter(&content.clone())
+            .find(|c| c.get(2).map(|m| m.as_str()) == Some(&suggestion.image_url))
+        {
             let old_tag = caps.get(0).unwrap().as_str().to_string();
             if old_tag != new_tag {
                 content = content.replacen(&old_tag, &new_tag, 1);
@@ -300,8 +311,7 @@ pub fn apply_suggestions(file_path: &str, suggestions: &[AltTextSuggestion]) -> 
     }
 
     if applied > 0 {
-        std::fs::write(file_path, &content)
-            .map_err(|e| format!("Failed to write file: {}", e))?;
+        std::fs::write(file_path, &content).map_err(|e| format!("Failed to write file: {}", e))?;
 
         // Best-effort sync to Cloudinary context metadata
         let cloud_suggestions: Vec<_> = suggestions
@@ -331,15 +341,23 @@ fn extract_public_id(url: &str) -> Option<String> {
         .iter()
         .filter(|p| {
             // Skip version segments (v1234567) and transform segments (c_scale,w_512)
-            if crate::patterns::CLOUDINARY_VERSION.is_match(p) { return false; }
-            if p.contains(',') || crate::patterns::CLOUDINARY_TRANSFORM.is_match(p) { return false; }
+            if crate::patterns::CLOUDINARY_VERSION.is_match(p) {
+                return false;
+            }
+            if p.contains(',') || crate::patterns::CLOUDINARY_TRANSFORM.is_match(p) {
+                return false;
+            }
             true
         })
         .copied()
         .collect();
     let joined = filtered.join("/");
     // Strip file extension
-    Some(crate::patterns::IMAGE_FILE_EXT.replace(&joined, "").to_string())
+    Some(
+        crate::patterns::IMAGE_FILE_EXT
+            .replace(&joined, "")
+            .to_string(),
+    )
 }
 
 /// Push alt text to Cloudinary's context metadata (blocking, best-effort).
@@ -349,7 +367,7 @@ fn sync_alt_to_cloudinary(
     alt_text: &str,
 ) -> Result<(), String> {
     // Escape pipe characters in alt text (Cloudinary context delimiter)
-    let safe_alt = alt_text.replace('|', " ").replace('=', " ");
+    let safe_alt = alt_text.replace(['|', '='], " ");
     let url = format!(
         "https://api.cloudinary.com/v1_1/{}/image/explicit",
         config.cloud_name
@@ -371,7 +389,10 @@ fn sync_alt_to_cloudinary(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().unwrap_or_default();
-        eprintln!("Cloudinary context update failed for {}: {} {}", public_id, status, text);
+        eprintln!(
+            "Cloudinary context update failed for {}: {} {}",
+            public_id, status, text
+        );
     }
     Ok(())
 }

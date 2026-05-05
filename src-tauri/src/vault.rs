@@ -172,7 +172,10 @@ fn parse_weeknote_filename(path: &Path) -> Option<u64> {
     let year: i32 = parts.next()?.parse().ok()?;
     let week_str = parts.next()?;
     // Extract leading digits from week part (handles "52-raw" → "52")
-    let week_digits: String = week_str.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let week_digits: String = week_str
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     let week: u32 = week_digits.parse().ok()?;
     if !(2000..=2100).contains(&year) || week == 0 || week > 53 {
         return None;
@@ -830,38 +833,76 @@ mod tests {
     fn test_parse_frontmatter_multiline_tags() {
         let content = "---\ntags:\n  - weekly-notes\n  - reflections\n  - progress\ndate: 2026-03-01T16:00:00-05:00\nmodified: 2026-03-01T19:04:57-05:00\n---\n## Week 2026-W09\n";
         let (fm, body) = parse_frontmatter(content);
-        assert_eq!(fm.get("date").unwrap(), "2026-03-01T16:00:00-05:00", "date should be parsed");
-        assert_eq!(fm.get("modified").unwrap(), "2026-03-01T19:04:57-05:00", "modified should be parsed");
-        assert!(body.contains("## Week 2026-W09"), "body should contain heading");
+        assert_eq!(
+            fm.get("date").unwrap(),
+            "2026-03-01T16:00:00-05:00",
+            "date should be parsed"
+        );
+        assert_eq!(
+            fm.get("modified").unwrap(),
+            "2026-03-01T19:04:57-05:00",
+            "modified should be parsed"
+        );
+        assert!(
+            body.contains("## Week 2026-W09"),
+            "body should contain heading"
+        );
         // Verify date actually parses to a timestamp
-        assert!(parse_iso_date("2026-03-01T16:00:00-05:00").is_some(), "date should parse to timestamp");
-        assert!(parse_iso_date("2026-03-01T19:04:57-05:00").is_some(), "modified should parse to timestamp");
+        assert!(
+            parse_iso_date("2026-03-01T16:00:00-05:00").is_some(),
+            "date should parse to timestamp"
+        );
+        assert!(
+            parse_iso_date("2026-03-01T19:04:57-05:00").is_some(),
+            "modified should parse to timestamp"
+        );
     }
 
     #[test]
     fn test_privacy_linter() {
         // Phone number
         let warnings = check_privacy("Called them at 555-123-4567 today");
-        assert!(warnings.iter().any(|w| w.contains("Phone")), "Should detect phone: {:?}", warnings);
+        assert!(
+            warnings.iter().any(|w| w.contains("Phone")),
+            "Should detect phone: {:?}",
+            warnings
+        );
 
         // Email
         let warnings = check_privacy("Emailed john@example.com about the project");
-        assert!(warnings.iter().any(|w| w.contains("Email")), "Should detect email: {:?}", warnings);
+        assert!(
+            warnings.iter().any(|w| w.contains("Email")),
+            "Should detect email: {:?}",
+            warnings
+        );
 
         // Money
         let warnings = check_privacy("Got paid $12,500 for the project");
-        assert!(warnings.iter().any(|w| w.contains("Financial")), "Should detect money: {:?}", warnings);
+        assert!(
+            warnings.iter().any(|w| w.contains("Financial")),
+            "Should detect money: {:?}",
+            warnings
+        );
 
         // Named person
         let warnings = check_privacy("Met with Sarah Johnson for coffee");
-        assert!(warnings.iter().any(|w| w.contains("Named person")), "Should detect person: {:?}", warnings);
+        assert!(
+            warnings.iter().any(|w| w.contains("Named person")),
+            "Should detect person: {:?}",
+            warnings
+        );
 
         // Health
         let warnings = check_privacy("Had my therapy session on Tuesday");
-        assert!(warnings.iter().any(|w| w.contains("Health")), "Should detect health: {:?}", warnings);
+        assert!(
+            warnings.iter().any(|w| w.contains("Health")),
+            "Should detect health: {:?}",
+            warnings
+        );
 
         // Clean content
-        let warnings = check_privacy("This week I worked on the website redesign and wrote some code.");
+        let warnings =
+            check_privacy("This week I worked on the website redesign and wrote some code.");
         assert!(warnings.is_empty(), "Should be clean: {:?}", warnings);
     }
 

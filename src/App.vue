@@ -19,6 +19,7 @@ import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
 import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
 import PublishingJournal from './components/PublishingJournal.vue'
+import GearPanel from './components/GearPanel.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import SearchModal from './components/SearchModal.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
@@ -50,7 +51,7 @@ const showHelp = ref(false)
 const windowFocused = ref(true)
 
 // Right panel tab state
-const rightTab = ref<'preview' | 'media' | 'journal'>('preview')
+const rightTab = ref<'preview' | 'media' | 'journal' | 'gear'>('preview')
 
 // Connection status (auto-checks on creation)
 const { cloudinaryConnected, obsidianConnected, analyticsConnected, companionUrl, companionPin, gitBranch } =
@@ -78,7 +79,6 @@ const { appConfig, fetchConfig: loadConfig } = useAppConfig()
 
 // Compact mode preference (auto-syncs with localStorage)
 const compactMode = useLocalStorage('dispatch-compact', false)
-
 
 function openSearch() {
   searchOpen.value = true
@@ -281,6 +281,7 @@ onUnmounted(() => {
           <button :class="{ active: rightTab === 'preview' }" @click="rightTab = 'preview'">Preview</button>
           <button :class="{ active: rightTab === 'media' }" @click="rightTab = 'media'">Media</button>
           <button :class="{ active: rightTab === 'journal' }" @click="rightTab = 'journal'">Journal</button>
+          <button :class="{ active: rightTab === 'gear' }" @click="rightTab = 'gear'">Gear</button>
           <div class="panel-tabs-spacer" data-tauri-drag-region></div>
           <div class="titlebar-btns">
             <button @click="openNewPost" class="titlebar-btn" data-tip="New Post">
@@ -338,6 +339,8 @@ onUnmounted(() => {
           />
 
           <PublishingJournal v-else-if="rightTab === 'journal'" />
+
+          <GearPanel v-else-if="rightTab === 'gear'" />
         </div>
       </div>
     </main>
@@ -452,9 +455,9 @@ onUnmounted(() => {
   grid-template-columns: clamp(240px, 38.2%, 400px) 1fr;
   grid-template-rows: 44px 1fr 22px;
   grid-template-areas:
-    "sidebar-bar  panel-bar"
-    "sidebar      panel"
-    "status       status";
+    'sidebar-bar  panel-bar'
+    'sidebar      panel'
+    'status       status';
   overflow: hidden;
 }
 

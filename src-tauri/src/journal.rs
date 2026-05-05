@@ -107,8 +107,8 @@ fn init_db() -> Result<Mutex<Connection>, String> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let conn = Connection::open(&path)
-        .map_err(|e| format!("Failed to open journal database: {}", e))?;
+    let conn =
+        Connection::open(&path).map_err(|e| format!("Failed to open journal database: {}", e))?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
         .map_err(|e| format!("Failed to set pragmas: {}", e))?;
     init_schema(&conn);
@@ -116,9 +116,7 @@ fn init_db() -> Result<Mutex<Connection>, String> {
 }
 
 fn get_db() -> Result<&'static Mutex<Connection>, String> {
-    DB.get_or_init(|| init_db())
-        .as_ref()
-        .map_err(|e| e.clone())
+    DB.get_or_init(init_db).as_ref().map_err(|e| e.clone())
 }
 
 fn init_schema(conn: &Connection) {
@@ -153,24 +151,26 @@ fn init_schema(conn: &Connection) {
 // Record events
 // ---------------------------------------------------------------------------
 
-pub fn record_event(
-    event: &str,
-    slug: &str,
-    title: Option<&str>,
-    word_count: usize,
-    tags: &[String],
-    content_type: &str,
-    url: Option<&str>,
-    target_id: Option<&str>,
-    visibility: &str,
-) -> Result<i64, String> {
+pub struct EventRecord<'a> {
+    pub event: &'a str,
+    pub slug: &'a str,
+    pub title: Option<&'a str>,
+    pub word_count: usize,
+    pub tags: &'a [String],
+    pub content_type: &'a str,
+    pub url: Option<&'a str>,
+    pub target_id: Option<&'a str>,
+    pub visibility: &'a str,
+}
+
+pub fn record_event(rec: EventRecord<'_>) -> Result<i64, String> {
     let now = Utc::now();
     let local = Local::now();
     let timestamp = now.to_rfc3339();
     let local_date = local.format("%Y-%m-%d").to_string();
     let local_hour = local.hour() as i32;
     let day_of_week = local.weekday().num_days_from_monday() as i32;
-    let tags_str = tags.join(",");
+    let tags_str = rec.tags.join(",");
 
     let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
     db.execute(
@@ -181,15 +181,15 @@ pub fn record_event(
             local_date,
             local_hour,
             day_of_week,
-            event,
-            slug,
-            title,
-            word_count as i64,
+            rec.event,
+            rec.slug,
+            rec.title,
+            rec.word_count as i64,
             tags_str,
-            content_type,
-            url,
-            target_id,
-            visibility,
+            rec.content_type,
+            rec.url,
+            rec.target_id,
+            rec.visibility,
         ],
     )
     .map_err(|e| format!("Failed to record event: {}", e))?;
@@ -400,10 +400,8 @@ pub fn get_stats() -> Result<JournalStats, String> {
                 })
             })
             .map_err(|e| format!("Query error: {}", e))?;
-        for row in rows {
-            if let Ok(ms) = row {
-                monthly_history.push(ms);
-            }
+        for ms in rows.flatten() {
+            monthly_history.push(ms);
         }
     }
 
@@ -446,11 +444,9 @@ pub fn get_stats() -> Result<JournalStats, String> {
         let rows = stmt
             .query_map([], |row| Ok((row.get::<_, i32>(0)?, row.get::<_, u32>(1)?)))
             .map_err(|e| format!("Query error: {}", e))?;
-        for row in rows {
-            if let Ok((hour, count)) = row {
-                if (0..24).contains(&hour) {
-                    publish_hour_distribution[hour as usize] = count;
-                }
+        for (hour, count) in rows.flatten() {
+            if (0..24).contains(&hour) {
+                publish_hour_distribution[hour as usize] = count;
             }
         }
     }
@@ -462,7 +458,7 @@ pub fn get_stats() -> Result<JournalStats, String> {
         .and_then(|(h, c)| if *c > 0 { Some(h as u8) } else { None });
 
     // Day of week distribution
-    let mut day_counts = vec![0u32; 7];
+    let mut day_counts = [0u32; 7];
     {
         let mut stmt = db
             .prepare(
@@ -472,16 +468,22 @@ pub fn get_stats() -> Result<JournalStats, String> {
         let rows = stmt
             .query_map([], |row| Ok((row.get::<_, i32>(0)?, row.get::<_, u32>(1)?)))
             .map_err(|e| format!("Query error: {}", e))?;
-        for row in rows {
-            if let Ok((day, count)) = row {
-                if (0..7).contains(&day) {
-                    day_counts[day as usize] = count;
-                }
+        for (day, count) in rows.flatten() {
+            if (0..7).contains(&day) {
+                day_counts[day as usize] = count;
             }
         }
     }
 
-    let day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    let day_names = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ];
     let most_active_day_of_week = day_counts
         .iter()
         .enumerate()
@@ -724,20 +726,90 @@ fn compute_milestones(
     _unique_posts: u32,
 ) -> Vec<Milestone> {
     let defs: Vec<(&str, &str, &str, bool)> = vec![
-        ("first_publish", "First Post!", "Published your first post", total_publishes >= 1),
-        ("posts_10", "Getting Started", "Published 10 posts", total_publishes >= 10),
-        ("posts_25", "Quarter Century", "Published 25 posts", total_publishes >= 25),
-        ("posts_50", "Half a Hundred", "Published 50 posts", total_publishes >= 50),
-        ("posts_100", "Century Mark", "Published 100 posts", total_publishes >= 100),
-        ("streak_3", "Hat Trick", "3-day publishing streak", longest_streak >= 3),
-        ("streak_7", "Week Warrior", "7-day publishing streak", longest_streak >= 7),
-        ("streak_14", "Two-Week Flow", "14-day publishing streak", longest_streak >= 14),
-        ("streak_30", "Monthly Machine", "30-day publishing streak", longest_streak >= 30),
-        ("weekly_4", "Monthly Regular", "Published every week for a month", weekly_streak >= 4),
-        ("weekly_12", "Quarterly Cadence", "Published every week for 3 months", weekly_streak >= 12),
-        ("words_10k", "10,000 Words", "Published 10,000 words total", total_words >= 10_000),
-        ("words_50k", "NaNoWriMo", "Published 50,000 words total", total_words >= 50_000),
-        ("words_100k", "Novel Length", "Published 100,000 words total", total_words >= 100_000),
+        (
+            "first_publish",
+            "First Post!",
+            "Published your first post",
+            total_publishes >= 1,
+        ),
+        (
+            "posts_10",
+            "Getting Started",
+            "Published 10 posts",
+            total_publishes >= 10,
+        ),
+        (
+            "posts_25",
+            "Quarter Century",
+            "Published 25 posts",
+            total_publishes >= 25,
+        ),
+        (
+            "posts_50",
+            "Half a Hundred",
+            "Published 50 posts",
+            total_publishes >= 50,
+        ),
+        (
+            "posts_100",
+            "Century Mark",
+            "Published 100 posts",
+            total_publishes >= 100,
+        ),
+        (
+            "streak_3",
+            "Hat Trick",
+            "3-day publishing streak",
+            longest_streak >= 3,
+        ),
+        (
+            "streak_7",
+            "Week Warrior",
+            "7-day publishing streak",
+            longest_streak >= 7,
+        ),
+        (
+            "streak_14",
+            "Two-Week Flow",
+            "14-day publishing streak",
+            longest_streak >= 14,
+        ),
+        (
+            "streak_30",
+            "Monthly Machine",
+            "30-day publishing streak",
+            longest_streak >= 30,
+        ),
+        (
+            "weekly_4",
+            "Monthly Regular",
+            "Published every week for a month",
+            weekly_streak >= 4,
+        ),
+        (
+            "weekly_12",
+            "Quarterly Cadence",
+            "Published every week for 3 months",
+            weekly_streak >= 12,
+        ),
+        (
+            "words_10k",
+            "10,000 Words",
+            "Published 10,000 words total",
+            total_words >= 10_000,
+        ),
+        (
+            "words_50k",
+            "NaNoWriMo",
+            "Published 50,000 words total",
+            total_words >= 50_000,
+        ),
+        (
+            "words_100k",
+            "Novel Length",
+            "Published 100,000 words total",
+            total_words >= 100_000,
+        ),
     ];
 
     defs.into_iter()
@@ -763,7 +835,9 @@ pub fn get_nudge() -> Result<Option<Nudge>, String> {
 
     // Best month ever
     if stats.words_this_month > 0 && !stats.monthly_history.is_empty() {
-        let past_max = stats.monthly_history.iter()
+        let past_max = stats
+            .monthly_history
+            .iter()
             .skip(1) // skip current month
             .map(|m| m.words)
             .max()

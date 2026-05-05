@@ -16,7 +16,7 @@
   },
   "productName": "Dispatch",
   "mainBinaryName": "Dispatch",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "identifier": "com.ejfox.dispatch",
   "plugins": {},
   "app": {
@@ -43,10 +43,6 @@
           "state": "followsWindowActiveState"
         }
       }
-    ],
-    "trayIcon": {
-      "iconPath": "icons/tray.png",
-      "iconAsTemplate": true
-    }
+    ]
   }
 }
