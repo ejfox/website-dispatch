@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.5.1 — 2026-05-05
+
+Magical ⌘K — five additions that compound into a Raycast-grade palette.
+
+### Added
+- **Mode prefixes** for power filtering. Type the prefix and the
+  placeholder text changes to confirm what's scoped:
+  - `>foo` — actions only (no file results)
+  - `t:robot` — files tagged "robot"
+  - `l:` / `d:` / `m:` — live / drafts / modified-since-publish only
+  - `f:foo` — files only (no actions)
+- **Synonyms** baked into every action. "ship" / "send" → Publish,
+  "edit" / "write" → Open in Editor, "stats" / "streak" → Show Journal,
+  "shortcuts" / "cheatsheet" → Show Help. Natural-language friendly.
+- **Frecency-weighted ranking.** Every command you run gets a usage score
+  (count × 14-day half-life decay). Your most-used actions float to the
+  top automatically. Persists in localStorage across restarts.
+- **"Recently Used" section** at the top of the palette when the query is
+  empty — last 5 actions you ran, in order. Two ⌘K presses → Enter
+  reruns whatever you did last.
+- **Inline status badges** on file rows: LIVE (green), DRAFT (gray),
+  UNLISTED (indigo), PROTECTED (purple), MODIFIED (amber). Color-coded
+  so you can scan results without reading filenames.
+- **File-tag fuzzy matching.** Files' frontmatter tags feed into the
+  fuzzy matcher as synonyms — typing "robot" surfaces tagged posts
+  even if the title doesn't contain the word.
+
 ## 0.5.0 — 2026-05-05
 
 Big batch — auto-updates, command palette, drag-in, plus structural cleanup.
