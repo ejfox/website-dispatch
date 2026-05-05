@@ -24,7 +24,10 @@ const props = defineProps<{
   compact?: boolean
 }>()
 
-const emit = defineEmits<{ select: [file: MarkdownFile] }>()
+const emit = defineEmits<{
+  select: [file: MarkdownFile]
+  'request-unpublish': [file: MarkdownFile]
+}>()
 
 const filter = ref<'all' | 'published' | 'drafts' | 'scheduled'>('all')
 const sort = ref<'recent' | 'created' | 'title' | 'words'>('recent')
@@ -144,20 +147,36 @@ function formatWordCount(count: number): string {
 
 async function showContextMenu(file: MarkdownFile, e: MouseEvent) {
   e.preventDefault()
+  // Select the file first so right-click context matches what the user
+  // clicked, even if a different file was previously selected.
+  emit('select', file)
+
+  const isLive = !!file.published_url
   const items = [
     await MenuItem.new({ text: 'Open in Obsidian', action: () => invoke('open_in_obsidian', { path: file.path }) }),
     await MenuItem.new({
       text: 'Open in Editor',
       action: () => invoke('open_in_app', { path: file.path, app: 'iA Writer' }),
     }),
+    await MenuItem.new({
+      text: 'Reveal in Finder',
+      action: () => invoke('open_in_app', { path: file.path, app: 'Finder' }).catch(() => {}),
+    }),
     await PredefinedMenuItem.new({ item: 'Separator' }),
     await MenuItem.new({ text: 'Copy Path', action: () => navigator.clipboard.writeText(file.path) }),
   ]
-  if (file.published_url) {
+  if (isLive) {
     items.push(
       await PredefinedMenuItem.new({ item: 'Separator' }),
       await MenuItem.new({ text: 'View on Site', action: () => window.open(file.published_url!, '_blank') }),
-      await MenuItem.new({ text: 'Copy URL', action: () => navigator.clipboard.writeText(file.published_url!) }),
+      await MenuItem.new({
+        text: 'Copy Public URL',
+        action: () => navigator.clipboard.writeText(file.published_url!),
+      }),
+      await MenuItem.new({
+        text: 'Unpublish…',
+        action: () => emit('request-unpublish', file),
+      }),
     )
   }
   const menu = await Menu.new({ items })

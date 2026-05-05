@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useToasts } from '../composables/useToasts'
+
+const toasts = useToasts()
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { PhArrowsClockwise, PhCheck, PhUpload, PhSparkle } from '@phosphor-icons/vue'
 
@@ -37,6 +40,7 @@ async function generate() {
     variants.value = result
   } catch (e) {
     error.value = `${e}`
+    toasts.error('OG image generation failed', String(e))
   }
   generating.value = false
 }
@@ -64,6 +68,7 @@ async function uploadSelected() {
     emit('picked', url)
   } catch (e) {
     error.value = `Upload failed: ${e}`
+    toasts.error('OG image upload failed', String(e))
   }
   uploading.value = false
 }

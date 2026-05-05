@@ -23,6 +23,7 @@ import GearPanel from './components/GearPanel.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import SearchModal from './components/SearchModal.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
+import ToastStack from './components/ToastStack.vue'
 import { useLocalStorage } from '@vueuse/core'
 import type { MarkdownFile } from './types'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
@@ -221,6 +222,9 @@ onUnmounted(() => {
 
 <template>
   <div class="app" :class="{ unfocused: !windowFocused }">
+    <!-- Toast notifications (transient feedback for command outcomes) -->
+    <ToastStack />
+
     <!-- Help Modal -->
     <HelpOverlay :show="showHelp" @close="showHelp = false" />
 

@@ -1,5 +1,12 @@
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useToasts } from './useToasts'
+
+// Fire-and-forget native macOS system sound. Names map to files in
+// /System/Library/Sounds (Glass, Hero, Pop, Tink, Sosumi, Submarine, etc).
+function playSound(name: string) {
+  invoke('play_system_sound', { name }).catch(() => {})
+}
 
 export function usePublishing(options: {
   getSlug: () => string
@@ -23,6 +30,8 @@ export function usePublishing(options: {
   const publishConfirmRepublish = ref(false)
   const showSyndicationWizard = ref(false)
   const showAltTextReviewer = ref(false)
+
+  const toasts = useToasts()
   const journalStatsCache = ref<any>(null)
 
   const publishContext = computed(() => {
@@ -85,7 +94,9 @@ export function usePublishing(options: {
       isMilestoneToast.value = !!newMilestone
       if (newMilestone) {
         successMessage.value = `${newMilestone.label}! ${newMilestone.description}`
+        playSound('Hero') // Triumphant fanfare for milestones
       } else {
+        playSound('Glass') // Default success chime
         const visibilityContext = options.isPasswordProtected()
           ? ' (protected)'
           : options.isUnlisted()
@@ -107,7 +118,7 @@ export function usePublishing(options: {
 
       setTimeout(() => options.onPublished(), 500)
     } catch (e) {
-      alert(`Failed: ${e}`)
+      toasts.error('Publish failed', String(e))
     }
     publishing.value = false
   }
@@ -118,7 +129,7 @@ export function usePublishing(options: {
       await invoke('set_frontmatter', { path: options.getFilePath(), key: 'unlisted', value: 'true' })
       await publish(false)
     } catch (e) {
-      alert(`Failed to set unlisted: ${e}`)
+      toasts.error('Failed to set unlisted', String(e))
     }
   }
 

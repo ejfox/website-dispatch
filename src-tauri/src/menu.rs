@@ -310,3 +310,8 @@ fn open_url(url: &str) -> std::io::Result<()> {
     }
     Ok(())
 }
+
+// Native context menus for FileList live in the frontend via
+// @tauri-apps/api/menu — see FileList.vue:showContextMenu. Cleaner there
+// because actions can route through Tauri commands directly without a
+// round-trip through Rust event emission.
