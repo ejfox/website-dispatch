@@ -6,7 +6,7 @@ use tauri::Emitter;
 
 fn check_git_status(repo_path: &str) -> Result<(), String> {
     // Check if we're in a git repo
-    let status = Command::new("git")
+    let status = Command::new(crate::bin_paths::git())
         .args(["rev-parse", "--git-dir"])
         .current_dir(repo_path)
         .output()
@@ -17,7 +17,7 @@ fn check_git_status(repo_path: &str) -> Result<(), String> {
     }
 
     // Check for uncommitted changes - just log, don't block
-    let status = Command::new("git")
+    let status = Command::new(crate::bin_paths::git())
         .args(["status", "--porcelain"])
         .current_dir(repo_path)
         .output()
@@ -30,14 +30,14 @@ fn check_git_status(repo_path: &str) -> Result<(), String> {
         .collect();
 
     if !dirty_files.is_empty() {
-        eprintln!(
+        log::warn!(
             "Note: {} uncommitted changes in repo (continuing anyway)",
             dirty_files.len()
         );
     }
 
     // Check if we're on a branch
-    let branch = Command::new("git")
+    let branch = Command::new(crate::bin_paths::git())
         .args(["branch", "--show-current"])
         .current_dir(repo_path)
         .output()
@@ -49,7 +49,7 @@ fn check_git_status(repo_path: &str) -> Result<(), String> {
     }
 
     // Check for merge conflicts
-    let conflicts = Command::new("git")
+    let conflicts = Command::new(crate::bin_paths::git())
         .args(["diff", "--name-only", "--diff-filter=U"])
         .current_dir(repo_path)
         .output()
@@ -60,7 +60,7 @@ fn check_git_status(repo_path: &str) -> Result<(), String> {
     }
 
     // Fetch to check if we're behind (non-blocking check)
-    let _ = Command::new("git")
+    let _ = Command::new(crate::bin_paths::git())
         .args(["fetch", "--dry-run"])
         .current_dir(repo_path)
         .output();
@@ -93,7 +93,7 @@ pub fn get_git_status(target_id: Option<&str>) -> GitStatus {
     let repo_path = &target.repo_path;
 
     // Get branch name
-    let branch = Command::new("git")
+    let branch = Command::new(crate::bin_paths::git())
         .args(["branch", "--show-current"])
         .current_dir(repo_path)
         .output()
@@ -101,7 +101,7 @@ pub fn get_git_status(target_id: Option<&str>) -> GitStatus {
         .unwrap_or_default();
 
     // Check for dirty files
-    let status = Command::new("git")
+    let status = Command::new(crate::bin_paths::git())
         .args(["status", "--porcelain"])
         .current_dir(repo_path)
         .output();
@@ -117,7 +117,7 @@ pub fn get_git_status(target_id: Option<&str>) -> GitStatus {
         .unwrap_or_default();
 
     // Check for conflicts
-    let conflicts = Command::new("git")
+    let conflicts = Command::new(crate::bin_paths::git())
         .args(["diff", "--name-only", "--diff-filter=U"])
         .current_dir(repo_path)
         .output()
@@ -162,7 +162,7 @@ pub fn publish_file(
     }
 
     // Pre-flight checks
-    eprintln!("Running pre-flight checks...");
+    log::warn!("Running pre-flight checks...");
     check_git_status(&target.repo_path)?;
 
     // Determine year folder from content_path_pattern
@@ -171,7 +171,7 @@ pub fn publish_file(
     let dest_dir = format!("{}/{}", target.repo_path, content_dir);
     let dest_path = format!("{}/{}.md", dest_dir, slug);
 
-    eprintln!("Publishing {} -> {}", source_path, dest_path);
+    log::warn!("Publishing {} -> {}", source_path, dest_path);
 
     // Ensure year directory exists
     fs::create_dir_all(&dest_dir).map_err(|e| format!("Failed to create dir: {}", e))?;
@@ -179,12 +179,12 @@ pub fn publish_file(
     // Copy file
     fs::copy(source_path, &dest_path).map_err(|e| format!("Failed to copy: {}", e))?;
 
-    eprintln!("Copied file, running git commands...");
+    log::warn!("Copied file, running git commands...");
 
     // Git add, commit, push
     let repo_path = &target.repo_path;
 
-    let add_output = Command::new("git")
+    let add_output = Command::new(crate::bin_paths::git())
         .args(["add", &dest_path])
         .current_dir(repo_path)
         .output()
@@ -198,7 +198,7 @@ pub fn publish_file(
     }
 
     let commit_msg = format!("Publish: {}", slug);
-    let commit_output = Command::new("git")
+    let commit_output = Command::new(crate::bin_paths::git())
         .args(["commit", "-m", &commit_msg])
         .current_dir(repo_path)
         .output()
@@ -210,15 +210,15 @@ pub fn publish_file(
         let stdout = String::from_utf8_lossy(&commit_output.stdout);
         // Check if it's just "nothing to commit"
         if !stdout.contains("nothing to commit") && !stderr.contains("nothing to commit") {
-            eprintln!("Git commit output: {}", stdout);
-            eprintln!("Git commit stderr: {}", stderr);
+            log::warn!("Git commit output: {}", stdout);
+            log::warn!("Git commit stderr: {}", stderr);
             // Continue anyway - file was still copied
         }
     }
 
-    eprintln!("Pulling latest changes...");
+    log::warn!("Pulling latest changes...");
 
-    let pull_output = Command::new("git")
+    let pull_output = Command::new(crate::bin_paths::git())
         .args(["pull", "--rebase", "--autostash"])
         .current_dir(repo_path)
         .output()
@@ -227,11 +227,11 @@ pub fn publish_file(
     if !pull_output.status.success() {
         let stderr = String::from_utf8_lossy(&pull_output.stderr);
         let stdout = String::from_utf8_lossy(&pull_output.stdout);
-        eprintln!("Git pull stdout: {}", stdout);
-        eprintln!("Git pull stderr: {}", stderr);
+        log::warn!("Git pull stdout: {}", stdout);
+        log::warn!("Git pull stderr: {}", stderr);
 
         // If pull failed, try to abort any in-progress rebase
-        let _ = Command::new("git")
+        let _ = Command::new(crate::bin_paths::git())
             .args(["rebase", "--abort"])
             .current_dir(repo_path)
             .output();
@@ -239,9 +239,9 @@ pub fn publish_file(
         return Err(format!("Git pull failed: {}\n{}", stdout, stderr));
     }
 
-    eprintln!("Pushing to remote...");
+    log::warn!("Pushing to remote...");
 
-    let push_output = Command::new("git")
+    let push_output = Command::new(crate::bin_paths::git())
         .args(["push"])
         .current_dir(repo_path)
         .output()
@@ -255,7 +255,7 @@ pub fn publish_file(
         }
     }
 
-    eprintln!("Published successfully!");
+    log::warn!("Published successfully!");
 
     // Return the URL using configured domain
     let url = format!("{}/blog/{}/{}", target.domain, year, slug);
@@ -266,7 +266,7 @@ pub fn unpublish_file(slug: &str, target_id: Option<&str>) -> Result<(), String>
     let target = config::resolve_target(target_id)?;
 
     // Pre-flight checks
-    eprintln!("Running pre-flight checks...");
+    log::warn!("Running pre-flight checks...");
     check_git_status(&target.repo_path)?;
 
     // Derive blog path from content_path_pattern base
@@ -302,12 +302,12 @@ pub fn unpublish_file(slug: &str, target_id: Option<&str>) -> Result<(), String>
         return Err(format!("Draft already exists: {}", dest_path));
     }
 
-    eprintln!("Unpublishing {} -> {}", source_path, dest_path);
+    log::warn!("Unpublishing {} -> {}", source_path, dest_path);
     fs::rename(&source_path, &dest_path).map_err(|e| format!("Failed to move file: {}", e))?;
 
     // Git add, commit, push
     let repo_path = &target.repo_path;
-    let add_output = Command::new("git")
+    let add_output = Command::new(crate::bin_paths::git())
         .args(["add", "-A", &source_path, &dest_path])
         .current_dir(repo_path)
         .output()
@@ -321,7 +321,7 @@ pub fn unpublish_file(slug: &str, target_id: Option<&str>) -> Result<(), String>
     }
 
     let commit_msg = format!("Unpublish: {}", slug);
-    let commit_output = Command::new("git")
+    let commit_output = Command::new(crate::bin_paths::git())
         .args(["commit", "-m", &commit_msg])
         .current_dir(repo_path)
         .output()
@@ -331,13 +331,13 @@ pub fn unpublish_file(slug: &str, target_id: Option<&str>) -> Result<(), String>
         let stderr = String::from_utf8_lossy(&commit_output.stderr);
         let stdout = String::from_utf8_lossy(&commit_output.stdout);
         if !stdout.contains("nothing to commit") && !stderr.contains("nothing to commit") {
-            eprintln!("Git commit output: {}", stdout);
-            eprintln!("Git commit stderr: {}", stderr);
+            log::warn!("Git commit output: {}", stdout);
+            log::warn!("Git commit stderr: {}", stderr);
         }
     }
 
-    eprintln!("Pulling latest changes...");
-    let pull_output = Command::new("git")
+    log::warn!("Pulling latest changes...");
+    let pull_output = Command::new(crate::bin_paths::git())
         .args(["pull", "--rebase", "--autostash"])
         .current_dir(repo_path)
         .output()
@@ -346,17 +346,17 @@ pub fn unpublish_file(slug: &str, target_id: Option<&str>) -> Result<(), String>
     if !pull_output.status.success() {
         let stderr = String::from_utf8_lossy(&pull_output.stderr);
         let stdout = String::from_utf8_lossy(&pull_output.stdout);
-        eprintln!("Git pull stdout: {}", stdout);
-        eprintln!("Git pull stderr: {}", stderr);
-        let _ = Command::new("git")
+        log::warn!("Git pull stdout: {}", stdout);
+        log::warn!("Git pull stderr: {}", stderr);
+        let _ = Command::new(crate::bin_paths::git())
             .args(["rebase", "--abort"])
             .current_dir(repo_path)
             .output();
         return Err(format!("Git pull failed: {}\n{}", stdout, stderr));
     }
 
-    eprintln!("Pushing to remote...");
-    let push_output = Command::new("git")
+    log::warn!("Pushing to remote...");
+    let push_output = Command::new(crate::bin_paths::git())
         .args(["push"])
         .current_dir(repo_path)
         .output()
@@ -369,7 +369,7 @@ pub fn unpublish_file(slug: &str, target_id: Option<&str>) -> Result<(), String>
         }
     }
 
-    eprintln!("Unpublished successfully!");
+    log::warn!("Unpublished successfully!");
     Ok(())
 }
 
@@ -392,7 +392,7 @@ pub async fn run_schedule_checker(app_handle: tauri::AppHandle) {
                     {
                         if now >= scheduled_time {
                             let slug = file.filename.trim_end_matches(".md");
-                            eprintln!("Scheduled publish triggered for: {}", slug);
+                            log::warn!("Scheduled publish triggered for: {}", slug);
                             match publish_file(&file.path, slug, None) {
                                 Ok(url) => {
                                     // Remove publish_at from frontmatter
@@ -409,10 +409,10 @@ pub async fn run_schedule_checker(app_handle: tauri::AppHandle) {
                                             "title": file.title
                                         }),
                                     );
-                                    eprintln!("Scheduled publish succeeded: {}", url);
+                                    log::warn!("Scheduled publish succeeded: {}", url);
                                 }
                                 Err(e) => {
-                                    eprintln!("Scheduled publish failed for {}: {}", slug, e);
+                                    log::warn!("Scheduled publish failed for {}: {}", slug, e);
                                 }
                             }
                         }

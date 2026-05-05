@@ -113,9 +113,9 @@ fn load_or_create() -> AppConfig {
         match fs::read_to_string(&path) {
             Ok(json) => match serde_json::from_str(&json) {
                 Ok(config) => return config,
-                Err(e) => eprintln!("Config parse error, using defaults: {}", e),
+                Err(e) => log::warn!("Config parse error, using defaults: {}", e),
             },
-            Err(e) => eprintln!("Config read error, using defaults: {}", e),
+            Err(e) => log::warn!("Config read error, using defaults: {}", e),
         }
     }
     let config = AppConfig::default();

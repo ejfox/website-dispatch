@@ -16,6 +16,7 @@ use tauri::Manager;
 mod alttext; // AI-powered alt text generation for images
 mod analytics; // Umami analytics integration
 mod asset_usage; // Tracks which Cloudinary images are used in which posts
+mod bin_paths; // Login-shell-resolved paths to node/git
 mod cloudinary; // Uploads images/videos to Cloudinary CDN
 mod companion; // Companion web UI server for mobile access
 pub mod config; // App configuration (vault path, publish targets, editors)
@@ -883,13 +884,15 @@ pub fn run() {
             .map(String::as_str)
             .or_else(|| payload.downcast_ref::<&str>().copied())
             .unwrap_or("");
-        if msg.contains("failed printing to stdout")
-            || msg.contains("failed printing to stderr")
-        {
+        if msg.contains("failed printing to stdout") || msg.contains("failed printing to stderr") {
             return;
         }
         prev_hook(info);
     }));
+
+    // --- RESOLVE EXTERNAL BINARIES ---
+    // Run before anything that shells out (preview server, git, etc.)
+    bin_paths::warm();
 
     // --- LOAD ENVIRONMENT VARIABLES ---
     let _ = dotenvy::dotenv();
@@ -906,6 +909,17 @@ pub fn run() {
 
     // --- BUILD AND RUN THE APP ---
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("dispatch".into()),
+                    }),
+                ])
+                .build(),
+        )
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())

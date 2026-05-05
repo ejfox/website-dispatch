@@ -1,7 +1,7 @@
 use chrono::{Datelike, Local, NaiveDate, Timelike, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 // ---------------------------------------------------------------------------
@@ -107,11 +107,45 @@ fn init_db() -> Result<Mutex<Connection>, String> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+
+    // First attempt: open existing DB.
+    match try_open(&path) {
+        Ok(mutex) => Ok(mutex),
+        Err(first_err) => {
+            // The file is corrupt or schema-incompatible. Rather than abort,
+            // rename it aside and start fresh — the user's publishing history
+            // is regenerable from git, so losing it is recoverable.
+            log::warn!(
+                "Journal DB unhealthy ({}); quarantining and recreating.",
+                first_err
+            );
+            let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S");
+            let quarantine = path.with_file_name(format!("journal.corrupt-{}.db", stamp));
+            let _ = std::fs::rename(&path, &quarantine);
+            // Also nuke WAL/SHM siblings — leftover ones can re-corrupt the new DB.
+            let _ = std::fs::remove_file(path.with_extension("db-wal"));
+            let _ = std::fs::remove_file(path.with_extension("db-shm"));
+            try_open(&path)
+        }
+    }
+}
+
+fn try_open(path: &Path) -> Result<Mutex<Connection>, String> {
     let conn =
-        Connection::open(&path).map_err(|e| format!("Failed to open journal database: {}", e))?;
+        Connection::open(path).map_err(|e| format!("Failed to open journal database: {}", e))?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
         .map_err(|e| format!("Failed to set pragmas: {}", e))?;
-    init_schema(&conn);
+    init_schema(&conn)?;
+    // Light integrity probe: a corrupt DB will error here even if open() succeeded.
+    conn.query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("integrity_check failed: {}", e))
+        .and_then(|s| {
+            if s == "ok" {
+                Ok(())
+            } else {
+                Err(format!("integrity_check: {}", s))
+            }
+        })?;
     Ok(Mutex::new(conn))
 }
 
@@ -119,7 +153,7 @@ fn get_db() -> Result<&'static Mutex<Connection>, String> {
     DB.get_or_init(init_db).as_ref().map_err(|e| e.clone())
 }
 
-fn init_schema(conn: &Connection) {
+fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS events (
@@ -144,7 +178,7 @@ fn init_schema(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_events_slug ON events(slug);
         ",
     )
-    .expect("Failed to create journal schema");
+    .map_err(|e| format!("Failed to create journal schema: {}", e))
 }
 
 // ---------------------------------------------------------------------------
@@ -1009,7 +1043,7 @@ pub fn backfill_from_git(repo_path: &str, domain: &str) -> Result<u32, String> {
     }
 
     // Parse git log for "Publish: slug" commits
-    let output = std::process::Command::new("git")
+    let output = std::process::Command::new(crate::bin_paths::git())
         .args(["log", "--oneline", "--format=%aI %s", "--all"])
         .current_dir(repo_path)
         .output()

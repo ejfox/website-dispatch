@@ -315,7 +315,7 @@ pub fn generate_og_variants(slug: &str, batch: u32) -> Result<OgImageVariants, S
 
     // Call: node scripts/og-image/index.mjs --slug {slug}
     // This generates 4 variants to data/og-previews/{slug}/
-    let output = std::process::Command::new("node")
+    let output = std::process::Command::new(crate::bin_paths::node())
         .arg(&script)
         .arg("--slug")
         .arg(&batch_slug)

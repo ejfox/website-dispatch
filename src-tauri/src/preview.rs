@@ -56,17 +56,20 @@ pub fn init_server() {
 
     // Start the Node.js preview server
     let server_path = get_preview_server_path();
-    match Command::new("node").arg(&server_path).spawn() {
+    match Command::new(crate::bin_paths::node())
+        .arg(&server_path)
+        .spawn()
+    {
         Ok(child) => {
             let mut server = get_node_server().lock().unwrap_or_else(|e| e.into_inner());
             *server = Some(child);
-            println!(
+            log::info!(
                 "Node.js preview server started on http://localhost:{}",
                 PORT
             );
         }
         Err(e) => {
-            eprintln!("Failed to start Node.js preview server: {}", e);
+            log::warn!("Failed to start Node.js preview server: {}", e);
         }
     }
 

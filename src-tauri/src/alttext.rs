@@ -265,7 +265,7 @@ pub async fn generate_suggestions(file_path: &str) -> Result<AltTextResult, Stri
                 });
             }
             Err(e) => {
-                eprintln!("Failed to generate alt text for {}: {}", url, e);
+                log::warn!("Failed to generate alt text for {}: {}", url, e);
                 skipped += 1;
             }
         }
@@ -389,9 +389,11 @@ fn sync_alt_to_cloudinary(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().unwrap_or_default();
-        eprintln!(
+        log::warn!(
             "Cloudinary context update failed for {}: {} {}",
-            public_id, status, text
+            public_id,
+            status,
+            text
         );
     }
     Ok(())

@@ -353,7 +353,7 @@ pub async fn run_syndication_scheduler(app_handle: tauri::AppHandle) {
         let due = match get_due_items() {
             Ok(items) => items,
             Err(e) => {
-                eprintln!("Syndication scheduler error: {}", e);
+                log::warn!("Syndication scheduler error: {}", e);
                 continue;
             }
         };
@@ -361,16 +361,20 @@ pub async fn run_syndication_scheduler(app_handle: tauri::AppHandle) {
         for item in due {
             // Skip if too many attempts
             if item.attempt_count >= 3 {
-                eprintln!(
+                log::warn!(
                     "Syndication: giving up on {} #{} after {} attempts",
-                    item.platform, item.id, item.attempt_count
+                    item.platform,
+                    item.id,
+                    item.attempt_count
                 );
                 continue;
             }
 
-            eprintln!(
+            log::warn!(
                 "Syndication: sending {} to {} (scheduled: {:?})",
-                item.post_slug, item.platform, item.scheduled_at
+                item.post_slug,
+                item.platform,
+                item.scheduled_at
             );
 
             match send_item(item.id) {
@@ -388,7 +392,7 @@ pub async fn run_syndication_scheduler(app_handle: tauri::AppHandle) {
                     );
 
                     if result.success {
-                        eprintln!(
+                        log::warn!(
                             "Syndication: {} sent to {} -> {}",
                             item.post_slug,
                             item.platform,
@@ -397,9 +401,11 @@ pub async fn run_syndication_scheduler(app_handle: tauri::AppHandle) {
                     }
                 }
                 Err(e) => {
-                    eprintln!(
+                    log::warn!(
                         "Syndication: failed to send {} #{}: {}",
-                        item.platform, item.id, e
+                        item.platform,
+                        item.id,
+                        e
                     );
                 }
             }

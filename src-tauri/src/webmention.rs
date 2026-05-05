@@ -157,14 +157,14 @@ pub fn send_webmentions_for_post(
     links.dedup();
 
     for target in &links {
-        eprintln!("Discovering webmention endpoint for: {}", target);
+        log::warn!("Discovering webmention endpoint for: {}", target);
 
         match discover_endpoint(&client, target) {
             Some(endpoint) => {
-                eprintln!("  Found endpoint: {}", endpoint);
+                log::warn!("  Found endpoint: {}", endpoint);
                 match send_webmention(&client, &endpoint, post_url, target) {
                     Ok(status) => {
-                        eprintln!("  Sent! Status: {}", status);
+                        log::warn!("  Sent! Status: {}", status);
                         sent += 1;
                         results.push(WebmentionResult {
                             target: target.clone(),
@@ -174,7 +174,7 @@ pub fn send_webmentions_for_post(
                         });
                     }
                     Err(e) => {
-                        eprintln!("  Send failed: {}", e);
+                        log::warn!("  Send failed: {}", e);
                         errors += 1;
                         results.push(WebmentionResult {
                             target: target.clone(),
@@ -186,7 +186,7 @@ pub fn send_webmentions_for_post(
                 }
             }
             None => {
-                eprintln!("  No endpoint found");
+                log::warn!("  No endpoint found");
                 no_endpoint += 1;
                 results.push(WebmentionResult {
                     target: target.clone(),

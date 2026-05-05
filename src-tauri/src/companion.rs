@@ -58,16 +58,16 @@ pub async fn start_server() {
     let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", PORT)).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("Companion server failed to bind port {}: {}", PORT, e);
+            log::warn!("Companion server failed to bind port {}: {}", PORT, e);
             return;
         }
     };
 
-    eprintln!("Companion UI running on port {}", PORT);
+    log::warn!("Companion UI running on port {}", PORT);
     if let Some(url) = get_local_url() {
-        eprintln!("Companion URL: {}", url);
+        log::warn!("Companion URL: {}", url);
     }
-    eprintln!("PIN: {}", get_pin());
+    log::warn!("PIN: {}", get_pin());
 
     let _ = axum::serve(listener, app).await;
 }

@@ -155,7 +155,7 @@ pub struct GearPending {
 #[tauri::command]
 pub fn gear_pending_changes() -> Result<GearPending, String> {
     let repo = repo_path()?;
-    let out = Command::new("git")
+    let out = Command::new(crate::bin_paths::git())
         .args(["diff", "--stat", "--", "data/gear.csv"])
         .current_dir(&repo)
         .output()
@@ -172,7 +172,7 @@ pub fn commit_gear_changes(message: Option<String>) -> Result<String, String> {
     let repo = repo_path()?;
     let msg = message.unwrap_or_else(|| format!("gear: hygiene pass {}", today()));
 
-    let add = Command::new("git")
+    let add = Command::new(crate::bin_paths::git())
         .args(["add", "data/gear.csv"])
         .current_dir(&repo)
         .output()
@@ -184,7 +184,7 @@ pub fn commit_gear_changes(message: Option<String>) -> Result<String, String> {
         ));
     }
 
-    let staged = Command::new("git")
+    let staged = Command::new(crate::bin_paths::git())
         .args(["diff", "--cached", "--stat", "--", "data/gear.csv"])
         .current_dir(&repo)
         .output()
@@ -193,7 +193,7 @@ pub fn commit_gear_changes(message: Option<String>) -> Result<String, String> {
         return Ok("nothing to commit".into());
     }
 
-    let commit = Command::new("git")
+    let commit = Command::new(crate::bin_paths::git())
         .args(["commit", "-m", &msg])
         .current_dir(&repo)
         .output()
