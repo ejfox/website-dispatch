@@ -54,12 +54,21 @@ pub fn init_server() {
 
     thread::sleep(Duration::from_millis(500));
 
-    // Start the Node.js preview server
+    // Start the Node.js preview server. Pass WEBSITE2_PATH from the default
+    // publish target's repo_path so the bundled server doesn't have to
+    // hardcode /Users/ejfox/code/website2 — this is what makes Dispatch
+    // portable to a different machine or vault layout.
     let server_path = get_preview_server_path();
-    match Command::new(crate::bin_paths::node())
-        .arg(&server_path)
-        .spawn()
-    {
+    let website2_path = crate::config::default_target()
+        .ok()
+        .map(|t| t.repo_path)
+        .unwrap_or_default();
+    let mut cmd = Command::new(crate::bin_paths::node());
+    cmd.arg(&server_path);
+    if !website2_path.is_empty() {
+        cmd.env("WEBSITE2_PATH", &website2_path);
+    }
+    match cmd.spawn() {
         Ok(child) => {
             let mut server = get_node_server().lock().unwrap_or_else(|e| e.into_inner());
             *server = Some(child);

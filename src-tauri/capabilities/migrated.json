@@ -53,6 +53,8 @@
     "dialog:default",
     "shell:default",
     "fs:default",
-    "clipboard-manager:default"
+    "clipboard-manager:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

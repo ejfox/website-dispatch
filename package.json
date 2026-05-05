@@ -1,6 +1,6 @@
 {
   "name": "website-dispatch",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "description": "Menubar app to curate and publish content from Obsidian to ejfox.com",
   "type": "module",
   "scripts": {
@@ -16,7 +16,9 @@
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.4.5",
     "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-shell": "^2.3.5",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "@vueuse/core": "^14.2.1",
     "gray-matter": "^4.0.3",
     "lucide-vue-next": "^0.563.0",

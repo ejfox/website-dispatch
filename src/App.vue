@@ -22,6 +22,7 @@ import PublishingJournal from './components/PublishingJournal.vue'
 import GearPanel from './components/GearPanel.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import SearchModal from './components/SearchModal.vue'
+import CommandPalette from './components/CommandPalette.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ToastStack from './components/ToastStack.vue'
 import { useLocalStorage } from '@vueuse/core'
@@ -29,6 +30,10 @@ import type { MarkdownFile } from './types'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
 import { useAppConfig } from './composables/useAppConfig'
 import { useConnectionStatus } from './composables/useConnectionStatus'
+import { useToasts } from './composables/useToasts'
+import { checkForUpdate } from './composables/useAutoUpdate'
+
+const toasts = useToasts()
 
 const files = ref<MarkdownFile[]>([])
 const selectedFile = ref<MarkdownFile | null>(null)
@@ -38,6 +43,10 @@ const appVersion = __APP_VERSION__
 
 // Search state
 const searchOpen = ref(false)
+
+// Command palette (⌘K) — supersedes the older searchOpen flow but
+// SearchModal stays around as a pure file-search fallback if needed.
+const paletteOpen = ref(false)
 
 // New Post state
 const newPostOpen = ref(false)
@@ -81,11 +90,18 @@ const { appConfig, fetchConfig: loadConfig } = useAppConfig()
 // Compact mode preference (auto-syncs with localStorage)
 const compactMode = useLocalStorage('dispatch-compact', false)
 
+// ⌘K toggles the command palette (CommandPalette.vue). The legacy
+// SearchModal stays mounted but is not bound to anything — kept around
+// in case we want to expose a pure file-search shortcut later.
+// `openSearch` is what useKeyboardShortcuts calls; we toggle here so
+// double-⌘K closes (composable's "is searchOpen" check would lie since
+// it tracks the deprecated SearchModal flag).
 function openSearch() {
-  searchOpen.value = true
+  paletteOpen.value = !paletteOpen.value
 }
 
 function closeSearch() {
+  paletteOpen.value = false
   searchOpen.value = false
 }
 
@@ -194,6 +210,12 @@ onMounted(async () => {
   refreshJournalStats()
   window.addEventListener('keydown', handleGlobalKey)
 
+  // Quietly check for updates on startup (after the UI has had a chance
+  // to settle). Surfaces a sticky toast if a newer release is available.
+  setTimeout(() => {
+    checkForUpdate()
+  }, 3000)
+
   // Listen for scheduled publish events from backend
   const unlisten = await listen('scheduled-publish', (_event) => {
     loadFiles()
@@ -212,6 +234,37 @@ onMounted(async () => {
     compactMode.value = !compactMode.value
   })
   listen('menu-search', () => openSearch())
+
+  // Drag-in: a .md dropped from Finder selects it (or warns if not .md).
+  // Tauri's native drag-drop event is fired by WebviewWindow.
+  getCurrentWindow().onDragDropEvent((event) => {
+    if (event.payload.type !== 'drop') return
+    const paths = event.payload.paths || []
+    const mdPaths = paths.filter((p) => p.toLowerCase().endsWith('.md'))
+    const skipped = paths.length - mdPaths.length
+
+    if (mdPaths.length === 0) {
+      toasts.warn(
+        'Only .md files supported',
+        skipped > 0 ? `Ignored ${skipped} non-markdown file${skipped === 1 ? '' : 's'}` : undefined,
+      )
+      return
+    }
+
+    // Pick the first dropped .md and surface it. If it's already in the
+    // file list, just select it; otherwise, open it as-is (the file will
+    // appear in the list on next refresh if it's inside the vault).
+    const target = mdPaths[0]
+    const existing = files.value.find((f) => f.path === target)
+    if (existing) {
+      selectedFile.value = existing
+      toasts.info(`Selected ${existing.filename}`)
+    } else {
+      toasts.info('Opened dropped file', target)
+      // Best-effort: the user may have dropped a file from outside the vault.
+      // We don't auto-import; the toast detail makes the path visible.
+    }
+  })
 })
 
 onUnmounted(() => {
@@ -230,6 +283,35 @@ onUnmounted(() => {
 
     <!-- Search Modal -->
     <SearchModal :show="searchOpen" :files="files" @close="closeSearch" @select="handleSearchSelect" />
+
+    <!-- Command palette (⌘K). Files + actions in one fuzzy list. -->
+    <CommandPalette
+      :show="paletteOpen"
+      :files="files"
+      :selected-file="selectedFile"
+      @close="paletteOpen = false"
+      @select-file="
+        (f) => {
+          handleSearchSelect(f)
+          paletteOpen = false
+        }
+      "
+      @new-post="
+        () => {
+          paletteOpen = false
+          openNewPost()
+        }
+      "
+      @refresh="loadFiles"
+      @show-help="showHelp = true"
+      @toggle-panel="(p) => (rightTab = p)"
+      @publish="
+        () => {
+          paletteOpen = false
+          filePreviewRef?.openPublishConfirm?.(false)
+        }
+      "
+    />
 
     <!-- New Post Modal -->
     <Transition name="modal">

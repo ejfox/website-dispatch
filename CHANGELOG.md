@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.5.0 — 2026-05-05
+
+Big batch — auto-updates, command palette, drag-in, plus structural cleanup.
+
+### Distribution
+- **Auto-updater wired.** `tauri-plugin-updater` checks GitHub Releases on
+  startup; surfaces a sticky toast with "Install & Restart" when a new
+  build is available. Updater signing keypair generated at
+  `~/.tauri/dispatch.key` (back this up — losing it locks out existing
+  installs from future updates).
+- **GitHub Actions release workflow** (`.github/workflows/release.yml`).
+  Tag `v*` → builds universal DMG, signs + notarizes via Apple Dev cert,
+  signs the update artifact with the updater key, uploads to Release,
+  auto-generates `latest.json`. See `docs/RELEASE_SETUP.md` for the
+  one-time secrets setup. After that, `git tag` is the entire release
+  ritual.
+
+### UX
+- **`⌘K` command palette.** Linear-style fuzzy search over actions
+  (publish, refresh, panel switching, copy URL, open in Obsidian, etc.)
+  AND recent files in one unified list. Subsequence matching, sectioned.
+  ⌘K toggles, Esc closes, ↑↓ navigates, Enter executes.
+- **Drag-and-drop file open.** Drop a `.md` from Finder onto Dispatch;
+  if it's already in the file list, selects it; otherwise toasts the
+  path. Non-`.md` drops surface a warning toast.
+- **Toast/banner feedback system.** New `useToasts` composable + native
+  HUD-style stack at the bottom. Replaces `alert()` in publish error
+  paths and surfaces previously-buried OG generator errors with a
+  "Copy Error" action.
+- **System sounds** wired to publish events: `Hero` on milestone publish,
+  `Glass` on regular publish, `Sosumi` on errors via the toast layer.
+- **Fuller right-click menu on FileList.** Adds Reveal in Finder, Copy
+  Public URL, Unpublish… (live posts only). Right-clicking now also
+  selects the file so context matches what you clicked.
+
+### Portability
+- **`preview-server.mjs` is now bundled** into `.app` Resources, and its
+  hardcoded `WEBSITE2_PATH = '/Users/ejfox/code/website2'` is now an env
+  var that Dispatch passes in from the default publish target's
+  `repo_path`. A portable Dispatch.app no longer secretly depends on
+  the developer's filesystem.
+- **`get_preview_server_path()`** prefers bundled paths over the dev
+  tree (was the other way around in 0.4.3).
+
+### Code health
+- **Logging via `tauri-plugin-log`.** All 40+ `eprintln!`/`println!` calls
+  replaced with `log::warn!`/`log::info!`. Log file at
+  `~/Library/Logs/Dispatch/dispatch.log` (Console.app readable). Log
+  macros can't panic on EPIPE, so the bundled app no longer crashes when
+  its parent terminal dies (the 0.4.4 panic-hook stays as defense in depth).
+- **Corrupt-SQLite recovery in `journal.rs`.** `init_db` now runs
+  `PRAGMA integrity_check` on open; on failure, quarantines the bad file
+  to `journal.corrupt-{ts}.db` (plus WAL/SHM siblings) and recreates
+  fresh. Was: `expect("Failed to create journal schema")` → app abort
+  with no recovery.
+- **`bin_paths` module** resolves `node` and `git` via the user's login
+  shell at startup, caches absolute paths. macOS GUI app PATH is the
+  minimal launchctl one — bare `Command::new("node")` would fail on
+  homebrew/nvm/asdf setups. Replaced ~25 call sites.
+
 ## 0.4.4 — 2026-05-05
 
 ### Fixed

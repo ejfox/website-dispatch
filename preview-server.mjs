@@ -9,7 +9,10 @@ import { promises as fs, watch } from 'fs'
 import path from 'path'
 import { spawn } from 'child_process'
 
-const WEBSITE2_PATH = '/Users/ejfox/code/website2'
+// Path to the website2 repo. Dispatch passes this in via env when it spawns
+// the server; falls back to the legacy hardcoded path for ad-hoc
+// `node preview-server.mjs` runs from the project root.
+const WEBSITE2_PATH = process.env.WEBSITE2_PATH || '/Users/ejfox/code/website2'
 const PORT = 6419
 let currentFile = ''
 let fileWatcher = null
