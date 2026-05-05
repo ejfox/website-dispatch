@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.4 — 2026-05-05
+
+### Fixed
+- **Crash on arrow-key file navigation** when launched from a terminal that later closed. Root cause: `eprintln!` in `preview::set_file` would panic on EPIPE when stderr's parent process had exited, double-panic → SIGABRT. Two-part fix:
+  - `preview::set_file` now swallows preview-server errors silently (the frontend handles missing-preview UI on its own).
+  - `run()` installs a panic hook that suppresses `failed printing to stdout/stderr` panics globally, so the other 40+ `eprintln!` call sites can't take down the bundled app.
+
 ## 0.4.3 — 2026-05-05
 
 ### Fixed

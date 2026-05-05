@@ -868,6 +868,29 @@ async fn open_preview(app_handle: tauri::AppHandle) -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // --- STDIO PANIC GUARD ---
+    // When Dispatch runs from a .app bundle, stdout/stderr inherit from the
+    // parent process — usually a terminal. If that parent dies (e.g. user
+    // closes the terminal they launched from), our `eprintln!` calls EPIPE,
+    // and Rust's stdio macros panic on write failure. Installing this hook
+    // BEFORE any stderr write swallows those specific stdio panics so they
+    // can't take down the app.
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info.payload();
+        let msg = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        if msg.contains("failed printing to stdout")
+            || msg.contains("failed printing to stderr")
+        {
+            return;
+        }
+        prev_hook(info);
+    }));
+
     // --- LOAD ENVIRONMENT VARIABLES ---
     let _ = dotenvy::dotenv();
     let _ = dotenvy::from_filename(concat!(env!("CARGO_MANIFEST_DIR"), "/../.env"));

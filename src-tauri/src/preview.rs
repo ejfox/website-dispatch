@@ -87,18 +87,16 @@ pub fn set_file(path: &str) {
         "path": path
     });
 
-    match client
+    // Swallow errors silently. Any stderr write here would panic in a .app
+    // bundle when stderr is connected to an exited parent process (e.g. user
+    // launched from terminal, then closed terminal). The frontend handles
+    // missing-preview UI on its own.
+    let _ = client
         .post(&url)
         .header("Content-Type", "application/json")
         .body(body.to_string())
         .timeout(Duration::from_secs(5))
-        .send()
-    {
-        Ok(_) => {}
-        Err(e) => {
-            eprintln!("Failed to set preview file: {}", e);
-        }
-    }
+        .send();
 }
 
 // Stop the server when the app closes
