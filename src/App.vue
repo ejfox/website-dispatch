@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -60,8 +61,14 @@ const showHelp = ref(false)
 // Window focus state (for native dimming when unfocused)
 const windowFocused = ref(true)
 
-// Right panel tab state
-const rightTab = ref<'preview' | 'media' | 'journal' | 'gear'>('preview')
+// Right panel tab state. Persists the user's last/preferred home tab so
+// Dispatch opens where they want to be — Preview by default for most folks,
+// but switchable to Journal or Gear for routines that don't start with the post list.
+const defaultHomeTab = useLocalStorage<'preview' | 'media' | 'journal' | 'gear'>(
+  'dispatch-home-tab',
+  'preview',
+)
+const rightTab = ref<'preview' | 'media' | 'journal' | 'gear'>(defaultHomeTab.value)
 
 // Connection status (auto-checks on creation)
 const { cloudinaryConnected, obsidianConnected, analyticsConnected, companionUrl, companionPin, gitBranch } =
@@ -169,6 +176,9 @@ function handleSearchSelect(file: MarkdownFile) {
   closeSearch()
 }
 
+// Persist the last-opened file path so Dispatch re-opens to where you were.
+const lastFilePath = useLocalStorage<string>('dispatch-last-file', '')
+
 async function loadFiles() {
   loading.value = true
   try {
@@ -177,8 +187,146 @@ async function loadFiles() {
     console.error('Failed to load files:', e)
   }
   loading.value = false
+  // Restore prior selection on first load if it still exists in the list.
+  if (!selectedFile.value && lastFilePath.value) {
+    const match = files.value.find((f) => f.path === lastFilePath.value)
+    if (match) selectedFile.value = match
+  }
   // Refresh journal stats (publish may have just happened)
   refreshJournalStats()
+}
+
+watch(selectedFile, (f) => {
+  lastFilePath.value = f?.path || ''
+})
+
+// Status-bar chip context menus (native-feel right-click).
+async function showVaultMenu(e: MouseEvent) {
+  e.preventDefault()
+  const vaultPath = appConfig.value?.vault.path || ''
+  const vaultName = appConfig.value?.vault.name || ''
+  const items_: any[] = []
+  if (vaultPath) {
+    items_.push(
+      await MenuItem.new({
+        text: 'Reveal Vault in Finder',
+        action: () => invoke('open_in_app', { path: vaultPath, app: 'Finder' }).catch(() => {}),
+      }),
+    )
+  }
+  if (vaultName) {
+    items_.push(
+      await MenuItem.new({
+        text: 'Open Vault in Obsidian',
+        action: () => window.open(`obsidian://open?vault=${encodeURIComponent(vaultName)}`, '_blank'),
+      }),
+    )
+  }
+  if (vaultPath) {
+    items_.push(
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await MenuItem.new({ text: 'Copy Vault Path', action: () => navigator.clipboard.writeText(vaultPath) }),
+    )
+  }
+  items_.push(
+    await PredefinedMenuItem.new({ item: 'Separator' }),
+    await MenuItem.new({ text: 'Vault Settings…', action: () => (showSettings.value = true) }),
+  )
+  const menu = await Menu.new({ items: items_ })
+  await menu.popup()
+}
+
+async function showMediaMenu(e: MouseEvent) {
+  e.preventDefault()
+  const cloud = appConfig.value?.cloudinary_cloud_name
+  const items_: any[] = [
+    await MenuItem.new({
+      text: 'Show Media Library',
+      action: () => (rightTab.value = 'media'),
+    }),
+  ]
+  if (cloud) {
+    items_.push(
+      await MenuItem.new({
+        text: 'Open Cloudinary Console',
+        action: () => window.open(`https://console.cloudinary.com/console/c-${cloud}/media_library/folders/home`, '_blank'),
+      }),
+    )
+  }
+  items_.push(
+    await PredefinedMenuItem.new({ item: 'Separator' }),
+    await MenuItem.new({ text: 'Media Settings…', action: () => (showSettings.value = true) }),
+  )
+  const menu = await Menu.new({ items: items_ })
+  await menu.popup()
+}
+
+async function showAnalyticsMenu(e: MouseEvent) {
+  e.preventDefault()
+  const url = appConfig.value?.analytics_url
+  const items_: any[] = []
+  if (url) {
+    items_.push(
+      await MenuItem.new({ text: 'Open Analytics Dashboard', action: () => window.open(url, '_blank') }),
+      await MenuItem.new({ text: 'Copy Analytics URL', action: () => navigator.clipboard.writeText(url) }),
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+    )
+  }
+  items_.push(
+    await MenuItem.new({ text: 'Analytics Settings…', action: () => (showSettings.value = true) }),
+  )
+  const menu = await Menu.new({ items: items_ })
+  await menu.popup()
+}
+
+async function showCompanionMenu(e: MouseEvent) {
+  e.preventDefault()
+  if (!companionUrl.value) return
+  const url = companionUrl.value
+  const pin = companionPin.value || ''
+  const menu = await Menu.new({
+    items: [
+      await MenuItem.new({ text: 'Open Companion in Browser', action: () => window.open(url, '_blank') }),
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await MenuItem.new({ text: 'Copy Companion URL', action: () => navigator.clipboard.writeText(url) }),
+      await MenuItem.new({ text: `Copy PIN (${pin})`, action: () => navigator.clipboard.writeText(pin) }),
+      await MenuItem.new({
+        text: 'Copy URL + PIN',
+        action: () => navigator.clipboard.writeText(`${url} (PIN: ${pin})`),
+      }),
+    ],
+  })
+  await menu.popup()
+}
+
+async function showBranchMenu(e: MouseEvent) {
+  e.preventDefault()
+  const branch = gitBranch.value
+  if (!branch) return
+  const menu = await Menu.new({
+    items: [
+      await MenuItem.new({ text: `On branch "${branch}"`, enabled: false, action: () => {} }),
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await MenuItem.new({ text: 'Copy Branch Name', action: () => navigator.clipboard.writeText(branch) }),
+    ],
+  })
+  await menu.popup()
+}
+
+// Journal → Recent Activity click: find the matching file in the list and
+// surface it in the Preview tab.
+function jumpToSlug(slug: string) {
+  // Slug shape from journal: "2026/dubai-chocolate-term-trace" (year/slug)
+  // or sometimes bare "vulpes-browser". Match by filename or path tail.
+  const bare = slug.split('/').pop() || slug
+  const match = files.value.find((f) => {
+    const stem = f.filename.replace(/\.md$/, '')
+    return stem === bare || f.path.endsWith(`${slug}.md`)
+  })
+  if (match) {
+    selectedFile.value = match
+    rightTab.value = 'preview'
+  }
 }
 
 // Keyboard shortcuts composable
@@ -438,7 +586,7 @@ onUnmounted(() => {
             @insert="handleInsertMedia"
           />
 
-          <PublishingJournal v-else-if="rightTab === 'journal'" />
+          <PublishingJournal v-else-if="rightTab === 'journal'" @jump-to-slug="jumpToSlug" />
 
           <GearPanel v-else-if="rightTab === 'gear'" />
         </div>
@@ -490,7 +638,8 @@ onUnmounted(() => {
         <span
           class="status-item"
           :class="gitBranch ? 'connected' : 'muted'"
-          :data-tip="gitBranch ? `Branch: ${gitBranch}` : 'Git not connected'"
+          :data-tip="gitBranch ? `Branch: ${gitBranch} · right-click for options` : 'Git not connected'"
+          @contextmenu="showBranchMenu"
         >
           <PhGitBranch :size="11" weight="bold" />
           {{ gitBranch || '---' }}
@@ -498,7 +647,8 @@ onUnmounted(() => {
         <span
           class="status-item"
           :class="obsidianConnected ? 'connected' : 'muted'"
-          :data-tip="obsidianConnected ? 'Obsidian vault connected' : 'Obsidian not detected'"
+          :data-tip="obsidianConnected ? 'Obsidian vault connected · right-click for options' : 'Obsidian not detected'"
+          @contextmenu="showVaultMenu"
         >
           <PhCircleWavy :size="10" :weight="obsidianConnected ? 'fill' : 'light'" />
           vault
@@ -506,7 +656,8 @@ onUnmounted(() => {
         <span
           class="status-item"
           :class="cloudinaryConnected ? 'connected' : 'muted'"
-          :data-tip="cloudinaryConnected ? 'Cloudinary media connected' : 'Cloudinary not configured'"
+          :data-tip="cloudinaryConnected ? 'Cloudinary media connected · right-click for options' : 'Cloudinary not configured'"
+          @contextmenu="showMediaMenu"
         >
           <PhImageSquare :size="10" :weight="cloudinaryConnected ? 'fill' : 'light'" />
           media
@@ -514,7 +665,8 @@ onUnmounted(() => {
         <span
           class="status-item"
           :class="analyticsConnected ? 'connected' : 'muted'"
-          :data-tip="analyticsConnected ? 'Umami analytics connected' : 'Analytics not configured'"
+          :data-tip="analyticsConnected ? 'Umami analytics connected · right-click for options' : 'Analytics not configured'"
+          @contextmenu="showAnalyticsMenu"
         >
           <PhChartBar :size="10" :weight="analyticsConnected ? 'fill' : 'light'" />
           analytics
@@ -522,7 +674,8 @@ onUnmounted(() => {
         <span
           v-if="companionUrl"
           class="status-item connected"
-          :data-tip="`Companion connected · PIN: ${companionPin}`"
+          :data-tip="`Companion connected · PIN: ${companionPin} · right-click for options`"
+          @contextmenu="showCompanionMenu"
         >
           <PhDeviceMobile :size="10" weight="fill" />
           {{ companionUrl.replace('http://', '') }}

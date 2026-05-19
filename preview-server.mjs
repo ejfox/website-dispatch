@@ -67,6 +67,28 @@ const HTML = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dispatch Preview</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'
+    mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' })
+    window.__renderMermaid = async function () {
+      const blocks = document.querySelectorAll('pre.mermaid:not([data-mermaid-processed])')
+      for (const block of blocks) {
+        block.setAttribute('data-mermaid-processed', 'true')
+        const source = block.textContent || ''
+        const id = 'mermaid-' + Math.random().toString(36).slice(2, 10)
+        try {
+          const { svg } = await mermaid.render(id, source)
+          const wrap = document.createElement('div')
+          wrap.className = 'mermaid-diagram'
+          wrap.innerHTML = svg
+          block.replaceWith(wrap)
+        } catch (err) {
+          console.warn('[mermaid]', err)
+          block.setAttribute('data-mermaid-error', 'true')
+        }
+      }
+    }
+  </script>
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -267,6 +289,7 @@ const HTML = `<!DOCTYPE html>
         if (data.html && data.html !== lastContent) {
           lastContent = data.html;
           document.getElementById('content').innerHTML = data.html;
+          if (window.__renderMermaid) window.__renderMermaid();
           // Render TOC
           if (data.toc && data.toc.length > 0) {
             document.getElementById('toc').innerHTML = renderToc(data.toc);

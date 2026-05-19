@@ -43,6 +43,14 @@ export function useKeyboardShortcuts(options: {
       return
     }
 
+    // Cmd+1..4 jump to right-panel tab
+    if ((e.metaKey || e.ctrlKey) && ['1', '2', '3', '4'].includes(e.key)) {
+      e.preventDefault()
+      const tabs = ['preview', 'media', 'journal', 'gear'] as const
+      options.rightTab.value = tabs[parseInt(e.key) - 1]
+      return
+    }
+
     if (options.searchOpen.value) {
       if (e.key === 'Escape') options.closeSearch()
       return

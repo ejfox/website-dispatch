@@ -103,9 +103,76 @@ fn today() -> String {
     Local::now().format("%Y-%m-%d").to_string()
 }
 
+/// Frontend-facing shape of a gear item. The `Gear` struct uses Capitalized
+/// CSV-header names for serde so the CSV roundtrip stays clean — but the Vue
+/// UI wants `it.name`, `it.last_used`, etc. We translate at the boundary.
+#[derive(Debug, Clone, Serialize)]
+pub struct GearDto {
+    pub name: String,
+    pub weight_oz: String,
+    pub parent_container: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub category: String,
+    pub subcategory: String,
+    pub priority: String,
+    pub waterproof: String,
+    pub worn: String,
+    pub qty: String,
+    pub consumable: String,
+    pub star: String,
+    pub notes: String,
+    pub tags: String,
+    pub condition: String,
+    pub amazon_url: String,
+    pub last_used: String,
+    pub purchase_date: String,
+    pub purchase_price: String,
+    pub photo_url: String,
+    pub scan_3d_url: String,
+    pub serial_number: String,
+    pub model_number: String,
+    pub brand: String,
+    pub location_room: String,
+    pub location_detail: String,
+}
+
+impl From<Gear> for GearDto {
+    fn from(g: Gear) -> Self {
+        Self {
+            name: g.name,
+            weight_oz: g.weight_oz,
+            parent_container: g.parent_container,
+            type_: g.r#type,
+            category: g.category,
+            subcategory: g.subcategory,
+            priority: g.priority,
+            waterproof: g.waterproof,
+            worn: g.worn,
+            qty: g.qty,
+            consumable: g.consumable,
+            star: g.star,
+            notes: g.notes,
+            tags: g.tags,
+            condition: g.condition,
+            amazon_url: g.amazon_url,
+            last_used: g.last_used,
+            purchase_date: g.purchase_date,
+            purchase_price: g.purchase_price,
+            photo_url: g.photo_url,
+            scan_3d_url: g.scan_3d_url,
+            serial_number: g.serial_number,
+            model_number: g.model_number,
+            brand: g.brand,
+            location_room: g.location_room,
+            location_detail: g.location_detail,
+        }
+    }
+}
+
 #[tauri::command]
-pub fn list_gear() -> Result<Vec<Gear>, String> {
-    read_all()
+pub fn list_gear() -> Result<Vec<GearDto>, String> {
+    Ok(read_all()?.into_iter().map(GearDto::from).collect())
 }
 
 #[tauri::command]

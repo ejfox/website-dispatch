@@ -8,6 +8,7 @@ export interface MarkdownFile {
   created: number
   modified: number
   word_count: number
+  published_word_count: number | null
   is_safe: boolean
   warnings: string[]
   published_url: string | null

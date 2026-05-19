@@ -1,6 +1,76 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+
+import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
+
+const emit = defineEmits<{ 'jump-to-slug': [slug: string] }>()
+
+async function showHeatmapCellMenu(cell: { date: string; count: number }, e: MouseEvent) {
+  e.preventDefault()
+  if (cell.count < 0) return // future cell
+  // Find entries published on this date.
+  const matches = entries.value.filter((entry) => {
+    return entry.timestamp.startsWith(cell.date)
+  })
+  const items_: any[] = [
+    await MenuItem.new({
+      text: cell.count === 0 ? `No posts on ${cell.date}` : `${cell.count} post${cell.count > 1 ? 's' : ''} on ${cell.date}`,
+      enabled: false,
+      action: () => {},
+    }),
+  ]
+  if (matches.length) {
+    items_.push(await PredefinedMenuItem.new({ item: 'Separator' }))
+    for (const entry of matches.slice(0, 8)) {
+      items_.push(
+        await MenuItem.new({
+          text: `Jump to "${entry.title || entry.slug}"`,
+          action: () => emit('jump-to-slug', entry.slug),
+        }),
+      )
+    }
+  }
+  items_.push(
+    await PredefinedMenuItem.new({ item: 'Separator' }),
+    await MenuItem.new({
+      text: 'Copy Date',
+      action: () => navigator.clipboard.writeText(cell.date),
+    }),
+  )
+  const menu = await Menu.new({ items: items_ })
+  await menu.popup()
+}
+
+async function showMilestoneMenu(m: Milestone, e: MouseEvent) {
+  e.preventDefault()
+  const earned = !!m.achieved_at
+  const items_ = [
+    await MenuItem.new({
+      text: earned ? `Earned ${m.label}${m.achieved_at ? ' on ' + m.achieved_at.slice(0, 10) : ''}` : `Locked: ${m.label}`,
+      enabled: false,
+      action: () => {},
+    }),
+    await PredefinedMenuItem.new({ item: 'Separator' }),
+    await MenuItem.new({
+      text: 'Copy Description',
+      action: () => navigator.clipboard.writeText(m.description),
+    }),
+  ]
+  if (earned) {
+    items_.push(
+      await MenuItem.new({
+        text: 'Copy Achievement',
+        action: () =>
+          navigator.clipboard.writeText(
+            `🏆 Earned "${m.label}" on ${m.achieved_at?.slice(0, 10)} — ${m.description}`,
+          ),
+      }),
+    )
+  }
+  const menu = await Menu.new({ items: items_ })
+  await menu.popup()
+}
 import {
   PhFlame,
   PhTrendUp,
@@ -249,10 +319,9 @@ async function loadData() {
 
 onMounted(async () => {
   await loadData()
-  // Auto-backfill on first run
-  if (stats.value && stats.value.total_publishes === 0) {
-    await doBackfill()
-  }
+  // Backfill is idempotent (skips slugs already recorded) — always run so
+  // newly-published posts get picked up from the website2 manifest.
+  await doBackfill()
 })
 </script>
 
@@ -295,6 +364,7 @@ onMounted(async () => {
             :class="{ today: cell.today }"
             :style="{ background: heatmapColor(cell.count) }"
             :data-tip="cell.count > 0 ? `${cell.date}: ${cell.count} publish${cell.count > 1 ? 'es' : ''}` : ''"
+            @contextmenu="showHeatmapCellMenu(cell, $event)"
           ></div>
         </div>
       </div>
@@ -423,11 +493,23 @@ onMounted(async () => {
     <div class="milestones-section" v-if="earnedMilestones.length > 0">
       <div class="section-label">Milestones</div>
       <div class="milestone-grid">
-        <div v-for="m in earnedMilestones" :key="m.id" class="milestone earned" :data-tip="m.description">
+        <div
+          v-for="m in earnedMilestones"
+          :key="m.id"
+          class="milestone earned"
+          :data-tip="m.description"
+          @contextmenu="showMilestoneMenu(m, $event)"
+        >
           <PhCheckCircle :size="14" weight="fill" />
           <span>{{ m.label }}</span>
         </div>
-        <div v-for="m in unearnedMilestones.slice(0, 3)" :key="m.id" class="milestone locked" :data-tip="m.description">
+        <div
+          v-for="m in unearnedMilestones.slice(0, 3)"
+          :key="m.id"
+          class="milestone locked"
+          :data-tip="m.description"
+          @contextmenu="showMilestoneMenu(m, $event)"
+        >
           <PhCircleWavy :size="14" weight="duotone" />
           <span>{{ m.label }}</span>
         </div>
@@ -443,12 +525,18 @@ onMounted(async () => {
         <span v-else class="backfill-loading">Importing...</span>
       </div>
       <div v-else class="activity-log">
-        <div v-for="entry in entries" :key="entry.id" class="log-entry">
+        <button
+          v-for="entry in entries"
+          :key="entry.id"
+          class="log-entry"
+          :title="`Jump to ${entry.title || entry.slug}`"
+          @click="emit('jump-to-slug', entry.slug)"
+        >
           <component :is="eventIcon(entry.event)" :size="10" weight="fill" :class="entry.event" />
           <span class="log-title">{{ entry.title || entry.slug }}</span>
           <span v-if="entry.word_count > 0" class="log-words">{{ formatWords(entry.word_count) }}w</span>
           <span class="log-time">{{ formatAge(entry.timestamp) }}</span>
-        </div>
+        </button>
       </div>
     </div>
   </div>
@@ -864,6 +952,17 @@ onMounted(async () => {
   padding: 5px 0;
   font-size: 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
+  background: none;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.log-entry:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
 .log-entry:last-child {

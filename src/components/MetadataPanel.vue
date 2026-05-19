@@ -11,8 +11,40 @@ import {
   PhLockSimple,
   PhEye,
 } from '@phosphor-icons/vue'
+import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import type { MarkdownFile, GitStatus, PostAnalytics } from '../types'
 import { formatDate, formatAgeShort, formatDateCompact } from '../utils/formatting'
+import { useAppConfig } from '../composables/useAppConfig'
+
+const { publishTargets } = useAppConfig()
+function siteDomain() {
+  const t = publishTargets.value.find((x) => x.is_default) || publishTargets.value[0]
+  return (t?.domain || 'https://ejfox.com').replace(/\/$/, '')
+}
+
+async function showTagMenu(tag: string, e: MouseEvent) {
+  e.preventDefault()
+  const url = `${siteDomain()}/tag/${tag.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`
+  const menu = await Menu.new({
+    items: [
+      await MenuItem.new({
+        text: 'Open Tag Page',
+        action: () => window.open(url, '_blank'),
+      }),
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await MenuItem.new({ text: 'Copy Tag', action: () => navigator.clipboard.writeText(tag) }),
+      await MenuItem.new({
+        text: 'Copy Tag URL',
+        action: () => navigator.clipboard.writeText(url),
+      }),
+      await MenuItem.new({
+        text: 'Copy as #Hashtag',
+        action: () => navigator.clipboard.writeText(`#${tag}`),
+      }),
+    ],
+  })
+  await menu.popup()
+}
 
 defineProps<{
   file: MarkdownFile
@@ -142,7 +174,17 @@ defineEmits<{
         <PhTag :size="10" weight="duotone" />
         Tags
       </span>
-      <span class="tags-list">{{ file.tags.join(', ') }}</span>
+      <span class="tags-list">
+        <span
+          v-for="(tag, idx) in file.tags"
+          :key="tag"
+          class="tag-pill"
+          title="Right-click for options"
+          @contextmenu="showTagMenu(tag, $event)"
+        >
+          {{ tag }}<span v-if="idx < file.tags.length - 1" class="tag-sep">,&nbsp;</span>
+        </span>
+      </span>
     </div>
     <div v-if="suggestedTags.length > 0" class="row suggested-tags-row">
       <span class="label">
@@ -155,8 +197,9 @@ defineEmits<{
           :key="tag"
           class="tag-chip"
           @click="$emit('add-tag', tag)"
+          @contextmenu="showTagMenu(tag, $event)"
           :disabled="addingTag"
-          :title="`Click to add '${tag}' to frontmatter`"
+          :title="`Click to add '${tag}' to frontmatter — right-click for more`"
         >
           <span class="tag-plus">+</span>
           {{ tag }}
@@ -298,6 +341,21 @@ defineEmits<{
 
 .tags-list {
   color: var(--text-secondary);
+}
+.tag-pill {
+  cursor: context-menu;
+  border-radius: 3px;
+  padding: 0 2px;
+  transition: background 0.1s;
+}
+.tag-pill:hover {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+.tag-sep {
+  cursor: default;
+}
+.tag-sep:hover {
+  background: none;
 }
 
 /* Suggested tags */

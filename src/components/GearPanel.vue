@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useLocalStorage } from '@vueuse/core'
+import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { PhBackpack, PhMapPin, PhClock, PhCube, PhFloppyDisk, PhArrowsClockwise, PhWarning } from '@phosphor-icons/vue'
 
 interface Gear {
@@ -39,11 +41,35 @@ interface Pending {
 
 const items = ref<Gear[]>([])
 const filter = ref('')
-const cursor = ref(0)
+// Persist cursor + filter so switching tabs and coming back lands where you left off.
+const cursor = useLocalStorage('dispatch-gear-cursor', 0)
 const loading = ref(false)
 const error = ref<string | null>(null)
 const pending = ref<Pending>({ dirty: false, diff_stat: '' })
 const status = ref<string | null>(null)
+
+// Resizable detail-panel height (drag handle between gear-list and gear-detail).
+const detailHeight = useLocalStorage('dispatch-gear-detail-height', 260)
+function startResize(e: MouseEvent) {
+  e.preventDefault()
+  const startY = e.clientY
+  const startH = detailHeight.value
+  const onMove = (ev: MouseEvent) => {
+    // Mouse moves UP → height grows.
+    const next = startH + (startY - ev.clientY)
+    detailHeight.value = Math.max(120, Math.min(window.innerHeight - 180, next))
+  }
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+  }
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'ns-resize'
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
 
 // inline editor state
 const editing = ref<null | 'location' | 'scan'>(null)
@@ -52,14 +78,71 @@ const editDetail = ref('')
 const editScan = ref('')
 const editInput = ref<HTMLInputElement | null>(null)
 
+type SortKey = 'name' | 'weight' | 'type' | 'container' | 'location' | 'last_used'
+const sortKey = useLocalStorage<SortKey>('dispatch-gear-sort', 'name')
+const sortDir = useLocalStorage<'asc' | 'desc'>('dispatch-gear-sort-dir', 'asc')
+const containerFilter = useLocalStorage<string>('dispatch-gear-container', '')
+
+// Distinct containers, sorted, with count.
+const containerOptions = computed(() => {
+  const map = new Map<string, number>()
+  for (const it of items.value) {
+    const k = (it.parent_container || '').trim()
+    if (!k) continue
+    map.set(k, (map.get(k) || 0) + 1)
+  }
+  return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+})
+
+function toggleSort(key: SortKey) {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortDir.value = 'asc'
+  }
+}
+
 const filtered = computed(() => {
   const q = filter.value.trim().toLowerCase()
-  if (!q) return items.value
-  return items.value.filter((it) => {
-    const hay =
-      `${it.name} ${it.type} ${it.parent_container} ${it.location_room} ${it.location_detail} ${it.tags}`.toLowerCase()
-    return hay.includes(q)
+  const cont = containerFilter.value.trim()
+  let out = items.value
+  if (cont) out = out.filter((it) => (it.parent_container || '') === cont)
+  if (q) {
+    out = out.filter((it) => {
+      const hay =
+        `${it.name} ${it.type} ${it.parent_container} ${it.location_room} ${it.location_detail} ${it.tags}`.toLowerCase()
+      return hay.includes(q)
+    })
+  }
+
+  const dir = sortDir.value === 'asc' ? 1 : -1
+  const cmp = (a: string, b: string) => a.localeCompare(b) * dir
+  out = [...out].sort((a, b) => {
+    switch (sortKey.value) {
+      case 'name':
+        return cmp(a.name, b.name)
+      case 'weight':
+        return ((parseFloat(a.weight_oz) || 0) - (parseFloat(b.weight_oz) || 0)) * dir
+      case 'type':
+        return cmp(a.type || '', b.type || '')
+      case 'container':
+        return cmp(a.parent_container || '', b.parent_container || '')
+      case 'location':
+        return cmp(a.location_room || '', b.location_room || '')
+      case 'last_used': {
+        // Empty last_used sorts to bottom regardless of direction so unused
+        // items don't crowd the top when ascending.
+        const av = a.last_used || ''
+        const bv = b.last_used || ''
+        if (!av && !bv) return 0
+        if (!av) return 1
+        if (!bv) return -1
+        return cmp(av, bv)
+      }
+    }
   })
+  return out
 })
 
 const selected = computed(() => filtered.value[cursor.value] ?? null)
@@ -100,6 +183,61 @@ function flash(msg: string) {
   setTimeout(() => {
     if (status.value === msg) status.value = null
   }, 2000)
+}
+
+async function showRowContextMenu(it: Gear, idx: number, e: MouseEvent) {
+  e.preventDefault()
+  cursor.value = idx
+  const items_ = [
+    await MenuItem.new({
+      text: `Mark "${it.name}" as Used Today`,
+      action: async () => {
+        await invoke('mark_gear_used', { names: [it.name] })
+        flash('marked used')
+        await load()
+      },
+    }),
+    await MenuItem.new({
+      text: 'Edit Location…',
+      action: () => {
+        editRoom.value = it.location_room || ''
+        editDetail.value = it.location_detail || ''
+        editing.value = 'location'
+        nextTick(() => editInput.value?.focus())
+      },
+    }),
+    await MenuItem.new({
+      text: 'Edit 3D Scan URL…',
+      action: () => {
+        editScan.value = it.scan_3d_url || ''
+        editing.value = 'scan'
+        nextTick(() => editInput.value?.focus())
+      },
+    }),
+    await PredefinedMenuItem.new({ item: 'Separator' }),
+    await MenuItem.new({
+      text: 'Copy Name',
+      action: () => navigator.clipboard.writeText(it.name),
+    }),
+  ]
+  if (it.amazon_url) {
+    items_.push(
+      await MenuItem.new({
+        text: 'View on Amazon',
+        action: () => window.open(it.amazon_url, '_blank'),
+      }),
+    )
+  }
+  if (it.scan_3d_url) {
+    items_.push(
+      await MenuItem.new({
+        text: 'View 3D Scan',
+        action: () => window.open(it.scan_3d_url, '_blank'),
+      }),
+    )
+  }
+  const menu = await Menu.new({ items: items_ })
+  await menu.popup()
 }
 
 async function markUsed() {
@@ -250,6 +388,10 @@ function onKey(e: KeyboardEvent) {
 onMounted(() => {
   load()
   window.addEventListener('keydown', onKey)
+  // Auto-focus the filter input on tab open so typing-to-filter Just Works.
+  nextTick(() => {
+    document.querySelector<HTMLInputElement>('#gear-filter')?.focus()
+  })
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey)
@@ -293,6 +435,26 @@ onUnmounted(() => {
 
     <div v-if="error" class="gear-error">{{ error }}</div>
 
+    <div class="gear-controls">
+      <div class="sort-row" title="Sort by">
+        <button
+          v-for="k in (['name', 'weight', 'type', 'container', 'location', 'last_used'] as SortKey[])"
+          :key="k"
+          :class="{ active: sortKey === k }"
+          @click="toggleSort(k)"
+        >
+          {{ k === 'last_used' ? 'used' : k }}
+          <span v-if="sortKey === k" class="dir">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+        </button>
+      </div>
+      <select v-model="containerFilter" class="container-select" title="Filter by container">
+        <option value="">all containers</option>
+        <option v-for="[name, n] in containerOptions" :key="name" :value="name">
+          {{ name }} ({{ n }})
+        </option>
+      </select>
+    </div>
+
     <div class="gear-list" tabindex="0">
       <div
         v-for="(it, i) in filtered"
@@ -300,6 +462,7 @@ onUnmounted(() => {
         class="gear-row"
         :class="{ active: i === cursor }"
         @click="cursor = i"
+        @contextmenu="showRowContextMenu(it, i, $event)"
       >
         <span class="gear-name">{{ it.name }}</span>
         <span class="gear-meta">
@@ -317,7 +480,13 @@ onUnmounted(() => {
       <div v-if="!filtered.length && !loading" class="empty-row">no items match</div>
     </div>
 
-    <div v-if="selected" class="gear-detail">
+    <div
+      v-if="selected"
+      class="gear-detail-resize"
+      title="drag to resize"
+      @mousedown="startResize"
+    ></div>
+    <div v-if="selected" class="gear-detail" :style="{ height: detailHeight + 'px' }">
       <div class="detail-name">{{ selected.name }}</div>
       <div class="detail-grid">
         <div>
@@ -480,6 +649,51 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
+.gear-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px 6px;
+}
+.sort-row {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+.sort-row button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-tertiary, #777);
+  font-size: 10px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  text-transform: lowercase;
+  font-variant-numeric: tabular-nums;
+}
+.sort-row button:hover {
+  color: var(--text-secondary, #aaa);
+}
+.sort-row button.active {
+  background: var(--accent-bg, #6b1a3d);
+  color: #fff;
+}
+.sort-row .dir {
+  margin-left: 3px;
+  font-size: 9px;
+}
+.container-select {
+  background: var(--bg-alt, #0d0d0d);
+  color: inherit;
+  border: 1px solid var(--border, #222);
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 10px;
+  font-family: inherit;
+  max-width: 180px;
+}
+
 .gear-list {
   flex: 1;
   overflow-y: auto;
@@ -537,10 +751,25 @@ onUnmounted(() => {
   text-align: center;
 }
 
+.gear-detail-resize {
+  height: 5px;
+  cursor: ns-resize;
+  background: transparent;
+  border-top: 1px solid var(--border, #222);
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.gear-detail-resize:hover,
+.gear-detail-resize:active {
+  background: var(--accent-bg, #6b1a3d);
+}
+
 .gear-detail {
   border-top: 1px solid var(--border, #222);
   padding: 8px 10px;
   font-size: 11px;
+  overflow-y: auto;
+  flex-shrink: 0;
 }
 
 .detail-name {

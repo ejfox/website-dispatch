@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useLocalStorage } from '@vueuse/core'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import {
   PhLockSimple,
@@ -31,7 +32,7 @@ const emit = defineEmits<{
 
 const filter = ref<'all' | 'published' | 'drafts' | 'scheduled'>('all')
 const sort = ref<'recent' | 'created' | 'title' | 'words'>('recent')
-const showWeeknotes = ref(true)
+const showWeeknotes = useLocalStorage('dispatch-show-weeknotes', true)
 
 const filteredFiles = computed(() => {
   let result = props.files
@@ -74,12 +75,20 @@ const filteredFiles = computed(() => {
   return result
 })
 
-const counts = computed(() => ({
-  all: props.files.length,
-  published: props.files.filter((f) => f.published_url).length,
-  drafts: props.files.filter((f) => !f.published_url).length,
-  scheduled: props.files.filter((f) => f.publish_at && !f.published_url).length,
-}))
+const counts = computed(() => {
+  // "All / Live / Drafts" counts respect the weeknote toggle, so the numbers
+  // match what the user is actually seeing.
+  const base = showWeeknotes.value
+    ? props.files
+    : props.files.filter((f) => f.content_type !== 'weeknote')
+  return {
+    all: base.length,
+    published: base.filter((f) => f.published_url).length,
+    drafts: base.filter((f) => !f.published_url).length,
+    scheduled: base.filter((f) => f.publish_at && !f.published_url).length,
+    weeknotes: props.files.filter((f) => f.content_type === 'weeknote').length,
+  }
+})
 
 // Group files by time period (only for 'recent' sort)
 const groupedFiles = computed(() => {
@@ -145,6 +154,37 @@ function formatWordCount(count: number): string {
   return `${count}`
 }
 
+async function showGroupContextMenu(group: { label: string | null; files: MarkdownFile[] }, e: MouseEvent) {
+  e.preventDefault()
+  if (!group.files.length) return
+  const titles = group.files.map((f) => formatTitle(f)).join('\n')
+  const paths = group.files.map((f) => f.path).join('\n')
+  const live = group.files.filter((f) => f.published_url)
+  const liveUrls = live.map((f) => f.published_url!).join('\n')
+  const n = group.files.length
+  const items_ = [
+    await MenuItem.new({
+      text: `Copy ${n} Title${n === 1 ? '' : 's'}`,
+      action: () => navigator.clipboard.writeText(titles),
+    }),
+    await MenuItem.new({
+      text: `Copy ${n} Path${n === 1 ? '' : 's'}`,
+      action: () => navigator.clipboard.writeText(paths),
+    }),
+  ]
+  if (live.length) {
+    items_.push(
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await MenuItem.new({
+        text: `Copy ${live.length} Live Link${live.length === 1 ? '' : 's'}`,
+        action: () => navigator.clipboard.writeText(liveUrls),
+      }),
+    )
+  }
+  const menu = await Menu.new({ items: items_ })
+  await menu.popup()
+}
+
 async function showContextMenu(file: MarkdownFile, e: MouseEvent) {
   e.preventDefault()
   // Select the file first so right-click context matches what the user
@@ -155,7 +195,7 @@ async function showContextMenu(file: MarkdownFile, e: MouseEvent) {
   const items = [
     await MenuItem.new({ text: 'Open in Obsidian', action: () => invoke('open_in_obsidian', { path: file.path }) }),
     await MenuItem.new({
-      text: 'Open in Editor',
+      text: 'Open in iA Writer',
       action: () => invoke('open_in_app', { path: file.path, app: 'iA Writer' }),
     }),
     await MenuItem.new({
@@ -170,7 +210,7 @@ async function showContextMenu(file: MarkdownFile, e: MouseEvent) {
       await PredefinedMenuItem.new({ item: 'Separator' }),
       await MenuItem.new({ text: 'View on Site', action: () => window.open(file.published_url!, '_blank') }),
       await MenuItem.new({
-        text: 'Copy Public URL',
+        text: 'Copy Link',
         action: () => navigator.clipboard.writeText(file.published_url!),
       }),
       await MenuItem.new({
@@ -205,6 +245,15 @@ function getAgeColor(ts: number): string {
           Live {{ counts.published }}
         </button>
         <button :class="{ active: filter === 'drafts' }" @click="filter = 'drafts'">Drafts {{ counts.drafts }}</button>
+        <button
+          v-if="counts.weeknotes > 0"
+          class="week-toggle"
+          :class="{ off: !showWeeknotes }"
+          :data-tip="showWeeknotes ? 'Hide week notes' : 'Show week notes'"
+          @click="showWeeknotes = !showWeeknotes"
+        >
+          WEEK {{ counts.weeknotes }}
+        </button>
       </div>
       <div class="sort-row">
         <button :class="{ active: sort === 'recent' }" @click="sort = 'recent'" data-tip="Recent">
@@ -223,7 +272,11 @@ function getAgeColor(ts: number): string {
 
     <div v-else class="list">
       <template v-for="group in groupedFiles" :key="group.label">
-        <div v-if="group.label" class="group-header">
+        <div
+          v-if="group.label"
+          class="group-header"
+          @contextmenu="showGroupContextMenu(group, $event)"
+        >
           {{ group.label }}
           <span class="group-count">{{ group.files.length }}</span>
         </div>
@@ -262,8 +315,21 @@ function getAgeColor(ts: number): string {
               <span
                 v-if="file.published_url && file.warnings.includes('Modified since publish')"
                 class="modified-badge"
+                :data-tip="
+                  file.published_word_count != null
+                    ? `Was ${file.published_word_count.toLocaleString()}w, now ${file.word_count.toLocaleString()}w`
+                    : 'Body changed since publish'
+                "
               >
                 MODIFIED
+                <span
+                  v-if="file.published_word_count != null"
+                  class="modified-delta"
+                  :class="{ pos: file.word_count > file.published_word_count, neg: file.word_count < file.published_word_count }"
+                >
+                  {{ file.word_count >= file.published_word_count ? '+' : ''
+                  }}{{ (file.word_count - file.published_word_count).toLocaleString() }}w
+                </span>
               </span>
               <span v-else-if="file.published_url && file.password" class="protected-badge">
                 <PhLockSimple :size="9" weight="bold" />
@@ -381,6 +447,29 @@ function getAgeColor(ts: number): string {
 .filters button.active {
   color: var(--text-primary);
   font-weight: 600;
+}
+
+.filters .week-toggle {
+  margin-left: 4px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+  border-radius: 8px;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+.filters .week-toggle:hover {
+  background: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+}
+.filters .week-toggle.off {
+  background: transparent;
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  opacity: 0.6;
+}
+.filters .week-toggle.off:hover {
+  opacity: 1;
 }
 
 .sort-row {
@@ -571,7 +660,17 @@ function getAgeColor(ts: number): string {
   border-radius: 8px;
   flex-shrink: 0;
   letter-spacing: 0.3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
+.modified-delta {
+  font-weight: 500;
+  letter-spacing: 0;
+  opacity: 0.85;
+}
+.modified-delta.pos { color: #4ade80; }
+.modified-delta.neg { color: #f87171; }
 
 .unlisted-badge {
   font-size: 7.5px;

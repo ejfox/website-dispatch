@@ -1032,17 +1032,17 @@ fn format_words_friendly(words: i64) -> String {
 // ---------------------------------------------------------------------------
 
 pub fn backfill_from_git(repo_path: &str, domain: &str) -> Result<u32, String> {
+    // Most posts are added via `yarn blog:process` without a dedicated
+    // "Publish:" commit, so parsing git log alone yields almost nothing.
+    // The processed manifest is the authoritative list of what's actually
+    // live, so we backfill from there. Idempotent: skips slugs already in
+    // the events table.
+    let mut inserted = backfill_from_manifest(repo_path, domain).unwrap_or(0);
+
     let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
 
-    // Only backfill if the DB is empty
-    let count: i64 = db
-        .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
-        .unwrap_or(0);
-    if count > 0 {
-        return Ok(0);
-    }
-
-    // Parse git log for "Publish: slug" commits
+    // Also pick up any explicit "Publish: SLUG" commits not represented in
+    // the manifest (e.g. unlisted posts processed outside the main flow).
     let output = std::process::Command::new(crate::bin_paths::git())
         .args(["log", "--oneline", "--format=%aI %s", "--all"])
         .current_dir(repo_path)
@@ -1050,15 +1050,23 @@ pub fn backfill_from_git(repo_path: &str, domain: &str) -> Result<u32, String> {
         .map_err(|e| format!("git log failed: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut inserted = 0u32;
 
     for line in stdout.lines().rev() {
-        // Process oldest first
         if let Some(cap) = crate::patterns::GIT_PUBLISH_LOG.captures(line) {
             let ts = &cap[1];
             let slug = cap[2].trim();
 
-            // Parse the ISO timestamp for local date/hour
+            let exists: i64 = db
+                .query_row(
+                    "SELECT COUNT(*) FROM events WHERE slug = ?1 AND event = 'publish'",
+                    params![slug],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            if exists > 0 {
+                continue;
+            }
+
             if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
                 let local = dt.with_timezone(&Local);
                 let local_date = local.format("%Y-%m-%d").to_string();
@@ -1074,6 +1082,87 @@ pub fn backfill_from_git(repo_path: &str, domain: &str) -> Result<u32, String> {
                 inserted += 1;
             }
         }
+    }
+
+    Ok(inserted)
+}
+
+/// Backfill publish events from website2's processed manifest. This is the
+/// real source of truth — each entry there is a post that actually shipped.
+fn backfill_from_manifest(repo_path: &str, domain: &str) -> Result<u32, String> {
+    use serde_json::Value;
+
+    let manifest_path = Path::new(repo_path).join("content/processed/manifest-lite.json");
+    let raw = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("read manifest: {}", e))?;
+    let entries: Vec<Value> =
+        serde_json::from_str(&raw).map_err(|e| format!("parse manifest: {}", e))?;
+
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
+    let mut inserted = 0u32;
+
+    for entry in &entries {
+        let slug = entry.get("slug").and_then(|v| v.as_str()).unwrap_or("");
+        if slug.is_empty() {
+            continue;
+        }
+        // Skip hidden/draft posts.
+        if entry.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false) {
+            continue;
+        }
+
+        let exists: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE slug = ?1 AND event = 'publish'",
+                params![slug],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if exists > 0 {
+            continue;
+        }
+
+        let date_str = entry.get("date").and_then(|v| v.as_str()).unwrap_or("");
+        let dt = chrono::DateTime::parse_from_rfc3339(date_str)
+            .or_else(|_| {
+                // Some dates are bare YYYY-MM-DD or end in Z without subseconds
+                chrono::DateTime::parse_from_rfc3339(&format!("{}T10:00:00+00:00", date_str))
+            })
+            .ok();
+        let Some(dt) = dt else { continue };
+
+        let local = dt.with_timezone(&Local);
+        let local_date = local.format("%Y-%m-%d").to_string();
+        let local_hour = local.hour() as i32;
+        let day_of_week = local.weekday().num_days_from_monday() as i32;
+        let ts = dt.to_rfc3339();
+        let url = format!("{}/blog/{}", domain.trim_end_matches('/'), slug);
+        let title = entry.get("title").and_then(|v| v.as_str()).unwrap_or("");
+        let word_count = entry
+            .pointer("/metadata/words")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let content_type = entry
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("post");
+        let tags = entry
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default();
+
+        let _ = db.execute(
+            "INSERT INTO events (timestamp, local_date, local_hour, day_of_week, event, slug, title, word_count, tags, content_type, url, target_id, visibility)
+             VALUES (?1, ?2, ?3, ?4, 'publish', ?5, ?6, ?7, ?8, ?9, ?10, NULL, 'public')",
+            params![ts, local_date, local_hour, day_of_week, slug, title, word_count, tags, content_type, url],
+        );
+        inserted += 1;
     }
 
     Ok(inserted)

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
+
 interface CloudinaryAsset {
   public_id: string
   secure_url: string
@@ -26,6 +28,47 @@ const emit = defineEmits<{
   hoverIndex: [index: number]
   loadMore: []
 }>()
+
+async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
+  e.preventDefault()
+  const name = asset.public_id.split('/').pop() || asset.public_id
+  const mdImage = `![](${asset.secure_url})`
+  const mdLink = `[${name}](${asset.secure_url})`
+  const cloudinaryConsole = `https://console.cloudinary.com/console/media_library/folders/home?searchQuery=${encodeURIComponent(asset.public_id)}`
+
+  const menu = await Menu.new({
+    items: [
+      await MenuItem.new({ text: 'Show Details…', action: () => emit('showDetail', asset) }),
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await MenuItem.new({
+        text: 'Copy Link',
+        action: () => navigator.clipboard.writeText(asset.secure_url),
+      }),
+      await MenuItem.new({
+        text: 'Copy as Markdown Image',
+        action: () => navigator.clipboard.writeText(mdImage),
+      }),
+      await MenuItem.new({
+        text: 'Copy as Markdown Link',
+        action: () => navigator.clipboard.writeText(mdLink),
+      }),
+      await MenuItem.new({
+        text: 'Copy Public ID',
+        action: () => navigator.clipboard.writeText(asset.public_id),
+      }),
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await MenuItem.new({
+        text: 'Open Image',
+        action: () => window.open(asset.secure_url, '_blank'),
+      }),
+      await MenuItem.new({
+        text: 'Show in Cloudinary Console',
+        action: () => window.open(cloudinaryConsole, '_blank'),
+      }),
+    ],
+  })
+  await menu.popup()
+}
 </script>
 
 <template>
@@ -41,6 +84,7 @@ const emit = defineEmits<{
       :class="{ selected: i === selectedIndex }"
       @click="emit('showDetail', asset)"
       @mouseenter="emit('hoverIndex', i)"
+      @contextmenu="showAssetContextMenu(asset, $event)"
     >
       <div class="asset-thumbnail">
         <img :src="getThumbnailUrl(asset)" :alt="asset.public_id" loading="lazy" />

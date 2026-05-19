@@ -18,6 +18,10 @@ import remarkGfm from 'remark-gfm'
 import remarkRehype from 'remark-rehype'
 import rehypeRaw from 'rehype-raw'
 import rehypeStringify from 'rehype-stringify'
+import { remarkMermaid } from '../utils/remarkMermaid'
+import { remarkObsidianWikilinks } from '../utils/remarkObsidianWikilinks'
+import { renderMermaidIn } from '../utils/mermaidRenderer'
+import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { useLocalStorage } from '@vueuse/core'
 import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics } from '../types'
 import { useTagSuggestions } from '../composables/useTagSuggestions'
@@ -25,13 +29,6 @@ import { usePublishing } from '../composables/usePublishing'
 import { usePostActions } from '../composables/usePostActions'
 import { useAppConfig } from '../composables/useAppConfig'
 import { useGitStatus } from '../composables/useGitStatus'
-
-const markdownProcessor = unified()
-  .use(remarkParse)
-  .use(remarkGfm)
-  .use(remarkRehype, { allowDangerousHtml: true })
-  .use(rehypeRaw)
-  .use(rehypeStringify)
 
 const props = defineProps<{ file: MarkdownFile }>()
 const emit = defineEmits<{ published: [] }>()
@@ -44,6 +41,28 @@ function getActiveTargetId(): string | undefined {
   if (!hasMultipleTargets.value) return undefined
   return selectedTargetId.value || undefined
 }
+
+const activeTargetDomain = computed(() => {
+  const targets = publishTargets.value
+  if (!targets.length) return ''
+  const id = selectedTargetId.value
+  const picked =
+    (id && targets.find((t) => t.id === id)) ||
+    targets.find((t) => t.is_default) ||
+    targets[0]
+  return picked?.domain || ''
+})
+
+const markdownProcessor = computed(() =>
+  unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use(remarkObsidianWikilinks, { baseUrl: activeTargetDomain.value })
+    .use(remarkMermaid)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(rehypeRaw)
+    .use(rehypeStringify, { allowDangerousHtml: true }),
+)
 
 function selectTarget(id: string) {
   selectedTargetId.value = id
@@ -108,6 +127,44 @@ const { availableTags, suggestedTags, addingTag, fetchAvailableTags, analyzeTags
   onRefresh: () => emit('published'),
 })
 
+async function showBacklinkMenu(link: Backlink, e: MouseEvent) {
+  e.preventDefault()
+  const menu = await Menu.new({
+    items: [
+      await MenuItem.new({
+        text: 'Open in Obsidian',
+        action: () => invoke('open_in_obsidian', { path: link.path }),
+      }),
+      await MenuItem.new({
+        text: 'Reveal in Finder',
+        action: () => invoke('open_in_app', { path: link.path, app: 'Finder' }).catch(() => {}),
+      }),
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await MenuItem.new({
+        text: 'Copy Path',
+        action: () => navigator.clipboard.writeText(link.path),
+      }),
+      await MenuItem.new({
+        text: 'Copy Title',
+        action: () => navigator.clipboard.writeText(link.title || link.path),
+      }),
+    ],
+  })
+  await menu.popup()
+}
+
+// Re-render markdown if the active publish target (and thus base URL) changes
+watch(activeTargetDomain, async () => {
+  if (!content.value) return
+  try {
+    const result = await markdownProcessor.value.process(content.value)
+    renderedContent.value = String(result)
+    nextTick(() => renderMermaidIn(document))
+  } catch {
+    /* leave stale render */
+  }
+})
+
 watch(
   () => props.file,
   async (file) => {
@@ -141,8 +198,11 @@ watch(
       content.value = raw.replace(/^---\n[\s\S]*?\n---\n*/, '')
       // Render markdown to HTML
       try {
-        const result = await markdownProcessor.process(content.value)
+        const result = await markdownProcessor.value.process(content.value)
         renderedContent.value = String(result)
+        nextTick(() => {
+          renderMermaidIn(document)
+        })
       } catch {
         renderedContent.value = ''
       }
@@ -460,7 +520,12 @@ async function openPreview() {
       </div>
       <div v-if="loadingBacklinks" class="backlinks-loading">Loading...</div>
       <div v-else class="backlinks-list">
-        <div v-for="link in backlinks" :key="link.path" class="backlink-item">
+        <div
+          v-for="link in backlinks"
+          :key="link.path"
+          class="backlink-item"
+          @contextmenu="showBacklinkMenu(link, $event)"
+        >
           <span class="backlink-title">{{ link.title || link.path }}</span>
           <span v-if="link.context" class="backlink-context">{{ link.context }}</span>
         </div>

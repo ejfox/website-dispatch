@@ -130,6 +130,10 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
             let dek = frontmatter.get("dek").cloned();
             let publish_at = frontmatter.get("publish_at").cloned();
 
+            let published_word_count = published_content
+                .as_ref()
+                .map(|c| c.split_whitespace().count());
+
             files.push(MarkdownFile {
                 path: path.to_string_lossy().to_string(),
                 filename,
@@ -140,6 +144,7 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 created,
                 modified,
                 word_count: body.split_whitespace().count(),
+                published_word_count,
                 is_safe: warnings.is_empty(),
                 warnings,
                 published_url,

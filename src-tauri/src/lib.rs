@@ -70,6 +70,7 @@ pub struct MarkdownFile {
     // `usize` is an unsigned integer sized for your platform (64-bit on modern machines)
     // Used for counting/indexing
     pub word_count: usize, // Number of words in the post body
+    pub published_word_count: Option<usize>, // Word count of the live/published version, if any
 
     // `bool` is true or false
     pub is_safe: bool, // True if no warnings (safe to publish)

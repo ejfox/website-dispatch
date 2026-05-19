@@ -2,8 +2,14 @@
 import { ref, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import { useLocalStorage } from '@vueuse/core'
 import { X } from 'lucide-vue-next'
 import type { AppConfig } from '../types'
+
+const homeTab = useLocalStorage<'preview' | 'media' | 'journal' | 'gear'>(
+  'dispatch-home-tab',
+  'preview',
+)
 
 const emit = defineEmits<{ close: []; saved: [] }>()
 
@@ -187,6 +193,19 @@ async function save() {
         <div class="settings-body" v-if="config">
           <!-- Vault Tab -->
           <div v-if="activeTab === 'vault'" class="tab-content">
+            <div class="field">
+              <label>
+                Open to
+                <span class="hint">tab shown when Dispatch launches</span>
+              </label>
+              <div class="segmented">
+                <button :class="{ active: homeTab === 'preview' }" @click="homeTab = 'preview'">Preview</button>
+                <button :class="{ active: homeTab === 'media' }" @click="homeTab = 'media'">Media</button>
+                <button :class="{ active: homeTab === 'journal' }" @click="homeTab = 'journal'">Journal</button>
+                <button :class="{ active: homeTab === 'gear' }" @click="homeTab = 'gear'">Gear</button>
+              </div>
+            </div>
+
             <div class="field">
               <label>Vault Path</label>
               <div class="path-input">
@@ -450,6 +469,30 @@ async function save() {
   flex: 1;
   overflow-y: auto;
   padding: 16px 20px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+.segmented button {
+  padding: 6px 12px;
+  font-size: 11px;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-right: 1px solid var(--border, #2a2a2a);
+}
+.segmented button:last-child { border-right: none; }
+.segmented button:hover { color: var(--text-secondary); }
+.segmented button.active {
+  background: var(--text-primary);
+  color: var(--bg, #0a0a0a);
+  font-weight: 600;
 }
 
 .tab-content {
