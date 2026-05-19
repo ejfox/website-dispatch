@@ -29,12 +29,49 @@ pub fn warm() {
 }
 
 fn resolve(name: &str, fallback: &str) -> PathBuf {
-    // Spawn the user's login shell so PATH is fully populated.
-    // SHELL env var falls back to zsh (macOS default) if not set.
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    // Strategy: fast filesystem probes FIRST. Spawning a login shell at app
+    // startup is expensive (~700ms on a typical zsh config) and dangerous —
+    // any HTTP-using prompt/MOTD in the user's rc files can hang the shell
+    // when their network is flaky, which then blocks Dispatch's main thread
+    // forever. So we only fall back to the shell when the obvious paths fail.
+    let home = std::env::var("HOME").unwrap_or_default();
 
-    // 1. Try `command -v` — fast happy path for users without nvm/asdf shell
-    //    functions shadowing the binary.
+    // 1. Common install locations on macOS (Apple Silicon homebrew first).
+    let known_paths: Vec<String> = vec![
+        format!("/opt/homebrew/bin/{}", name),
+        format!("/usr/local/bin/{}", name),
+        format!("{}/.nvm/versions/node/current/bin/{}", home, name),
+    ];
+    for candidate in &known_paths {
+        if std::path::Path::new(candidate).exists() {
+            log::info!("Resolved `{}` via known path -> {}", name, candidate);
+            return PathBuf::from(candidate);
+        }
+    }
+
+    // 2. If nvm is installed but no `current` symlink, pick the newest version.
+    if name == "node" {
+        let nvm_dir = PathBuf::from(&home).join(".nvm/versions/node");
+        if let Ok(entries) = std::fs::read_dir(&nvm_dir) {
+            let mut versions: Vec<PathBuf> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect();
+            versions.sort();
+            if let Some(latest) = versions.last() {
+                let candidate = latest.join("bin").join(name);
+                if candidate.exists() {
+                    log::info!("Resolved `{}` via nvm latest -> {}", name, candidate.display());
+                    return candidate;
+                }
+            }
+        }
+    }
+
+    // 3. Last resort: spawn the user's login shell. This is the slow/risky
+    //    path — only reached if no known binary path worked.
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     if let Ok(output) = Command::new(&shell)
         .args(["-l", "-c", &format!("command -v {}", name)])
         .output()
@@ -42,47 +79,9 @@ fn resolve(name: &str, fallback: &str) -> PathBuf {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() && std::path::Path::new(&path).exists() {
-                log::info!("Resolved `{}` -> {}", name, path);
+                log::info!("Resolved `{}` via login shell -> {}", name, path);
                 return PathBuf::from(path);
             }
-        }
-    }
-
-    // 2. `command -v` returned non-path (e.g. a shell function name from
-    //    nvm/asdf lazy-load). Invoke the tool through the login shell and
-    //    ask it for its own binary path — works regardless of how the user
-    //    bootstraps node/git, as long as the function actually resolves it.
-    if name == "node" {
-        if let Ok(output) = Command::new(&shell)
-            .args([
-                "-l",
-                "-c",
-                "node -e 'process.stdout.write(process.execPath)'",
-            ])
-            .output()
-        {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() && std::path::Path::new(&path).exists() {
-                    log::info!("Resolved `{}` via execPath -> {}", name, path);
-                    return PathBuf::from(path);
-                }
-            }
-        }
-    }
-
-    // 3. Last resort: probe well-known install locations.
-    let home = std::env::var("HOME").unwrap_or_default();
-    let candidates: Vec<String> = vec![
-        format!("/opt/homebrew/bin/{}", name),
-        format!("/usr/local/bin/{}", name),
-        format!("{}/.nvm/versions/node/current/bin/{}", home, name),
-        fallback.to_string(),
-    ];
-    for candidate in &candidates {
-        if std::path::Path::new(candidate).exists() {
-            log::info!("Resolved `{}` via known path -> {}", name, candidate);
-            return PathBuf::from(candidate);
         }
     }
 
