@@ -315,6 +315,12 @@ async function showBranchMenu(e: MouseEvent) {
 
 // Journal → Recent Activity click: find the matching file in the list and
 // surface it in the Preview tab.
+// Backlinks-graph node click: find the file by its full path.
+function jumpToPath(path: string) {
+  const match = files.value.find((f) => f.path === path)
+  if (match) selectedFile.value = match
+}
+
 function jumpToSlug(slug: string) {
   // Slug shape from journal: "2026/dubai-chocolate-term-trace" (year/slug)
   // or sometimes bare "vulpes-browser". Match by filename or path tail.
@@ -397,34 +403,84 @@ onMounted(async () => {
     }
   })
 
-  // Drag-in: a .md dropped from Finder selects it (or warns if not .md).
-  // Tauri's native drag-drop event is fired by WebviewWindow.
-  getCurrentWindow().onDragDropEvent((event) => {
+  // Drag-in handler: routes by file type.
+  //   .md  → select the post in the list (existing behavior)
+  //   image/video → upload to Cloudinary, copy ready-to-paste markdown
+  //                 references to the clipboard. One motion: drag → ⌘V in
+  //                 your editor at the cursor where you want it.
+  getCurrentWindow().onDragDropEvent(async (event) => {
     if (event.payload.type !== 'drop') return
-    const paths = event.payload.paths || []
-    const mdPaths = paths.filter((p) => p.toLowerCase().endsWith('.md'))
-    const skipped = paths.length - mdPaths.length
+    const paths: string[] = event.payload.paths || []
+    if (!paths.length) return
 
-    if (mdPaths.length === 0) {
-      toasts.warn(
-        'Only .md files supported',
-        skipped > 0 ? `Ignored ${skipped} non-markdown file${skipped === 1 ? '' : 's'}` : undefined,
-      )
-      return
+    const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic', 'avif']
+    const VIDEO_EXTS = ['mp4', 'mov', 'webm', 'm4v']
+    const ext = (p: string) => p.split('.').pop()?.toLowerCase() || ''
+    const mdPaths = paths.filter((p) => ext(p) === 'md')
+    const mediaPaths = paths.filter(
+      (p) => IMAGE_EXTS.includes(ext(p)) || VIDEO_EXTS.includes(ext(p)),
+    )
+
+    // Markdown: existing select-or-open behavior.
+    if (mdPaths.length) {
+      const target = mdPaths[0]
+      const existing = files.value.find((f) => f.path === target)
+      if (existing) {
+        selectedFile.value = existing
+        toasts.info(`Selected ${existing.filename}`)
+      } else {
+        toasts.info('Opened dropped file', target)
+      }
     }
 
-    // Pick the first dropped .md and surface it. If it's already in the
-    // file list, just select it; otherwise, open it as-is (the file will
-    // appear in the list on next refresh if it's inside the vault).
-    const target = mdPaths[0]
-    const existing = files.value.find((f) => f.path === target)
-    if (existing) {
-      selectedFile.value = existing
-      toasts.info(`Selected ${existing.filename}`)
-    } else {
-      toasts.info('Opened dropped file', target)
-      // Best-effort: the user may have dropped a file from outside the vault.
-      // We don't auto-import; the toast detail makes the path visible.
+    // Media: upload + copy markdown refs.
+    if (mediaPaths.length) {
+      // Use the current post's year as the Cloudinary folder if we have one,
+      // so uploaded assets land near related media.
+      const folder = (() => {
+        const m = selectedFile.value?.source_dir?.match(/(\d{4})/)
+        return m ? `blog/${m[1]}` : undefined
+      })()
+
+      toasts.info(
+        `Uploading ${mediaPaths.length} ${mediaPaths.length === 1 ? 'file' : 'files'} to Cloudinary…`,
+      )
+
+      const refs: string[] = []
+      let failures = 0
+      for (const p of mediaPaths) {
+        try {
+          const result: any = await invoke('cloudinary_upload', { filePath: p, folder })
+          if (result?.success && result?.asset?.secure_url) {
+            const url = result.asset.secure_url
+            const isVideo = VIDEO_EXTS.includes(ext(p))
+            refs.push(isVideo ? `<video src="${url}" controls></video>` : `![](${url})`)
+          } else {
+            failures++
+            console.warn('Cloudinary upload failed', p, result?.error)
+          }
+        } catch (e) {
+          failures++
+          console.warn('Cloudinary upload threw', p, e)
+        }
+      }
+
+      if (refs.length) {
+        await navigator.clipboard.writeText(refs.join('\n\n'))
+        toasts.success(
+          `${refs.length} uploaded — ⌘V in your editor`,
+          failures ? `${failures} failed (see console)` : undefined,
+        )
+      } else {
+        toasts.error('Upload failed', `${failures} file${failures === 1 ? '' : 's'} didn't upload`)
+      }
+    }
+
+    if (!mdPaths.length && !mediaPaths.length) {
+      toasts.warn(
+        'Unsupported file type',
+        `Dispatch accepts .md, images, and video. Got: ${paths.map((p) => '.' + ext(p)).join(', ')}`,
+      )
     }
   })
 })
@@ -553,6 +609,7 @@ onUnmounted(() => {
             ref="filePreviewRef"
             :file="selectedFile"
             @published="loadFiles"
+            @jump-to-path="jumpToPath"
           />
 
           <div v-else-if="rightTab === 'preview'" class="empty">

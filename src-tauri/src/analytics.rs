@@ -164,6 +164,71 @@ pub async fn get_post_stats(published_url: &str, days: u32) -> Result<PostStats,
     Ok(stats)
 }
 
+/// Daily pageview timeseries for a post — feeds the inline sparkline.
+pub async fn get_post_pageview_series(
+    published_url: &str,
+    days: u32,
+) -> Result<Vec<u32>, String> {
+    let config = get_config()?;
+
+    let path = if let Some(idx) = published_url.find("/blog/") {
+        &published_url[idx..]
+    } else {
+        return Err("Invalid published URL".to_string());
+    };
+
+    let now = chrono::Utc::now();
+    let start = now - chrono::Duration::days(days as i64);
+    let start_ms = start.timestamp_millis();
+    let end_ms = now.timestamp_millis();
+
+    let token = get_auth_token(&config).await?;
+
+    let client = reqwest::Client::new();
+    let url = format!(
+        "{}/api/websites/{}/pageviews?startAt={}&endAt={}&unit=day&timezone=UTC&url={}",
+        config.url,
+        config.website_id,
+        start_ms,
+        end_ms,
+        urlencoding::encode(path)
+    );
+
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .map_err(|e| format!("Umami request failed: {}", e))?;
+
+    if response.status().as_u16() == 401 {
+        clear_token_cache();
+        return Err("Umami auth expired, retry".to_string());
+    }
+
+    if !response.status().is_success() {
+        return Err(format!("Umami pageviews returned {}", response.status()));
+    }
+
+    // Response shape: { pageviews: [{x: "2026-04-01T00:00:00Z", y: 12}, ...], sessions: [...] }
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse pageviews: {}", e))?;
+
+    let series = json
+        .get("pageviews")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|p| p.get("y").and_then(|y| y.as_u64()).unwrap_or(0) as u32)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(series)
+}
+
 pub async fn get_site_stats(days: u32) -> Result<PostStats, String> {
     let config = get_config()?;
 

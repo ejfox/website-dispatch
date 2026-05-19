@@ -463,6 +463,14 @@ async fn get_site_analytics(days: Option<u32>) -> Result<analytics::PostStats, S
 }
 
 #[tauri::command]
+async fn get_post_pageview_series(
+    url: String,
+    days: Option<u32>,
+) -> Result<Vec<u32>, String> {
+    analytics::get_post_pageview_series(&url, days.unwrap_or(30)).await
+}
+
+#[tauri::command]
 async fn get_top_posts(
     days: Option<u32>,
     limit: Option<usize>,
@@ -1032,6 +1040,7 @@ pub fn run() {
             get_vault_pulse,
             check_analytics_status,
             get_post_analytics,
+            get_post_pageview_series,
             get_site_analytics,
             get_top_posts,
             get_companion_info,

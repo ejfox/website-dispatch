@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhTextAa, PhTrophy } from '@phosphor-icons/vue'
 import LintReceipt from './LintReceipt.vue'
 import LocalMediaSection from './LocalMediaSection.vue'
+import BacklinksGraph from './BacklinksGraph.vue'
 import AltTextReviewer from './AltTextReviewer.vue'
 import SyndicationWizard from './SyndicationWizard.vue'
 import OgImagePicker from './OgImagePicker.vue'
@@ -31,7 +32,7 @@ import { useAppConfig } from '../composables/useAppConfig'
 import { useGitStatus } from '../composables/useGitStatus'
 
 const props = defineProps<{ file: MarkdownFile }>()
-const emit = defineEmits<{ published: [] }>()
+const emit = defineEmits<{ published: []; 'jump-to-path': [path: string] }>()
 
 // Config (shared singleton)
 const { appConfig, enabledEditors, publishTargets, hasMultipleTargets } = useAppConfig()
@@ -177,6 +178,7 @@ watch(
     backlinks.value = []
     localMedia.value = []
     postStats.value = null
+    pageviewSeries.value = []
     showMediaFixer.value = false
     webmentionReport.value = null
 
@@ -247,6 +249,13 @@ watch(
               })
               .finally(() => {
                 loadingStats.value = false
+              }),
+            invoke('get_post_pageview_series', { url: file.published_url, days: 30 })
+              .then((res) => {
+                pageviewSeries.value = (res as number[]) || []
+              })
+              .catch(() => {
+                pageviewSeries.value = []
               }),
           ]
         : []),
@@ -354,6 +363,42 @@ const {
 // Analytics
 const postStats = ref<PostAnalytics | null>(null)
 const loadingStats = ref(false)
+const pageviewSeries = ref<number[]>([])
+
+// Derived stats — Umami gives us pageviews/visitors/visits/bounces/totaltime;
+// the more interesting numbers are time-on-page and bounce rate.
+const avgTimeOnPage = computed(() => {
+  const s = postStats.value
+  if (!s || s.visits === 0 || s.totaltime === 0) return null
+  return Math.round(s.totaltime / s.visits) // seconds
+})
+const bounceRate = computed(() => {
+  const s = postStats.value
+  if (!s || s.visits === 0) return null
+  return s.bounces / s.visits
+})
+const fmtDuration = (sec: number) => {
+  if (sec < 60) return `${sec}s`
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return s ? `${m}m ${s}s` : `${m}m`
+}
+const fmtCount = (n: number) =>
+  n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+const sparkPath = computed(() => {
+  const pts = pageviewSeries.value
+  if (pts.length < 2) return ''
+  const W = 120
+  const H = 22
+  const max = Math.max(...pts, 1)
+  return pts
+    .map((v, i) => {
+      const x = (i / (pts.length - 1)) * W
+      const y = H - (v / max) * H
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`
+    })
+    .join(' ')
+})
 
 // Scheduling
 const showSchedulePicker = ref(false)
@@ -466,6 +511,43 @@ async function openPreview() {
       </template>
     </div>
 
+    <!-- Analytics strip — visible up top whenever the post is live. Shows
+         pageviews, visitors, avg time on page, bounce rate, and a 30-day
+         sparkline of daily views. -->
+    <div v-if="isLive && (postStats || loadingStats)" class="analytics-strip">
+      <template v-if="loadingStats">
+        <span class="muted">analytics…</span>
+      </template>
+      <template v-else-if="postStats">
+        <span class="stat-big">
+          <strong>{{ fmtCount(postStats.pageviews) }}</strong>
+          <span class="stat-unit">views</span>
+        </span>
+        <span v-if="postStats.visitors" class="stat">
+          <strong>{{ fmtCount(postStats.visitors) }}</strong>
+          <span class="stat-unit">visitors</span>
+        </span>
+        <span v-if="avgTimeOnPage" class="stat">
+          <strong>{{ fmtDuration(avgTimeOnPage) }}</strong>
+          <span class="stat-unit">avg</span>
+        </span>
+        <span v-if="bounceRate !== null" class="stat" :class="{ warn: bounceRate > 0.7 }">
+          <strong>{{ Math.round(bounceRate * 100) }}%</strong>
+          <span class="stat-unit">bounce</span>
+        </span>
+        <svg
+          v-if="sparkPath"
+          class="sparkline"
+          viewBox="0 0 120 22"
+          preserveAspectRatio="none"
+          :data-tip="`${pageviewSeries.length}-day daily pageviews`"
+        >
+          <path :d="sparkPath" fill="none" stroke="currentColor" stroke-width="1.25" />
+        </svg>
+        <span class="stat-period">last 30d</span>
+      </template>
+    </div>
+
     <!-- Info / Metadata -->
     <MetadataPanel
       :file="file"
@@ -519,7 +601,14 @@ async function openPreview() {
         <span class="count">{{ loadingBacklinks ? '...' : backlinks.length }}</span>
       </div>
       <div v-if="loadingBacklinks" class="backlinks-loading">Loading...</div>
-      <div v-else class="backlinks-list">
+      <template v-else>
+        <BacklinksGraph
+          v-if="backlinks.length"
+          :backlinks="backlinks"
+          :current-title="props.file.title || ''"
+          @select="(path: string) => emit('jump-to-path', path)"
+        />
+        <div class="backlinks-list">
         <div
           v-for="link in backlinks"
           :key="link.path"
@@ -529,7 +618,8 @@ async function openPreview() {
           <span class="backlink-title">{{ link.title || link.path }}</span>
           <span v-if="link.context" class="backlink-context">{{ link.context }}</span>
         </div>
-      </div>
+        </div>
+      </template>
     </div>
 
     <!-- OG Image (only after publish) -->
@@ -988,6 +1078,62 @@ async function openPreview() {
   word-wrap: break-word;
   margin: 0;
   tab-size: 2;
+}
+
+.analytics-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  margin: -2px 0 8px;
+  border-top: 1px solid var(--border, #1a1a1a);
+  border-bottom: 1px solid var(--border, #1a1a1a);
+  font-size: 11px;
+  color: var(--text-secondary, #aaa);
+  font-variant-numeric: tabular-nums;
+}
+.analytics-strip .stat,
+.analytics-strip .stat-big {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.analytics-strip .stat-big strong {
+  font-size: 14px;
+  color: var(--text-primary, #fff);
+  font-weight: 700;
+}
+.analytics-strip .stat strong {
+  font-size: 12px;
+  color: var(--text-primary, #fff);
+  font-weight: 600;
+}
+.analytics-strip .stat-unit {
+  color: var(--text-tertiary, #777);
+  font-size: 10px;
+  text-transform: lowercase;
+}
+.analytics-strip .stat.warn strong {
+  color: var(--warning, #f59e0b);
+}
+.analytics-strip .sparkline {
+  height: 22px;
+  width: 120px;
+  flex-shrink: 0;
+  color: var(--text-secondary, #aaa);
+  opacity: 0.8;
+}
+.analytics-strip .stat-period {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-tertiary, #666);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.analytics-strip .muted {
+  color: var(--text-tertiary, #666);
+  font-size: 10px;
 }
 </style>
 
