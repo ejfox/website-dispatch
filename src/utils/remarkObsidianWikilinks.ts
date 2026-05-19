@@ -9,7 +9,7 @@
  * Pass `baseUrl` to emit absolute URLs (so they open in a real browser when
  * clicked from the Tauri webview). Links get target="_blank" rel="noopener".
  */
-import { visit } from 'unist-util-visit'
+import { visit, SKIP } from 'unist-util-visit'
 import type { Plugin } from 'unified'
 import type { Root } from 'mdast'
 
@@ -96,7 +96,7 @@ export const remarkObsidianWikilinks: Plugin<[ObsidianWikilinksOptions?], Root> 
         }
 
         parent.children.splice(index, 1, ...nodes)
-        return [visit.SKIP, index + nodes.length] as any
+        return [SKIP, index + nodes.length]
       })
     }
   }

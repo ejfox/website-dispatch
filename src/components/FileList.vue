@@ -162,7 +162,7 @@ async function showGroupContextMenu(group: { label: string | null; files: Markdo
   const live = group.files.filter((f) => f.published_url)
   const liveUrls = live.map((f) => f.published_url!).join('\n')
   const n = group.files.length
-  const items_ = [
+  const items_: (MenuItem | PredefinedMenuItem)[] = [
     await MenuItem.new({
       text: `Copy ${n} Title${n === 1 ? '' : 's'}`,
       action: () => navigator.clipboard.writeText(titles),
