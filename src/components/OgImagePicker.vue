@@ -5,6 +5,7 @@ import { useToasts } from '../composables/useToasts'
 
 const toasts = useToasts()
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { PhArrowsClockwise, PhCheck, PhUpload, PhSparkle } from '@phosphor-icons/vue'
 
 interface OgImageVariants {
@@ -73,6 +74,42 @@ async function uploadSelected() {
   uploading.value = false
 }
 
+async function showVariantMenu(i: number, e: MouseEvent) {
+  e.preventDefault()
+  if (!variants.value) return
+  const path = variants.value.paths[i]
+  const previewHtml = variants.value.preview_html
+  const menu = await Menu.new({
+    items: [
+      await MenuItem.new({
+        text: 'Open at Full Size',
+        action: () => invoke('open_in_app', { path, app: 'Preview' }).catch(() => {}),
+      }),
+      await MenuItem.new({
+        text: 'Open Composer (all 4)',
+        action: () => invoke('open_in_app', { path: previewHtml, app: 'Safari' }).catch(() => {}),
+      }),
+      await MenuItem.new({
+        text: 'Reveal in Finder',
+        action: () => invoke('open_in_app', { path, app: 'Finder' }).catch(() => {}),
+      }),
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await MenuItem.new({
+        text: 'Use This One',
+        enabled: !uploading.value,
+        action: () => {
+          selectedIdx.value = i
+          uploadSelected()
+        },
+      }),
+      await MenuItem.new({ text: 'Reroll All', action: () => reroll() }),
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await MenuItem.new({ text: 'Copy File Path', action: () => navigator.clipboard.writeText(path) }),
+    ],
+  })
+  await menu.popup()
+}
+
 // Auto-generate on mount
 generate()
 </script>
@@ -106,7 +143,10 @@ generate()
         :key="i"
         class="variant-card"
         :class="{ selected: selectedIdx === i, generating }"
+        title="Click to select · double-click to open at full size · right-click for more"
         @click="select(i)"
+        @dblclick="invoke('open_in_app', { path: variants!.paths[i], app: 'Preview' }).catch(() => {})"
+        @contextmenu="showVariantMenu(i, $event)"
       >
         <img :src="url" :alt="`OG variant ${i}`" loading="eager" />
         <div class="variant-label">v{{ i }}</div>

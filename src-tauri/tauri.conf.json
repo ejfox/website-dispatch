@@ -32,6 +32,15 @@
   },
   "app": {
     "macOSPrivateApi": true,
+    "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/code/**/og-previews/**",
+          "$HOME/code/**/data/og-previews/**"
+        ]
+      }
+    },
     "windows": [
       {
         "title": "Dispatch",
