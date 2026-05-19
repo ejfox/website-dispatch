@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useToasts } from '../composables/useToasts'
 
@@ -110,8 +110,20 @@ async function showVariantMenu(i: number, e: MouseEvent) {
   await menu.popup()
 }
 
-// Auto-generate on mount
-generate()
+// Re-generate whenever the slug prop changes — Vue keeps the picker instance
+// alive across post selections so we can't rely on mount-time effects.
+// `immediate: true` covers the first render too.
+watch(
+  () => props.slug,
+  () => {
+    variants.value = null
+    selectedIdx.value = null
+    uploadedUrl.value = null
+    batch.value = 0
+    generate()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
