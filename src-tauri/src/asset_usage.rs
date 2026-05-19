@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::path::PathBuf;
 use walkdir::WalkDir;
 
 use crate::Config;
@@ -136,39 +137,59 @@ pub fn scan_vault_for_usage() -> Result<UsageScanResult, String> {
         }
     }
 
-    // Also scan website repo for published posts
-    let blog_path = format!("{}/content/blog", config.website_repo);
-    for entry in WalkDir::new(&blog_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
-    {
-        let path = entry.path();
-        let path_str = path.to_string_lossy().to_string();
+    // Also scan every configured publish target's content directory. Earlier
+    // versions hardcoded "content/blog" relative to a single repo — that
+    // missed posts under "content/posts", "content/reading", project pages,
+    // and anything outside the default folder, which made the "0 posts use
+    // this image" guard report unused for assets that were in fact in use.
+    // Derive the content base from each target's content_path_pattern, same
+    // pattern vault.rs::find_published_info_inner uses.
+    let mut scanned_roots: HashSet<PathBuf> = HashSet::new();
+    if let Ok(app_config) = crate::config::get() {
+        for target in &app_config.publish_targets {
+            // "content/blog/{year}" → "content/blog", "content/posts" → "content/posts"
+            let content_base = target
+                .content_path_pattern
+                .split("/{year}")
+                .next()
+                .unwrap_or("content/blog");
+            let root = PathBuf::from(&target.repo_path).join(content_base);
+            if !root.exists() || !scanned_roots.insert(root.clone()) {
+                continue;
+            }
+            for entry in WalkDir::new(&root)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+            {
+                let path = entry.path();
+                let path_str = path.to_string_lossy().to_string();
 
-        if let Ok(content) = fs::read_to_string(path) {
-            total_posts += 1;
-            let title = extract_title(&content);
-            let urls = extract_cloudinary_urls(&content);
+                if let Ok(content) = fs::read_to_string(path) {
+                    total_posts += 1;
+                    let title = extract_title(&content);
+                    let urls = extract_cloudinary_urls(&content);
 
-            if !urls.is_empty() {
-                let mut post_assets = Vec::new();
+                    if !urls.is_empty() {
+                        let mut post_assets = Vec::new();
 
-                for (public_id, line_num, context) in urls {
-                    by_asset
-                        .entry(public_id.clone())
-                        .or_default()
-                        .push(AssetUsage {
-                            post_path: path_str.clone(),
-                            post_title: title.clone(),
-                            line_number: line_num,
-                            context,
-                        });
+                        for (public_id, line_num, context) in urls {
+                            by_asset
+                                .entry(public_id.clone())
+                                .or_default()
+                                .push(AssetUsage {
+                                    post_path: path_str.clone(),
+                                    post_title: title.clone(),
+                                    line_number: line_num,
+                                    context,
+                                });
 
-                    post_assets.push(public_id.clone());
+                            post_assets.push(public_id.clone());
+                        }
+
+                        by_post.insert(path_str, post_assets);
+                    }
                 }
-
-                by_post.insert(path_str, post_assets);
             }
         }
     }
