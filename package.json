@@ -1,6 +1,6 @@
 {
   "name": "website-dispatch",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "Menubar app to curate and publish content from Obsidian to ejfox.com",
   "type": "module",
   "scripts": {

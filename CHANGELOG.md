@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.6.0 — 2026-05-19
+
+Three magical features riffing on Quartz / MarsEdit, plus polish.
+
+### Added
+- **Smart drag-in for media.** Drop any image or video onto Dispatch and
+  it uploads to Cloudinary (year-foldered to the active post) and copies
+  ready-to-paste markdown refs to the clipboard. One drag → one ⌘V in
+  iA Writer at the cursor. Multi-drop joins refs with blank lines.
+  Existing .md drag still selects the post.
+- **Mini backlinks graph** above the backlinks list in the preview pane.
+  Current post at the center, backlinks arrayed around the perimeter
+  with 3-letter labels. Click a node to jump to that post. Radius scales
+  gently with neighborhood size.
+- **Analytics strip up top** for live posts. Pageviews · visitors ·
+  avg time on page · bounce rate · 30-day sparkline, full-width under
+  the title — no expand-toggle. New `get_post_pageview_series` hits
+  Umami's `/pageviews?unit=day` endpoint for the timeseries; the rest
+  is derived from the existing `PostStats` shape (totaltime/visits,
+  bounces/visits). Bounce % goes amber when >70%.
+- **OG variant right-click menu.** Open at Full Size · Open Composer
+  (all 4 in browser) · Reveal in Finder · Use This One · Reroll All ·
+  Copy File Path. Double-click a variant for instant full-size.
+
+### Fixed
+- **OG image picker showed broken-image icons.** Tauri 2 needs both the
+  `protocol-asset` Cargo feature compiled in AND an explicit
+  `app.security.assetProtocol` scope to serve files via `convertFileSrc`.
+  Neither was on. Now enabled with a tight scope (only OG preview dirs).
+- **OG batch rerolls ENOENT'd on the source markdown.** Dispatch passes
+  `<slug>:batchN` to vary the layout seed, but the OG script was using
+  the whole string for content lookups AND output paths. `splitBatch`
+  now peels `:batchN` off; the canonical slug drives file I/O, the
+  suffix only flavors the seed.
+- **OG fallback for drafts.** `og-image/extract.mjs` now falls back to
+  parsing the source markdown when the processed JSON doesn't exist
+  yet (drafts / in-progress posts).
+- **App hung at startup with no window when network was flaky.** The
+  earlier `bin_paths::warm()` fix spawned the user's login shell to
+  resolve `node`; an HTTP-fetching `.zshrc` prompt could block the
+  resolver forever, freezing Dispatch before window creation. Reorder:
+  fast filesystem probes first (Homebrew, nvm `current`, newest nvm
+  version dir), shell only as a last resort.
+- **Asset usage scan was hardcoded to `content/blog/`.** If a publish
+  target's `content_path_pattern` pointed elsewhere, the cleanup
+  reported "0 posts use this image" for assets that were in use — and
+  the UI would happily mark them safe to delete. Now derives the
+  content base from each target's `content_path_pattern` and scans
+  every distinct root.
+
+### Context menus expanded (since 0.5.2)
+- File rows · file group headers · gear rows · media library cards ·
+  tag chips (existing + suggested) · backlink rows · journal heatmap
+  cells · milestones · status-bar chips (vault / media / analytics /
+  companion / branch) · OG variant cards. All native macOS menus,
+  Apple-style labels (Title Case, ellipsis on actions that open UI,
+  "Copy Link" not "Copy URL").
+
 ## 0.5.3 — 2026-05-19
 
 Parity push — inline + popout previews now render the same things
