@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.5.3 — 2026-05-19
+
+Parity push — inline + popout previews now render the same things
+ejfox.com does, three silently-wrong subsystems were yielding fake
+numbers, and right-click menus landed everywhere.
+
+### Added
+- **Mermaid rendering** in both previews. ` ```mermaid ` fenced blocks
+  become real diagrams (timeline, xychart-beta, flowcharts, …) via
+  lazy-imported `mermaid.js`. Same plugin lives in `processMarkdown.mjs`
+  and `markdownToHtml.mjs` so production output matches the preview.
+- **Obsidian wikilink routing** in the inline preview. Bare wikilinks
+  like `[[OSINT]]` resolve to `/tag/{slug}` on the active publish
+  target's domain instead of the broken `/blog/OSINT`. Pathed wikilinks
+  keep their canonical routes. Same logic mirrored into website2's
+  `remarkObsidianSupport`.
+- **Resizable Gear inspect panel.** 5px drag handle above it, height
+  persists in localStorage, clamped so the list never disappears.
+- **Sort + container filter** in Gear — sort by name/weight/type/
+  container/location/last-used (click to toggle direction; "used"
+  pushes never-used items to the bottom); dropdown filter for
+  Parent Container with item counts.
+- **WEEK n toggle chip** in the file-list filter row to hide all
+  week-notes from the main list. Persists.
+- **"Open to" setting** in Settings → Vault. Dispatch boots into
+  Preview / Media / Journal / Gear depending on your routine.
+- **⌘1/2/3/4** jumps between right-panel tabs.
+- **Restores last-selected file** on launch.
+- **Word-count delta on MODIFIED badge.** `+128w` / `−40w`, green/red,
+  with a tooltip showing absolute counts. Backend now computes
+  `published_word_count` from the live file content.
+- **Journal Recent Activity rows are buttons** — click jumps to the
+  post in the Preview tab.
+- **Gear filter auto-focuses** on tab open.
+- **Native macOS right-click context menus everywhere**: file rows,
+  group headers (Today / This Week / …), gear rows, media library
+  cards, tag chips (existing + suggested), backlink rows, journal
+  heatmap cells, milestones, and every status-bar chip
+  (vault / media / analytics / companion / branch). Labels follow
+  Apple style: Title Case, trailing "…" on actions that open further
+  UI, "Copy Link" rather than "Copy URL".
+
+### Fixed
+- **Journal heatmap was empty.** Backfill was matching the literal
+  `Publish: SLUG` commit pattern — only two commits in website2 history
+  use it. Now backfills from `content/processed/manifest-lite.json`
+  (the actual ledger of what shipped), idempotent, so newly-published
+  posts get picked up every time the Journal tab opens.
+- **Gear panel rendered blank rows.** `#[serde(rename = "Name")]`
+  meant the JSON sent to Vue had `Name`, `Last_Used`, `Location_Room`
+  — uppercase — while the template read `it.name`, `it.last_used`,
+  `it.location_room`. Added a `GearDto` with snake_case keys for the
+  wire format; the CSV roundtrip keeps the Capitalized headers.
+- **Popout Preview was blank white.** `bin_paths::warm()` resolved
+  `node` via `command -v` in the user's login shell — but nvm lazy-
+  loads `node` as a shell function, so the command returned the
+  string "node" (not a path), the existence check failed, and the
+  fallback `/usr/local/bin/node` doesn't exist on Apple Silicon.
+  Resolver now also tries `node -e 'process.execPath'` through the
+  login shell, then probes `/opt/homebrew/bin/`, `~/.nvm/.../current/`.
+
 ## 0.5.2 — 2026-05-05
 
 Workflow integration — Dispatch starts to disappear into the OS.
