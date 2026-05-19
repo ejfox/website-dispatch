@@ -315,11 +315,22 @@ pub fn generate_og_variants(slug: &str, batch: u32) -> Result<OgImageVariants, S
 
     // Call: node scripts/og-image/index.mjs --slug {slug}
     // This generates 4 variants to data/og-previews/{slug}/
-    let output = std::process::Command::new(crate::bin_paths::node())
-        .arg(&script)
+    // DISPATCH_VAULT_PATH lets the OG extractor fall back to the user's
+    // Obsidian vault when a draft hasn't been synced into the website repo
+    // yet — picking OG art before the first publish is a normal flow.
+    let vault_path = crate::config::get()
+        .ok()
+        .map(|c| c.vault.path)
+        .unwrap_or_default();
+    let mut cmd = std::process::Command::new(crate::bin_paths::node());
+    cmd.arg(&script)
         .arg("--slug")
         .arg(&batch_slug)
-        .current_dir(repo_path)
+        .current_dir(repo_path);
+    if !vault_path.is_empty() {
+        cmd.env("DISPATCH_VAULT_PATH", &vault_path);
+    }
+    let output = cmd
         .output()
         .map_err(|e| format!("Failed to run OG script: {}", e))?;
 
