@@ -623,7 +623,9 @@ async function openPreview() {
     </div>
 
     <!-- OG Image (only after publish) -->
-    <OgImagePicker v-if="isLive" :slug="slug" @picked="() => {}" />
+    <!-- OG picker shows for any post with a usable slug, not just live ones —
+         picking an OG before publish is a natural part of the publish flow. -->
+    <OgImagePicker v-if="slug" :slug="slug" @picked="() => {}" />
 
     <!-- Local Media -->
     <LocalMediaSection
