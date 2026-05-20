@@ -1,31 +1,37 @@
 <script setup lang="ts">
-import { PhShieldWarning } from '@phosphor-icons/vue'
+import { PhShieldWarning, PhCaretDown } from '@phosphor-icons/vue'
+import { useLocalStorage } from '@vueuse/core'
 
 defineProps<{ warnings: string[] }>()
+
+const collapsed = useLocalStorage('dispatch-lint-collapsed', true)
 </script>
 
 <template>
   <div v-if="warnings.length" class="lint-receipt">
-    <div class="lint-receipt-header">
+    <button class="lint-receipt-header" @click="collapsed = !collapsed" :aria-expanded="!collapsed">
+      <PhCaretDown :size="9" weight="bold" class="caret" :class="{ collapsed }" />
       <span>Lint Receipt</span>
       <span class="lint-receipt-count">{{ warnings.length }}</span>
-    </div>
-    <div class="lint-receipt-divider"></div>
-    <div class="lint-receipt-list">
-      <div
-        v-for="warning in warnings"
-        :key="warning"
-        class="lint-receipt-item"
-        :class="{ privacy: warning.startsWith('[privacy]') }"
-      >
-        <span class="lint-receipt-bullet" :class="{ privacy: warning.startsWith('[privacy]') }">
-          <PhShieldWarning v-if="warning.startsWith('[privacy]')" :size="12" weight="fill" />
-          <template v-else>&bull;</template>
-        </span>
-        <span class="lint-receipt-text">{{ warning.startsWith('[privacy]') ? warning.slice(9) : warning }}</span>
+    </button>
+    <template v-if="!collapsed">
+      <div class="lint-receipt-divider"></div>
+      <div class="lint-receipt-list">
+        <div
+          v-for="warning in warnings"
+          :key="warning"
+          class="lint-receipt-item"
+          :class="{ privacy: warning.startsWith('[privacy]') }"
+        >
+          <span class="lint-receipt-bullet" :class="{ privacy: warning.startsWith('[privacy]') }">
+            <PhShieldWarning v-if="warning.startsWith('[privacy]')" :size="12" weight="fill" />
+            <template v-else>&bull;</template>
+          </span>
+          <span class="lint-receipt-text">{{ warning.startsWith('[privacy]') ? warning.slice(9) : warning }}</span>
+        </div>
       </div>
-    </div>
-    <div class="lint-receipt-footer">Dispatch</div>
+      <div class="lint-receipt-footer">Dispatch</div>
+    </template>
   </div>
 </template>
 
@@ -43,11 +49,31 @@ defineProps<{ warnings: string[] }>()
 
 .lint-receipt-header {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--text-tertiary);
   font-size: 9px;
+  font-family: inherit;
+}
+
+.lint-receipt-header span:nth-of-type(1) {
+  flex: 1;
+  text-align: left;
+}
+
+.caret {
+  transition: transform 0.15s;
+  color: var(--text-tertiary);
+}
+.caret.collapsed {
+  transform: rotate(-90deg);
 }
 
 .lint-receipt-count {

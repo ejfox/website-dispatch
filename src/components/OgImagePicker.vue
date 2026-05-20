@@ -6,7 +6,10 @@ import { useToasts } from '../composables/useToasts'
 const toasts = useToasts()
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
-import { PhArrowsClockwise, PhCheck, PhUpload, PhSparkle } from '@phosphor-icons/vue'
+import { PhArrowsClockwise, PhCheck, PhUpload, PhSparkle, PhCaretDown } from '@phosphor-icons/vue'
+import { useLocalStorage } from '@vueuse/core'
+
+const collapsed = useLocalStorage('dispatch-og-collapsed', true)
 
 interface OgImageVariants {
   slug: string
@@ -130,15 +133,19 @@ watch(
   <div class="og-picker">
     <!-- Header -->
     <div class="picker-header">
-      <PhSparkle :size="14" weight="fill" class="header-icon" />
-      <span class="header-title">OG Image</span>
-      <span v-if="variants" class="header-batch">batch {{ batch }}</span>
-      <button class="reroll-btn" @click="reroll" :disabled="generating" title="Generate 4 new variants">
+      <button class="header-toggle" @click="collapsed = !collapsed" :aria-expanded="!collapsed">
+        <PhCaretDown :size="9" weight="bold" class="caret" :class="{ collapsed }" />
+        <PhSparkle :size="14" weight="fill" class="header-icon" />
+        <span class="header-title">OG Image</span>
+        <span v-if="variants" class="header-batch">batch {{ batch }}</span>
+      </button>
+      <button v-if="!collapsed" class="reroll-btn" @click.stop="reroll" :disabled="generating" title="Generate 4 new variants">
         <PhArrowsClockwise :size="12" weight="bold" :class="{ spinning: generating }" />
         {{ generating ? '' : 'Reroll' }}
       </button>
     </div>
 
+    <template v-if="!collapsed">
     <!-- Error -->
     <div v-if="error" class="picker-error">{{ error }}</div>
 
@@ -181,6 +188,7 @@ watch(
         {{ uploading ? 'Uploading...' : 'Use this one' }}
       </button>
     </div>
+    </template>
   </div>
 </template>
 
@@ -195,6 +203,28 @@ watch(
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.header-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.caret {
+  transition: transform 0.15s;
+  color: var(--text-tertiary);
+}
+.caret.collapsed {
+  transform: rotate(-90deg);
 }
 
 .header-icon {

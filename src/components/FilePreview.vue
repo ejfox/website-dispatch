@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhTextAa, PhTrophy } from '@phosphor-icons/vue'
+import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhTextAa, PhTrophy, PhCaretDown } from '@phosphor-icons/vue'
 import LintReceipt from './LintReceipt.vue'
 import LocalMediaSection from './LocalMediaSection.vue'
 import BacklinksGraph from './BacklinksGraph.vue'
@@ -37,6 +37,7 @@ const emit = defineEmits<{ published: []; 'jump-to-path': [path: string] }>()
 // Config (shared singleton)
 const { appConfig, enabledEditors, publishTargets, hasMultipleTargets } = useAppConfig()
 const selectedTargetId = useLocalStorage<string | null>('dispatch-target', null)
+const altTextCollapsed = useLocalStorage('dispatch-alttext-collapsed', true)
 
 function getActiveTargetId(): string | undefined {
   if (!hasMultipleTargets.value) return undefined
@@ -572,14 +573,17 @@ async function openPreview() {
     <!-- Alt Text -->
     <div v-if="missingAltTextCount > 0" class="alt-text-section">
       <div class="alt-text-header">
-        <span class="label">
-          <PhImageSquare :size="10" weight="duotone" />
-          Alt Text
-        </span>
-        <span class="count warning">{{ missingAltTextCount }}</span>
-        <button @click="showAltTextReviewer = true" class="fix-btn">Describe</button>
+        <button class="alt-text-toggle" @click="altTextCollapsed = !altTextCollapsed" :aria-expanded="!altTextCollapsed">
+          <PhCaretDown :size="9" weight="bold" class="caret" :class="{ collapsed: altTextCollapsed }" />
+          <span class="label">
+            <PhImageSquare :size="10" weight="duotone" />
+            Alt Text
+          </span>
+          <span class="count warning">{{ missingAltTextCount }}</span>
+        </button>
+        <button @click.stop="showAltTextReviewer = true" class="fix-btn">Describe</button>
       </div>
-      <div class="alt-text-hint">{{ missingAltTextCount }} image(s) need descriptions</div>
+      <div v-if="!altTextCollapsed" class="alt-text-hint">{{ missingAltTextCount }} image(s) need descriptions</div>
     </div>
 
     <!-- Alt Text Reviewer Modal -->
@@ -1001,6 +1005,28 @@ async function openPreview() {
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
+}
+
+.alt-text-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.alt-text-toggle .caret {
+  transition: transform 0.15s;
+  color: var(--text-tertiary);
+}
+.alt-text-toggle .caret.collapsed {
+  transform: rotate(-90deg);
 }
 
 .alt-text-hint {
