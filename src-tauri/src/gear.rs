@@ -213,6 +213,46 @@ pub fn set_gear_scan_url(name: String, url: String) -> Result<(), String> {
     write_all(&items)
 }
 
+/// Update a single arbitrary field on a gear item. The field key matches the
+/// `GearDto` snake_case identifiers the UI already uses. Unknown / non-editable
+/// fields return an error rather than silently no-op'ing.
+#[tauri::command]
+pub fn update_gear_field(name: String, field: String, value: String) -> Result<(), String> {
+    let mut items = read_all()?;
+    let it = items
+        .iter_mut()
+        .find(|it| it.name == name)
+        .ok_or_else(|| format!("not found: {}", name))?;
+    match field.as_str() {
+        "weight_oz" => it.weight_oz = value,
+        "parent_container" => it.parent_container = value,
+        "type" => it.r#type = value,
+        "category" => it.category = value,
+        "subcategory" => it.subcategory = value,
+        "priority" => it.priority = value,
+        "waterproof" => it.waterproof = value,
+        "worn" => it.worn = value,
+        "qty" => it.qty = value,
+        "consumable" => it.consumable = value,
+        "star" => it.star = value,
+        "notes" => it.notes = value,
+        "tags" => it.tags = value,
+        "condition" => it.condition = value,
+        "amazon_url" => it.amazon_url = value,
+        "purchase_date" => it.purchase_date = value,
+        "purchase_price" => it.purchase_price = value,
+        "photo_url" => it.photo_url = value,
+        "scan_3d_url" => it.scan_3d_url = value,
+        "serial_number" => it.serial_number = value,
+        "model_number" => it.model_number = value,
+        "brand" => it.brand = value,
+        "location_room" => it.location_room = value,
+        "location_detail" => it.location_detail = value,
+        other => return Err(format!("field not editable: {}", other)),
+    }
+    write_all(&items)
+}
+
 #[derive(Serialize)]
 pub struct GearPending {
     pub dirty: bool,

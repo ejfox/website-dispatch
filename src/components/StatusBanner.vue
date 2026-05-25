@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { PhLockSimple, PhEye, PhCheckCircle, PhClock } from '@phosphor-icons/vue'
+import { ref, watch } from 'vue'
+import { PhLockSimple, PhEye, PhCheckCircle, PhClock, PhCaretDown } from '@phosphor-icons/vue'
 import { formatScheduledTime } from '../utils/formatting'
+import PublishDiffPanel from './PublishDiffPanel.vue'
 
-defineProps<{
+const props = defineProps<{
   isLive: boolean
   isScheduled: boolean
   isUnlisted: boolean
@@ -14,6 +16,8 @@ defineProps<{
   publishAt: string | null
   visibilityLabel: string | null
   publishing: boolean
+  /** Path to the markdown file — needed to fetch the diff. */
+  filePath: string
 }>()
 
 defineEmits<{
@@ -22,14 +26,39 @@ defineEmits<{
   republish: []
   'cancel-schedule': []
 }>()
+
+const diffOpen = ref(false)
+
+// Reset the panel state when the user switches to a different file so the
+// next "modified" file doesn't open with stale diff state.
+watch(
+  () => props.filePath,
+  () => {
+    diffOpen.value = false
+  },
+)
 </script>
 
 <template>
-  <div v-if="isLive && hasUnpublishedChanges" class="banner modified">
-    <span class="banner-text">MODIFIED</span>
-    <span v-if="visibilityLabel" class="visibility-badge">{{ visibilityLabel }}</span>
-    <span>Source changed since last publish</span>
-    <button @click="$emit('republish')" :disabled="publishing">{{ publishing ? '...' : 'Republish' }}</button>
+  <div v-if="isLive && hasUnpublishedChanges">
+    <div class="banner modified">
+      <span class="banner-text">MODIFIED</span>
+      <span v-if="visibilityLabel" class="visibility-badge">{{ visibilityLabel }}</span>
+      <span class="modified-msg">Source changed since last publish</span>
+      <button
+        class="see-changes"
+        :class="{ open: diffOpen }"
+        @click="diffOpen = !diffOpen"
+        :data-tip="diffOpen ? 'Hide diff' : 'Show what changed since last publish'"
+      >
+        <PhCaretDown :size="9" weight="bold" class="see-caret" />
+        {{ diffOpen ? 'Hide changes' : 'See changes' }}
+      </button>
+      <button class="republish-btn" @click="$emit('republish')" :disabled="publishing">
+        {{ publishing ? '...' : 'Republish' }}
+      </button>
+    </div>
+    <PublishDiffPanel :file-path="filePath" :open="diffOpen" @close="diffOpen = false" />
   </div>
   <div v-else-if="isLive && isPasswordProtected" class="banner protected">
     <span class="banner-text">
@@ -170,24 +199,50 @@ defineEmits<{
   font-weight: 700;
 }
 
+.banner.modified .modified-msg {
+  flex: 1;
+}
+
 .banner.modified button {
   background: rgba(0, 0, 0, 0.2);
   border: none;
   color: #000;
-  padding: 2px 8px;
+  padding: 3px 9px;
   border-radius: 3px;
   font-size: 10px;
+  font-weight: 500;
   cursor: pointer;
-  margin-left: auto;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.12s;
+}
+.banner.modified button:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.32);
+}
+.banner.modified .see-changes .see-caret {
+  transition: transform 0.15s;
+}
+.banner.modified .see-changes.open .see-caret {
+  transform: rotate(180deg);
+}
+.banner.modified .republish-btn {
+  background: #000;
+  color: var(--warning);
+  font-weight: 600;
+}
+.banner.modified .republish-btn:hover:not(:disabled) {
+  background: #1a1a1a;
 }
 
 .banner.ready {
-  background: var(--accent);
+  background: var(--hover-bg);
   color: var(--text-secondary);
 }
 
 .banner.unlisted {
-  background: #6366f1;
+  background: var(--accent);
   color: #fff;
 }
 
@@ -217,7 +272,7 @@ defineEmits<{
 }
 
 .banner.protected {
-  background: #8b5cf6;
+  background: var(--accent);
   color: #fff;
 }
 
@@ -252,19 +307,19 @@ defineEmits<{
   font-weight: 700;
   padding: 2px 5px;
   border-radius: 3px;
-  background: var(--accent);
+  background: var(--hover-bg);
   display: inline-flex;
   align-items: center;
   gap: 3px;
 }
 
 .unlisted-ready .visibility-badge {
-  background: #6366f1;
+  background: var(--accent);
   color: #fff;
 }
 
 .protected-ready .visibility-badge {
-  background: #8b5cf6;
+  background: var(--accent);
   color: #fff;
 }
 

@@ -575,7 +575,7 @@ onMounted(async () => {
 }
 
 .streak-number svg.active {
-  color: #f59e0b;
+  color: var(--warning);
 }
 
 .streak-val {
@@ -671,14 +671,14 @@ onMounted(async () => {
   border-color: rgba(48, 209, 88, 0.15);
 }
 .nudge.streak {
-  color: #f59e0b;
+  color: var(--warning);
   background: rgba(245, 158, 11, 0.06);
   border-color: rgba(245, 158, 11, 0.15);
 }
 .nudge.encouragement {
-  color: #818cf8;
-  background: rgba(129, 140, 248, 0.06);
-  border-color: rgba(129, 140, 248, 0.15);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 /* Week Stats */
@@ -765,7 +765,7 @@ onMounted(async () => {
 }
 
 .hour-bar.peak {
-  background: rgba(129, 140, 248, 0.7);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .hour-labels {
@@ -865,7 +865,7 @@ onMounted(async () => {
 .signal-item svg {
   flex-shrink: 0;
   margin-top: 2px;
-  color: rgba(129, 140, 248, 0.5);
+  color: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .vault-section.dormant .signal-item svg {
@@ -874,7 +874,7 @@ onMounted(async () => {
 }
 
 .vault-section .section-label {
-  color: rgba(129, 140, 248, 0.7);
+  color: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .vault-section.growing .section-label {
   color: var(--success);
@@ -973,7 +973,7 @@ onMounted(async () => {
   color: var(--success);
 }
 .log-entry svg.republish {
-  color: #818cf8;
+  color: var(--accent);
 }
 .log-entry svg.unpublish {
   color: var(--text-tertiary);
@@ -1019,7 +1019,7 @@ onMounted(async () => {
 }
 
 .backfill-btn:hover {
-  background: var(--accent);
+  background: var(--hover-bg);
 }
 
 .backfill-loading {

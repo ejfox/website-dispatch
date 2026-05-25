@@ -18,23 +18,46 @@ html {
 
 /* Base/fallback (dark default) - must come FIRST */
 :root {
-  /* Colors */
+  /* Surfaces */
   --bg-primary: rgba(20, 20, 22, 0.85);
   --bg-secondary: rgba(30, 30, 34, 0.8);
   --bg-tertiary: rgba(45, 45, 50, 0.6);
   --bg-solid: #141416;
+  --modal-bg: rgba(35, 35, 40, 0.9);
+  --hover-bg: rgba(255, 255, 255, 0.06);
+  --active-bg: rgba(255, 255, 255, 0.12);
+
+  /* Borders */
   --border: rgba(255, 255, 255, 0.08);
   --border-light: rgba(255, 255, 255, 0.12);
+
+  /* Text */
   --text-primary: #e5e5e5;
   --text-secondary: #999;
   --text-tertiary: #666;
-  --accent: rgba(255, 255, 255, 0.15);
-  --selection-bg: rgba(10, 132, 255, 0.85);
-  --selection-text: #fff;
+
+  /* macOS system accent (tracks System Settings → Appearance).
+     `AccentColor` is dynamic — it changes when the user switches their
+     accent in System Settings. Use these for focus, selection, and
+     primary actions so the app feels like a first-class Mac citizen. */
+  --accent: AccentColor;
+  --accent-soft: color-mix(in srgb, AccentColor 18%, transparent);
+  --accent-softer: color-mix(in srgb, AccentColor 10%, transparent);
+  --accent-strong: color-mix(in srgb, AccentColor 88%, white);
+  --accent-contrast: white;
+
+  /* Text-selection inside inputs/contenteditable */
+  --selection-bg: color-mix(in srgb, AccentColor 55%, transparent);
+  --selection-text: white;
+
+  /* macOS system state colors */
   --success: #30d158;
   --warning: #ff9f0a;
   --danger: #ff453a;
-  --modal-bg: rgba(35, 35, 40, 0.9);
+  /* Used for unlisted/password-protected post badges */
+  --protected: var(--accent);
+
+  /* Keyboard / monospace UI */
   --kbd-bg: rgba(255, 255, 255, 0.1);
   --kbd-border: rgba(255, 255, 255, 0.15);
 
@@ -56,34 +79,40 @@ html {
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 24px 48px rgba(0, 0, 0, 0.2);
-  --shadow-glow: 0 0 0 1px var(--selection-bg), 0 2px 8px color-mix(in srgb, var(--selection-bg) 30%, transparent);
+  --shadow-glow: 0 0 0 1px var(--accent), 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-/* Light mode - overrides base when system is light */
+/* Light mode - overrides base when system is light.
+   `--accent` stays bound to AccentColor (the system value already adapts). */
 @media (prefers-color-scheme: light) {
   :root {
     --bg-primary: rgba(255, 255, 255, 0.9);
     --bg-secondary: rgba(248, 248, 248, 0.95);
     --bg-tertiary: rgba(235, 235, 235, 0.8);
     --bg-solid: #ffffff;
+    --modal-bg: rgba(255, 255, 255, 0.92);
+    --hover-bg: rgba(0, 0, 0, 0.04);
+    --active-bg: rgba(0, 0, 0, 0.08);
     --border: rgba(0, 0, 0, 0.08);
     --border-light: rgba(0, 0, 0, 0.12);
     --text-primary: #1a1a1a;
     --text-secondary: #555;
     --text-tertiary: #888;
-    --accent: rgba(0, 0, 0, 0.08);
-    --selection-bg: rgba(10, 132, 255, 0.2);
+    --accent-soft: color-mix(in srgb, AccentColor 14%, transparent);
+    --accent-softer: color-mix(in srgb, AccentColor 7%, transparent);
+    --accent-strong: color-mix(in srgb, AccentColor 92%, black);
+    --selection-bg: color-mix(in srgb, AccentColor 28%, transparent);
     --selection-text: #1a1a1a;
     --success: #28a745;
     --warning: #e67700;
     --danger: #dc3545;
-    --modal-bg: rgba(255, 255, 255, 0.92);
+    --protected: var(--accent);
     --kbd-bg: rgba(0, 0, 0, 0.06);
     --kbd-border: rgba(0, 0, 0, 0.12);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.03);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
     --shadow-lg: 0 24px 48px rgba(0, 0, 0, 0.1);
-    --shadow-glow: 0 0 0 1px var(--selection-bg), 0 2px 8px color-mix(in srgb, var(--selection-bg) 20%, transparent);
+    --shadow-glow: 0 0 0 1px var(--accent), 0 2px 8px color-mix(in srgb, var(--accent) 20%, transparent);
   }
 }
 
@@ -128,7 +157,7 @@ textarea {
 /* Native macOS focus ring — uses system AccentColor (whatever the user
    picked in System Settings → Appearance). NSColor.controlAccentColor. */
 :focus-visible {
-  outline: 2px solid AccentColor;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 3px;
 }
@@ -137,7 +166,7 @@ input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, AccentColor 35%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 button:focus:not(:focus-visible) {

@@ -150,7 +150,7 @@ function selectResult(file: MarkdownFile) {
 }
 
 .search-result:hover {
-  background: var(--accent);
+  background: var(--hover-bg);
 }
 
 .search-result.selected {
@@ -180,12 +180,12 @@ function selectResult(file: MarkdownFile) {
 }
 
 .result-badge.unlisted {
-  background: #6366f1;
+  background: var(--accent);
   color: #fff;
 }
 
 .result-badge.protected {
-  background: #8b5cf6;
+  background: var(--accent);
   color: #fff;
 }
 

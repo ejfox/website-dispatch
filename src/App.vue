@@ -20,6 +20,7 @@ import FileList from './components/FileList.vue'
 import FilePreview from './components/FilePreview.vue'
 import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
 import PublishingJournal from './components/PublishingJournal.vue'
+import ActivityFeed from './components/ActivityFeed.vue'
 import GearPanel from './components/GearPanel.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import SearchModal from './components/SearchModal.vue'
@@ -64,11 +65,11 @@ const windowFocused = ref(true)
 // Right panel tab state. Persists the user's last/preferred home tab so
 // Dispatch opens where they want to be — Preview by default for most folks,
 // but switchable to Journal or Gear for routines that don't start with the post list.
-const defaultHomeTab = useLocalStorage<'preview' | 'media' | 'journal' | 'gear'>(
+const defaultHomeTab = useLocalStorage<'preview' | 'media' | 'activity' | 'journal' | 'gear'>(
   'dispatch-home-tab',
   'preview',
 )
-const rightTab = ref<'preview' | 'media' | 'journal' | 'gear'>(defaultHomeTab.value)
+const rightTab = ref<'preview' | 'media' | 'activity' | 'journal' | 'gear'>(defaultHomeTab.value)
 
 // Connection status (auto-checks on creation)
 const { cloudinaryConnected, obsidianConnected, analyticsConnected, companionUrl, companionPin, gitBranch } =
@@ -433,46 +434,70 @@ onMounted(async () => {
       }
     }
 
-    // Media: upload + copy markdown refs.
+    // Media: upload to the user's primary destination (plus any mirrors)
+    // and copy markdown refs to the clipboard. The Rust `media` orchestrator
+    // handles which destination's URL goes in the ref.
     if (mediaPaths.length) {
-      // Use the current post's year as the Cloudinary folder if we have one,
-      // so uploaded assets land near related media.
+      // Use the current post's year as the upload folder if we have one,
+      // so assets land near related media (Cloudinary uses it as a folder,
+      // R2 uses it as a key prefix).
       const folder = (() => {
         const m = selectedFile.value?.source_dir?.match(/(\d{4})/)
         return m ? `blog/${m[1]}` : undefined
       })()
 
+      const status: any = await invoke('check_media_status').catch(() => null)
+      const primaryLabel = (status?.primary ?? 'cloudinary').toString()
+      const mirrorCount = Array.isArray(status?.mirrors) ? status.mirrors.length : 0
+      const destDesc =
+        mirrorCount > 0 ? `${primaryLabel} (+ ${mirrorCount} mirror)` : primaryLabel
       toasts.info(
-        `Uploading ${mediaPaths.length} ${mediaPaths.length === 1 ? 'file' : 'files'} to Cloudinary…`,
+        `Uploading ${mediaPaths.length} ${mediaPaths.length === 1 ? 'file' : 'files'} to ${destDesc}…`,
       )
 
       const refs: string[] = []
       let failures = 0
+      let lastError: string | undefined
+      const mirrorFailures: string[] = []
       for (const p of mediaPaths) {
         try {
-          const result: any = await invoke('cloudinary_upload', { filePath: p, folder })
-          if (result?.success && result?.asset?.secure_url) {
-            const url = result.asset.secure_url
+          const result: any = await invoke('media_upload', { filePath: p, folder })
+          if (result?.success && result?.asset?.url) {
+            const url = result.asset.url
             const isVideo = VIDEO_EXTS.includes(ext(p))
             refs.push(isVideo ? `<video src="${url}" controls></video>` : `![](${url})`)
+            for (const m of result.mirrors ?? []) {
+              if (!m.success) {
+                mirrorFailures.push(`${m.destination}: ${m.error ?? 'unknown'}`)
+                console.warn('Mirror upload failed', m.destination, m.error)
+              }
+            }
           } else {
             failures++
-            console.warn('Cloudinary upload failed', p, result?.error)
+            lastError = result?.error ?? 'unknown error'
+            console.warn('media_upload returned failure', p, result?.error)
           }
-        } catch (e) {
+        } catch (e: any) {
           failures++
-          console.warn('Cloudinary upload threw', p, e)
+          lastError = typeof e === 'string' ? e : (e?.message ?? String(e))
+          console.warn('media_upload threw', p, e)
         }
       }
 
       if (refs.length) {
         await navigator.clipboard.writeText(refs.join('\n\n'))
+        const subtitle: string[] = []
+        if (failures) subtitle.push(`${failures} failed (${lastError ?? 'see console'})`)
+        if (mirrorFailures.length) subtitle.push(`mirror: ${mirrorFailures.join(', ')}`)
         toasts.success(
           `${refs.length} uploaded — ⌘V in your editor`,
-          failures ? `${failures} failed (see console)` : undefined,
+          subtitle.length ? subtitle.join(' · ') : undefined,
         )
       } else {
-        toasts.error('Upload failed', `${failures} file${failures === 1 ? '' : 's'} didn't upload`)
+        toasts.error(
+          'Upload failed',
+          lastError ?? `${failures} file${failures === 1 ? '' : 's'} didn't upload`,
+        )
       }
     }
 
@@ -584,6 +609,7 @@ onUnmounted(() => {
         <div class="panel-tabs" data-tauri-drag-region>
           <button :class="{ active: rightTab === 'preview' }" @click="rightTab = 'preview'">Preview</button>
           <button :class="{ active: rightTab === 'media' }" @click="rightTab = 'media'">Media</button>
+          <button :class="{ active: rightTab === 'activity' }" @click="rightTab = 'activity'">Activity</button>
           <button :class="{ active: rightTab === 'journal' }" @click="rightTab = 'journal'">Journal</button>
           <button :class="{ active: rightTab === 'gear' }" @click="rightTab = 'gear'">Gear</button>
           <div class="panel-tabs-spacer" data-tauri-drag-region></div>
@@ -641,6 +667,13 @@ onUnmounted(() => {
             @close="rightTab = 'preview'"
             @select="(asset) => copyToClipboard(asset.secure_url)"
             @insert="handleInsertMedia"
+          />
+
+          <ActivityFeed
+            v-else-if="rightTab === 'activity'"
+            :files="files"
+            @select-file="(file) => (selectedFile = file)"
+            @jump-to-slug="jumpToSlug"
           />
 
           <PublishingJournal v-else-if="rightTab === 'journal'" @jump-to-slug="jumpToSlug" />
@@ -779,7 +812,12 @@ onUnmounted(() => {
   display: contents;
 }
 
-/* --- Titlebar row (44px) --- */
+/* --- Titlebar row (44px) ---
+   IMPORTANT: this is the right-side window-drag region. The only drag-eligible
+   space in this bar is (a) the 12px strip above the bottom-aligned buttons and
+   (b) `.panel-tabs-spacer`. If you add another tab here, double-check the
+   spacer still has real width on the narrowest window you support — otherwise
+   the window becomes effectively non-draggable. */
 .panel-tabs {
   grid-area: panel-bar;
   display: flex;
@@ -787,12 +825,12 @@ onUnmounted(() => {
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   -webkit-app-region: drag;
-  padding-top: 8px;
+  padding-top: 12px;
   overflow: hidden;
 }
 
 .panel-tabs button {
-  padding: 6px 12px;
+  padding: 6px 10px;
   font-size: 11px;
   font-weight: 500;
   flex-shrink: 0;
@@ -817,8 +855,13 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+/* The middle of the title-bar is the primary window-drag handle. Reserve a
+   firm minimum so it survives every responsive width and doesn't get
+   squeezed to zero by tabs/buttons. */
 .panel-tabs-spacer {
   flex: 1;
+  min-width: 60px;
+  align-self: stretch;
 }
 
 .titlebar-btns {
@@ -857,7 +900,7 @@ onUnmounted(() => {
 
 .titlebar-btn.active {
   color: var(--text-primary);
-  background: var(--accent);
+  background: var(--hover-bg);
 }
 
 .titlebar-btn.spinning :deep(svg) {
@@ -989,7 +1032,7 @@ onUnmounted(() => {
 }
 
 .status-btn:hover {
-  background: var(--accent);
+  background: var(--hover-bg);
   color: var(--text-secondary);
 }
 
@@ -1067,7 +1110,7 @@ onUnmounted(() => {
 }
 
 .np-btn:hover {
-  background: var(--accent);
+  background: var(--hover-bg);
   color: var(--text-primary);
 }
 

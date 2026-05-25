@@ -47,25 +47,52 @@ export function usePostActions(options: {
     crowning.value = false
   }
 
-  async function triggerWebmentions(bridgyFed = false) {
+  /** URL keyed cache so we don't auto-send twice for the same publish.
+   *  Republishing clears the cache for that URL (handled by `triggerWebmentions`'s force flag). */
+  const autoSentFor = new Set<string>()
+
+  /**
+   * Run webmention discovery + send for the post's live URL.
+   *
+   * @param opts.bridgyFed — also POST to Bridgy Fed (forward to fediverse)
+   * @param opts.silent    — used by the auto-send path on publish, suppresses toasts
+   * @param opts.force     — bypass the per-URL "already sent" cache (e.g. user clicks Resend)
+   */
+  async function triggerWebmentions(
+    opts: { bridgyFed?: boolean; silent?: boolean; force?: boolean } = {},
+  ) {
     const url = options.getLiveUrl()
     if (!url || sendingWebmentions.value) return
+    if (!opts.force && autoSentFor.has(url)) return
+
     sendingWebmentions.value = true
-    webmentionReport.value = null
+    if (!opts.silent) webmentionReport.value = null
     try {
       const report = await invoke<WebmentionReport>('send_webmentions', {
         postUrl: url,
-        bridgyFed,
+        bridgyFed: !!opts.bridgyFed,
         targetId: options.getActiveTargetId() || null,
       })
       webmentionReport.value = report
-      if (report.sent > 0) {
-        options.showSuccessToast(`Sent ${report.sent} webmention${report.sent > 1 ? 's' : ''}!`)
+      autoSentFor.add(url)
+      if (!opts.silent && report.sent > 0) {
+        options.showSuccessToast(`Notified ${report.sent} site${report.sent === 1 ? '' : 's'}`)
       }
     } catch (e) {
-      alert(`Webmention error: ${e}`)
+      if (!opts.silent) alert(`Webmention error: ${e}`)
+      console.warn('webmention send failed', e)
     }
     sendingWebmentions.value = false
+  }
+
+  /** Auto-fired from `usePublishing` after a successful publish or republish.
+   *  Always silent — the result surfaces inline via the StatusBanner chip. */
+  async function autoTriggerOnPublish(bridgyFed: boolean) {
+    // Wait a beat for the deploy to settle so the published page has the
+    // outbound links rendered — otherwise webmention discovery sees the
+    // pre-deploy HTML and reports zero links.
+    await new Promise((r) => setTimeout(r, 8000))
+    await triggerWebmentions({ bridgyFed, silent: true, force: true })
   }
 
   async function unpublish() {
@@ -92,6 +119,7 @@ export function usePostActions(options: {
     unpublishing,
     crownPost,
     triggerWebmentions,
+    autoTriggerOnPublish,
     unpublish,
   }
 }

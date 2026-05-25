@@ -20,7 +20,11 @@ reqwest = { version = "0.11", features = ["json", "rustls-tls", "blocking", "mul
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 urlencoding = "2.1"
 sha1 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
 regex = "1.10"
+similar = "2.6"
 mime_guess = "2.0"
 dotenvy = "0.15"
 axum = "0.7"

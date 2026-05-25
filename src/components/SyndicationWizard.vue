@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { PhCheck, PhX, PhClock, PhPaperPlaneTilt, PhArrowRight, PhArrowLeft } from '@phosphor-icons/vue'
 import OgImagePicker from './OgImagePicker.vue'
@@ -25,6 +25,16 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ close: []; queued: [] }>()
+
+// Esc closes the wizard — consistent with every other modal in the app.
+function onEscape(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    e.stopPropagation()
+    emit('close')
+  }
+}
+onMounted(() => window.addEventListener('keydown', onEscape))
+onUnmounted(() => window.removeEventListener('keydown', onEscape))
 
 // Wizard state
 const step = ref(1)
@@ -353,7 +363,7 @@ async function queueAll() {
   gap: 10px;
 }
 .header-icon {
-  color: #a78bfa;
+  color: var(--accent);
 }
 .modal-header h2 {
   font-size: 14px;
@@ -380,9 +390,9 @@ async function queueAll() {
 }
 .error-banner {
   padding: 8px 16px;
-  background: rgba(239, 68, 68, 0.15);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
   border-bottom: 1px solid rgba(239, 68, 68, 0.2);
-  color: #fca5a5;
+  color: var(--danger);
   font-size: 11px;
 }
 
@@ -433,12 +443,12 @@ async function queueAll() {
   border-radius: 4px;
 }
 .platform-status.ok {
-  background: rgba(34, 197, 94, 0.15);
-  color: #4ade80;
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
 }
 .platform-status.warn {
-  background: rgba(251, 191, 36, 0.15);
-  color: #fbbf24;
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: var(--warning);
 }
 .platform-status.soon {
   background: rgba(255, 255, 255, 0.05);
@@ -463,9 +473,9 @@ async function queueAll() {
   text-transform: capitalize;
 }
 .tab-btn.active {
-  background: #7c3aed;
+  background: var(--accent);
   color: #fff;
-  border-color: #7c3aed;
+  border-color: var(--accent);
 }
 .platform-textarea {
   width: 100%;
@@ -481,7 +491,7 @@ async function queueAll() {
   outline: none;
 }
 .platform-textarea:focus {
-  border-color: #7c3aed;
+  border-color: var(--accent);
 }
 .char-count {
   font-size: 10px;
@@ -490,7 +500,7 @@ async function queueAll() {
   margin-top: 4px;
 }
 .char-count.over {
-  color: #ef4444;
+  color: var(--danger);
 }
 
 /* Step 3: Media */
@@ -508,8 +518,8 @@ async function queueAll() {
   cursor: pointer;
 }
 .media-option.active {
-  border-color: #7c3aed;
-  background: rgba(124, 58, 237, 0.1);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .promo-preview img {
   width: 100%;
@@ -539,8 +549,8 @@ async function queueAll() {
   cursor: pointer;
 }
 .schedule-option.active {
-  border-color: #7c3aed;
-  background: rgba(124, 58, 237, 0.08);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .schedule-label {
   font-size: 12px;
@@ -573,7 +583,7 @@ async function queueAll() {
   font-size: 11px;
   font-weight: 600;
   text-transform: capitalize;
-  color: #a78bfa;
+  color: var(--accent);
 }
 .review-schedule {
   font-size: 10px;
@@ -594,7 +604,7 @@ async function queueAll() {
   padding: 32px 16px;
 }
 .success-icon {
-  color: #4ade80;
+  color: var(--success);
   margin-bottom: 8px;
 }
 .success-title {
@@ -634,14 +644,14 @@ async function queueAll() {
   color: var(--text-secondary);
 }
 .btn.secondary:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--hover-bg);
 }
 .btn.primary {
-  background: #7c3aed;
+  background: var(--accent);
   color: #fff;
 }
 .btn.primary:hover {
-  background: #6d28d9;
+  background: var(--accent-strong);
 }
 .btn.primary:disabled {
   opacity: 0.4;

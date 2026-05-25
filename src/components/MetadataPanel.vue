@@ -276,7 +276,7 @@ defineEmits<{
 }
 
 .weeknote-type {
-  color: #f59e0b;
+  color: var(--warning);
   font-weight: 600;
   font-size: 10px;
 }
@@ -328,11 +328,11 @@ defineEmits<{
 }
 
 .unlisted-text {
-  color: #6366f1;
+  color: var(--accent);
 }
 
 .protected-text {
-  color: #8b5cf6;
+  color: var(--accent);
 }
 
 .public-text {
@@ -376,7 +376,7 @@ defineEmits<{
   padding: 2px 8px;
   font-size: 10px;
   font-weight: 500;
-  background: var(--accent);
+  background: var(--hover-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
   color: var(--text-secondary);

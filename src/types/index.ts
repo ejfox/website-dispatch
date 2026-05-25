@@ -64,6 +64,61 @@ export interface PublishTarget {
   is_default: boolean
 }
 
+export interface DiffLine {
+  tag: 'equal' | 'added' | 'removed'
+  content: string
+  source_line: number | null
+  published_line: number | null
+}
+
+export interface DiffHunk {
+  source_start: number
+  published_start: number
+  lines: DiffLine[]
+}
+
+export interface PublishDiff {
+  has_diff: boolean
+  source_path: string
+  published_path: string | null
+  words_added: number
+  words_removed: number
+  lines_added: number
+  lines_removed: number
+  hunks: DiffHunk[]
+  error: string | null
+}
+
+export type MediaDestinationKind = 'cloudinary' | 'r2'
+
+export interface CloudinaryCreds {
+  cloud_name: string
+  api_key: string
+  api_secret: string
+}
+
+export interface R2Creds {
+  account_id: string
+  access_key_id: string
+  secret_access_key: string
+  bucket: string
+  public_url_base: string
+}
+
+export interface MediaConfig {
+  primary: MediaDestinationKind
+  mirrors: MediaDestinationKind[]
+  cloudinary: CloudinaryCreds | null
+  r2: R2Creds | null
+}
+
+export interface MediaStatus {
+  cloudinary: boolean
+  r2: boolean
+  primary: MediaDestinationKind
+  mirrors: MediaDestinationKind[]
+}
+
 export interface AppConfig {
   version: number
   vault: VaultConfig
@@ -73,6 +128,8 @@ export interface AppConfig {
   cloudinary_cloud_name: string | null
   analytics_url: string | null
   mastodon_instance: string | null
+  media: MediaConfig
+  webmentions_bridgy_fed: boolean
 }
 
 export interface GitStatus {

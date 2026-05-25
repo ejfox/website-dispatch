@@ -1,9 +1,25 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useLocalStorage } from '@vueuse/core'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
-import { PhBackpack, PhMapPin, PhClock, PhCube, PhFloppyDisk, PhArrowsClockwise, PhWarning } from '@phosphor-icons/vue'
+import {
+  PhBackpack,
+  PhMapPin,
+  PhClock,
+  PhCube,
+  PhFloppyDisk,
+  PhArrowsClockwise,
+  PhWarning,
+  PhStar,
+  PhCheck,
+  PhX,
+  PhPencilSimple,
+  PhArrowSquareOut,
+  PhCamera,
+  PhDrop,
+  PhPackage,
+} from '@phosphor-icons/vue'
 
 interface Gear {
   name: string
@@ -41,23 +57,20 @@ interface Pending {
 
 const items = ref<Gear[]>([])
 const filter = ref('')
-// Persist cursor + filter so switching tabs and coming back lands where you left off.
 const cursor = useLocalStorage('dispatch-gear-cursor', 0)
 const loading = ref(false)
 const error = ref<string | null>(null)
 const pending = ref<Pending>({ dirty: false, diff_stat: '' })
 const status = ref<string | null>(null)
 
-// Resizable detail-panel height (drag handle between gear-list and gear-detail).
-const detailHeight = useLocalStorage('dispatch-gear-detail-height', 260)
+const detailHeight = useLocalStorage('dispatch-gear-detail-height', 360)
 function startResize(e: MouseEvent) {
   e.preventDefault()
   const startY = e.clientY
   const startH = detailHeight.value
   const onMove = (ev: MouseEvent) => {
-    // Mouse moves UP → height grows.
     const next = startH + (startY - ev.clientY)
-    detailHeight.value = Math.max(120, Math.min(window.innerHeight - 180, next))
+    detailHeight.value = Math.max(160, Math.min(window.innerHeight - 180, next))
   }
   const onUp = () => {
     window.removeEventListener('mousemove', onMove)
@@ -71,19 +84,21 @@ function startResize(e: MouseEvent) {
   window.addEventListener('mouseup', onUp)
 }
 
-// inline editor state
-const editing = ref<null | 'location' | 'scan'>(null)
+// Generic inline-edit state. `editField` is the snake_case field key matching
+// the backend's whitelist. `editValue` mirrors the current input.
+const editField = ref<string | null>(null)
+const editValue = ref('')
+// Separate state for the two-field location editor.
+const editingLocation = ref(false)
 const editRoom = ref('')
 const editDetail = ref('')
-const editScan = ref('')
-const editInput = ref<HTMLInputElement | null>(null)
+const editInput = ref<HTMLInputElement | HTMLTextAreaElement | null>(null)
 
 type SortKey = 'name' | 'weight' | 'type' | 'container' | 'location' | 'last_used'
 const sortKey = useLocalStorage<SortKey>('dispatch-gear-sort', 'name')
 const sortDir = useLocalStorage<'asc' | 'desc'>('dispatch-gear-sort-dir', 'asc')
 const containerFilter = useLocalStorage<string>('dispatch-gear-container', '')
 
-// Distinct containers, sorted, with count.
 const containerOptions = computed(() => {
   const map = new Map<string, number>()
   for (const it of items.value) {
@@ -103,6 +118,26 @@ function toggleSort(key: SortKey) {
   }
 }
 
+// If >50% of items share the same `last_used` value, treat that as a
+// bulk-import default and suppress it in the row view — otherwise every
+// row reads identically and the date column becomes pure noise.
+const bulkLastUsed = computed(() => {
+  const counts = new Map<string, number>()
+  for (const it of items.value) {
+    if (!it.last_used) continue
+    counts.set(it.last_used, (counts.get(it.last_used) || 0) + 1)
+  }
+  let bulk: string | null = null
+  let best = 0
+  for (const [k, n] of counts) {
+    if (n > best) {
+      best = n
+      bulk = k
+    }
+  }
+  return bulk && best > items.value.length / 2 ? bulk : null
+})
+
 const filtered = computed(() => {
   const q = filter.value.trim().toLowerCase()
   const cont = containerFilter.value.trim()
@@ -111,11 +146,10 @@ const filtered = computed(() => {
   if (q) {
     out = out.filter((it) => {
       const hay =
-        `${it.name} ${it.type} ${it.parent_container} ${it.location_room} ${it.location_detail} ${it.tags}`.toLowerCase()
+        `${it.name} ${it.brand} ${it.type} ${it.category} ${it.parent_container} ${it.location_room} ${it.location_detail} ${it.tags} ${it.notes}`.toLowerCase()
       return hay.includes(q)
     })
   }
-
   const dir = sortDir.value === 'asc' ? 1 : -1
   const cmp = (a: string, b: string) => a.localeCompare(b) * dir
   out = [...out].sort((a, b) => {
@@ -131,8 +165,6 @@ const filtered = computed(() => {
       case 'location':
         return cmp(a.location_room || '', b.location_room || '')
       case 'last_used': {
-        // Empty last_used sorts to bottom regardless of direction so unused
-        // items don't crowd the top when ascending.
         const av = a.last_used || ''
         const bv = b.last_used || ''
         if (!av && !bv) return 0
@@ -147,6 +179,13 @@ const filtered = computed(() => {
 
 const selected = computed(() => filtered.value[cursor.value] ?? null)
 
+// Cancel any in-progress edit when the selected row changes — otherwise the
+// editor would silently write back to a different item.
+watch(selected, () => {
+  editField.value = null
+  editingLocation.value = false
+})
+
 const today = () => new Date().toISOString().slice(0, 10)
 const isStale = (last: string) => {
   if (!last) return true
@@ -154,6 +193,16 @@ const isStale = (last: string) => {
   if (Number.isNaN(d.getTime())) return true
   const days = (Date.now() - d.getTime()) / 86400000
   return days > 90
+}
+const isTruthy = (v: string) => /^(y|yes|true|1|x|✓)$/i.test((v || '').trim())
+
+// Type → icon mapping. Returns a phosphor component, defaulting to PhPackage.
+const typeIcon = (t: string) => {
+  const k = (t || '').toLowerCase()
+  if (k.includes('camera') || k.includes('photo')) return PhCamera
+  if (k.includes('water') || k.includes('hydration') || k.includes('drink')) return PhDrop
+  if (k.includes('sleep') || k.includes('bag')) return PhBackpack
+  return PhPackage
 }
 
 async function load() {
@@ -197,23 +246,6 @@ async function showRowContextMenu(it: Gear, idx: number, e: MouseEvent) {
         await load()
       },
     }),
-    await MenuItem.new({
-      text: 'Edit Location…',
-      action: () => {
-        editRoom.value = it.location_room || ''
-        editDetail.value = it.location_detail || ''
-        editing.value = 'location'
-        nextTick(() => editInput.value?.focus())
-      },
-    }),
-    await MenuItem.new({
-      text: 'Edit 3D Scan URL…',
-      action: () => {
-        editScan.value = it.scan_3d_url || ''
-        editing.value = 'scan'
-        nextTick(() => editInput.value?.focus())
-      },
-    }),
     await PredefinedMenuItem.new({ item: 'Separator' }),
     await MenuItem.new({
       text: 'Copy Name',
@@ -252,9 +284,33 @@ async function markUsed() {
   }
 }
 
-function startLocationEdit() {
+function beginEdit(field: string, current: string) {
   if (!selected.value) return
-  editing.value = 'location'
+  editingLocation.value = false
+  editField.value = field
+  editValue.value = current || ''
+  nextTick(() => editInput.value?.focus())
+}
+
+async function saveField() {
+  if (!selected.value || !editField.value) return
+  const name = selected.value.name
+  const field = editField.value
+  const value = editValue.value
+  try {
+    await invoke('update_gear_field', { name, field, value })
+    flash(`saved ${field}`)
+    editField.value = null
+    await load()
+  } catch (e: any) {
+    error.value = String(e)
+  }
+}
+
+function beginLocationEdit() {
+  if (!selected.value) return
+  editField.value = null
+  editingLocation.value = true
   editRoom.value = selected.value.location_room || ''
   editDetail.value = selected.value.location_detail || ''
   nextTick(() => editInput.value?.focus())
@@ -268,30 +324,23 @@ async function saveLocation() {
       room: editRoom.value,
       detail: editDetail.value,
     })
-    flash(`location updated`)
-    editing.value = null
+    flash('location updated')
+    editingLocation.value = false
     await load()
   } catch (e: any) {
     error.value = String(e)
   }
 }
 
-function startScanEdit() {
+async function toggleStar() {
   if (!selected.value) return
-  editing.value = 'scan'
-  editScan.value = selected.value.scan_3d_url || ''
-  nextTick(() => editInput.value?.focus())
-}
-
-async function saveScan() {
-  if (!selected.value) return
+  const cur = isTruthy(selected.value.star)
   try {
-    await invoke('set_gear_scan_url', {
+    await invoke('update_gear_field', {
       name: selected.value.name,
-      url: editScan.value,
+      field: 'star',
+      value: cur ? '' : 'true',
     })
-    flash(`scan url saved`)
-    editing.value = null
     await load()
   } catch (e: any) {
     error.value = String(e)
@@ -308,8 +357,12 @@ async function commitChanges() {
   }
 }
 
+function openUrl(url: string) {
+  if (!url) return
+  window.open(url, '_blank')
+}
+
 async function openInTui() {
-  // shell to gear-tui via Tauri shell plugin if available; otherwise just notify
   try {
     const shell = await import('@tauri-apps/plugin-shell')
     const cmd = shell.Command.create('gear-tui', [])
@@ -321,12 +374,12 @@ async function openInTui() {
 }
 
 function onKey(e: KeyboardEvent) {
-  // bail if a modifier is involved or focus is in an input we own
   if (e.metaKey || e.ctrlKey || e.altKey) return
   const t = e.target as HTMLElement
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) {
     if (e.key === 'Escape') {
-      editing.value = null
+      editField.value = null
+      editingLocation.value = false
       ;(t as HTMLInputElement).blur()
       e.preventDefault()
     }
@@ -355,11 +408,19 @@ function onKey(e: KeyboardEvent) {
       e.preventDefault()
       break
     case 'l':
-      startLocationEdit()
+      beginLocationEdit()
       e.preventDefault()
       break
     case 's':
-      startScanEdit()
+      if (selected.value) beginEdit('scan_3d_url', selected.value.scan_3d_url)
+      e.preventDefault()
+      break
+    case 'n':
+      if (selected.value) beginEdit('notes', selected.value.notes)
+      e.preventDefault()
+      break
+    case '*':
+      toggleStar()
       e.preventDefault()
       break
     case 'e':
@@ -385,10 +446,17 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
+const tagsList = computed(() => {
+  if (!selected.value?.tags) return []
+  return selected.value.tags
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+})
+
 onMounted(() => {
   load()
   window.addEventListener('keydown', onKey)
-  // Auto-focus the filter input on tab open so typing-to-filter Just Works.
   nextTick(() => {
     document.querySelector<HTMLInputElement>('#gear-filter')?.focus()
   })
@@ -426,11 +494,7 @@ onUnmounted(() => {
       v-model="filter"
       class="gear-filter"
       placeholder="filter…  (/ to focus)"
-      @keydown.escape="
-        (e) => {
-          ;(e.target as HTMLInputElement).blur()
-        }
-      "
+      @keydown.escape="(e) => (e.target as HTMLInputElement).blur()"
     />
 
     <div v-if="error" class="gear-error">{{ error }}</div>
@@ -464,17 +528,31 @@ onUnmounted(() => {
         @click="cursor = i"
         @contextmenu="showRowContextMenu(it, i, $event)"
       >
-        <span class="gear-name">{{ it.name }}</span>
+        <span class="gear-row-lead">
+          <component :is="typeIcon(it.type || it.category)" :size="12" class="row-type-icon" />
+          <PhStar v-if="isTruthy(it.star)" :size="10" weight="fill" class="row-star" />
+          <span class="gear-name">{{ it.name }}</span>
+        </span>
         <span class="gear-meta">
-          <span v-if="it.location_room" class="loc">
+          <span v-if="it.type" class="type-chip">{{ it.type }}</span>
+          <span v-if="parseFloat(it.weight_oz) > 0" class="weight">{{ it.weight_oz }}oz</span>
+          <span v-if="!containerFilter && it.parent_container" class="container-chip" :title="`in ${it.parent_container}`">
+            {{ it.parent_container }}
+          </span>
+          <span v-if="it.location_room && !it.parent_container" class="loc">
             <PhMapPin :size="9" />
             {{ it.location_room }}
           </span>
-          <span class="last" :class="{ stale: isStale(it.last_used) }">
+          <span
+            v-if="it.last_used && it.last_used !== bulkLastUsed"
+            class="last"
+            :class="{ stale: isStale(it.last_used) }"
+            :title="`last used ${it.last_used}`"
+          >
             <PhClock :size="9" />
-            {{ it.last_used || '—' }}
+            {{ it.last_used }}
           </span>
-          <span v-if="it.scan_3d_url" class="scan" title="has 3D scan"><PhCube :size="9" /></span>
+          <PhCube v-if="it.scan_3d_url" :size="10" class="scan-icon" title="has 3D scan" />
         </span>
       </div>
       <div v-if="!filtered.length && !loading" class="empty-row">no items match</div>
@@ -486,75 +564,360 @@ onUnmounted(() => {
       title="drag to resize"
       @mousedown="startResize"
     ></div>
+
     <div v-if="selected" class="gear-detail" :style="{ height: detailHeight + 'px' }">
-      <div class="detail-name">{{ selected.name }}</div>
-      <div class="detail-grid">
-        <div>
-          <span class="lbl">type</span>
-          {{ selected.type || '—' }}
+      <div class="detail-card">
+        <div class="detail-photo" :class="{ empty: !selected.photo_url }">
+          <img v-if="selected.photo_url" :src="selected.photo_url" :alt="selected.name" />
+          <button v-else class="photo-add" @click="beginEdit('photo_url', '')" title="add photo URL">
+            <PhCamera :size="22" />
+            <span>add photo</span>
+          </button>
         </div>
-        <div>
-          <span class="lbl">weight</span>
-          {{ selected.weight_oz || '—' }} oz
-        </div>
-        <div>
-          <span class="lbl">in</span>
-          {{ selected.parent_container || '—' }}
-        </div>
-        <div>
-          <span class="lbl">last used</span>
-          {{ selected.last_used || '—' }}
-        </div>
-        <div class="span2">
-          <span class="lbl">location</span>
-          {{ selected.location_room || '—' }}{{ selected.location_detail ? ' / ' + selected.location_detail : '' }}
-        </div>
-        <div class="span2">
-          <span class="lbl">scan</span>
-          {{ selected.scan_3d_url || '—' }}
-        </div>
-      </div>
 
-      <div v-if="editing === 'location'" class="inline-edit">
-        <input
-          ref="editInput"
-          v-model="editRoom"
-          placeholder="Location_Room"
-          @keydown.enter="saveLocation"
-          @keydown.escape="editing = null"
-        />
-        <input
-          v-model="editDetail"
-          placeholder="Location_Detail"
-          @keydown.enter="saveLocation"
-          @keydown.escape="editing = null"
-        />
-        <button @click="saveLocation">save</button>
-      </div>
-      <div v-else-if="editing === 'scan'" class="inline-edit">
-        <input
-          ref="editInput"
-          v-model="editScan"
-          placeholder="Scan_3D_URL"
-          @keydown.enter="saveScan"
-          @keydown.escape="editing = null"
-        />
-        <button @click="saveScan">save</button>
-      </div>
+        <div class="detail-body">
+          <div class="detail-headline">
+            <button class="star-btn" @click="toggleStar" :title="isTruthy(selected.star) ? 'unstar' : 'star'">
+              <PhStar v-if="isTruthy(selected.star)" :size="14" weight="fill" class="starred" />
+              <PhStar v-else :size="14" />
+            </button>
+            <div class="detail-name-block">
+              <div class="detail-name">{{ selected.name }}</div>
+              <div class="detail-sub">
+                <template v-if="selected.brand || selected.model_number">
+                  {{ [selected.brand, selected.model_number].filter(Boolean).join(' · ') }}
+                </template>
+                <template v-else>
+                  <span class="muted">no brand / model</span>
+                </template>
+              </div>
+            </div>
+            <div class="headline-actions">
+              <button v-if="selected.amazon_url" class="link-btn" @click="openUrl(selected.amazon_url)" title="Amazon">
+                <PhArrowSquareOut :size="11" /> amazon
+              </button>
+              <button v-if="selected.scan_3d_url" class="link-btn" @click="openUrl(selected.scan_3d_url)" title="3D scan">
+                <PhCube :size="11" /> scan
+              </button>
+              <button class="link-btn primary" @click="markUsed" title="mark used today (u)">
+                <PhCheck :size="11" /> used
+              </button>
+            </div>
+          </div>
 
-      <div class="shortcuts">
-        <kbd>u</kbd>
-        mark used
-        <kbd>l</kbd>
-        location
-        <kbd>s</kbd>
-        scan url
-        <kbd>e</kbd>
-        open tui
-        <kbd>c</kbd>
-        commit
-        <kbd>j/k</kbd>
-        nav
+          <div class="detail-fields">
+            <div class="field">
+              <span class="lbl">type</span>
+              <template v-if="editField === 'type'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val" @click="beginEdit('type', selected.type)">
+                {{ selected.type || '—' }}
+              </button>
+            </div>
+            <div class="field">
+              <span class="lbl">category</span>
+              <template v-if="editField === 'category'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val" @click="beginEdit('category', selected.category)">
+                {{ selected.category || '—' }}
+              </button>
+            </div>
+            <div class="field">
+              <span class="lbl">weight</span>
+              <template v-if="editField === 'weight_oz'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val" @click="beginEdit('weight_oz', selected.weight_oz)">
+                {{ selected.weight_oz ? selected.weight_oz + ' oz' : '—' }}
+              </button>
+            </div>
+            <div class="field">
+              <span class="lbl">qty</span>
+              <template v-if="editField === 'qty'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val" @click="beginEdit('qty', selected.qty)">
+                {{ selected.qty || '—' }}
+              </button>
+            </div>
+            <div class="field">
+              <span class="lbl">container</span>
+              <template v-if="editField === 'parent_container'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val" @click="beginEdit('parent_container', selected.parent_container)">
+                {{ selected.parent_container || '—' }}
+              </button>
+            </div>
+            <div class="field">
+              <span class="lbl">condition</span>
+              <template v-if="editField === 'condition'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val" @click="beginEdit('condition', selected.condition)">
+                {{ selected.condition || '—' }}
+              </button>
+            </div>
+
+            <div class="field span2">
+              <span class="lbl">location</span>
+              <template v-if="editingLocation">
+                <div class="loc-edit">
+                  <input
+                    ref="editInput"
+                    v-model="editRoom"
+                    placeholder="room"
+                    @keydown.enter="saveLocation"
+                    @keydown.escape="editingLocation = false"
+                  />
+                  <input
+                    v-model="editDetail"
+                    placeholder="detail"
+                    @keydown.enter="saveLocation"
+                    @keydown.escape="editingLocation = false"
+                  />
+                  <button class="mini-btn" @click="saveLocation"><PhCheck :size="11" /></button>
+                  <button class="mini-btn" @click="editingLocation = false"><PhX :size="11" /></button>
+                </div>
+              </template>
+              <button v-else class="val" @click="beginLocationEdit">
+                <PhMapPin :size="10" />
+                {{ selected.location_room || '—' }}
+                <span v-if="selected.location_detail" class="muted">/ {{ selected.location_detail }}</span>
+              </button>
+            </div>
+
+            <div class="field">
+              <span class="lbl">purchase</span>
+              <template v-if="editField === 'purchase_date'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  placeholder="YYYY-MM-DD"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val" @click="beginEdit('purchase_date', selected.purchase_date)">
+                {{ selected.purchase_date || '—' }}
+              </button>
+            </div>
+            <div class="field">
+              <span class="lbl">price</span>
+              <template v-if="editField === 'purchase_price'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val" @click="beginEdit('purchase_price', selected.purchase_price)">
+                {{ selected.purchase_price ? '$' + selected.purchase_price : '—' }}
+              </button>
+            </div>
+            <div class="field">
+              <span class="lbl">brand</span>
+              <template v-if="editField === 'brand'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val" @click="beginEdit('brand', selected.brand)">
+                {{ selected.brand || '—' }}
+              </button>
+            </div>
+            <div class="field">
+              <span class="lbl">model</span>
+              <template v-if="editField === 'model_number'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val" @click="beginEdit('model_number', selected.model_number)">
+                {{ selected.model_number || '—' }}
+              </button>
+            </div>
+            <div class="field">
+              <span class="lbl">serial</span>
+              <template v-if="editField === 'serial_number'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val" @click="beginEdit('serial_number', selected.serial_number)">
+                {{ selected.serial_number || '—' }}
+              </button>
+            </div>
+            <div class="field">
+              <span class="lbl">last used</span>
+              <span class="val readonly" :class="{ stale: isStale(selected.last_used) }">
+                <PhClock :size="10" />
+                {{ selected.last_used || 'never' }}
+              </span>
+            </div>
+          </div>
+
+          <div class="detail-tags">
+            <span class="lbl">tags</span>
+            <template v-if="editField === 'tags'">
+              <input
+                ref="editInput"
+                v-model="editValue"
+                placeholder="comma-separated"
+                @keydown.enter="saveField"
+                @keydown.escape="editField = null"
+                @blur="saveField"
+              />
+            </template>
+            <template v-else>
+              <button
+                v-for="t in tagsList"
+                :key="t"
+                class="tag-chip"
+                @click="beginEdit('tags', selected.tags)"
+              >
+                {{ t }}
+              </button>
+              <button v-if="!tagsList.length" class="tag-add" @click="beginEdit('tags', '')">
+                <PhPencilSimple :size="10" /> add tags
+              </button>
+            </template>
+          </div>
+
+          <div class="detail-notes">
+            <span class="lbl">notes</span>
+            <template v-if="editField === 'notes'">
+              <textarea
+                ref="editInput"
+                v-model="editValue"
+                rows="3"
+                @keydown.escape="editField = null"
+                @blur="saveField"
+              />
+            </template>
+            <button v-else class="notes-display" @click="beginEdit('notes', selected.notes)">
+              <span v-if="selected.notes" class="notes-text">{{ selected.notes }}</span>
+              <span v-else class="muted">
+                <PhPencilSimple :size="10" /> add notes
+              </span>
+            </button>
+          </div>
+
+          <div class="detail-urls">
+            <div class="field span2">
+              <span class="lbl">photo url</span>
+              <template v-if="editField === 'photo_url'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  placeholder="https://…"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val truncate" @click="beginEdit('photo_url', selected.photo_url)">
+                {{ selected.photo_url || '—' }}
+              </button>
+            </div>
+            <div class="field span2">
+              <span class="lbl">scan url</span>
+              <template v-if="editField === 'scan_3d_url'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  placeholder="https://…"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val truncate" @click="beginEdit('scan_3d_url', selected.scan_3d_url)">
+                {{ selected.scan_3d_url || '—' }}
+              </button>
+            </div>
+            <div class="field span2">
+              <span class="lbl">amazon url</span>
+              <template v-if="editField === 'amazon_url'">
+                <input
+                  ref="editInput"
+                  v-model="editValue"
+                  placeholder="https://…"
+                  @keydown.enter="saveField"
+                  @keydown.escape="editField = null"
+                  @blur="saveField"
+                />
+              </template>
+              <button v-else class="val truncate" @click="beginEdit('amazon_url', selected.amazon_url)">
+                {{ selected.amazon_url || '—' }}
+              </button>
+            </div>
+          </div>
+
+          <div class="shortcuts">
+            <span><kbd>u</kbd> used</span>
+            <span><kbd>l</kbd> location</span>
+            <span><kbd>n</kbd> notes</span>
+            <span><kbd>s</kbd> scan</span>
+            <span><kbd>*</kbd> star</span>
+            <span><kbd>e</kbd> tui</span>
+            <span><kbd>c</kbd> commit</span>
+            <span><kbd>j/k</kbd> nav</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -596,7 +959,7 @@ onUnmounted(() => {
 }
 
 .flash {
-  color: var(--accent, #6eedf7);
+  color: var(--accent);
   font-size: 11px;
 }
 
@@ -605,8 +968,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 3px;
   font-size: 10px;
-  color: #e6a000;
-  border: 1px solid #735865;
+  color: var(--warning);
+  border: 1px solid var(--border-light);
   border-radius: 3px;
   padding: 1px 5px;
 }
@@ -645,7 +1008,7 @@ onUnmounted(() => {
 
 .gear-error {
   margin: 0 10px 6px;
-  color: #e60067;
+  color: var(--accent);
   font-size: 11px;
 }
 
@@ -676,7 +1039,7 @@ onUnmounted(() => {
   color: var(--text-secondary, #aaa);
 }
 .sort-row button.active {
-  background: var(--accent-bg, #6b1a3d);
+  background: var(--accent-soft);
   color: #fff;
 }
 .sort-row .dir {
@@ -707,42 +1070,105 @@ onUnmounted(() => {
   padding: 4px 10px;
   cursor: pointer;
   border-bottom: 1px solid #161616;
+  gap: 8px;
 }
 
 .gear-row.active {
-  background: var(--accent-bg, #6b1a3d);
+  background: var(--accent-soft);
   color: #fff;
+}
+
+.gear-row-lead {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+
+.row-type-icon {
+  color: var(--muted, #777);
+  flex-shrink: 0;
+}
+.gear-row.active .row-type-icon {
+  color: var(--accent-soft);
+}
+.row-star {
+  color: var(--warning);
+  flex-shrink: 0;
 }
 
 .gear-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 1;
+  min-width: 0;
 }
 
 .gear-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: 10px;
   color: var(--muted, #888);
+  flex-shrink: 0;
 }
 
 .gear-row.active .gear-meta {
-  color: #ffd0e0;
+  color: var(--accent-soft);
+}
+
+.type-chip {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border, #222);
+  border-radius: 2px;
+  padding: 0 5px;
+  font-size: 9px;
+  text-transform: lowercase;
+  color: var(--text-tertiary, #888);
+}
+.gear-row.active .type-chip {
+  background: rgba(0, 0, 0, 0.18);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.container-chip {
+  font-size: 9px;
+  color: var(--text-tertiary, #777);
+  text-transform: lowercase;
+}
+.gear-row.active .container-chip {
+  color: var(--accent-soft);
+}
+
+.weight {
+  font-variant-numeric: tabular-nums;
+  font-size: 9px;
+  color: var(--text-tertiary, #888);
+}
+.gear-row.active .weight {
+  color: var(--accent-soft);
 }
 
 .gear-meta .loc,
-.gear-meta .last,
-.gear-meta .scan {
+.gear-meta .last {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  font-variant-numeric: tabular-nums;
 }
 
 .gear-meta .last.stale {
-  color: #b86a00;
+  color: var(--warning);
+}
+.gear-row.active .gear-meta .last.stale {
+  color: var(--warning);
+}
+
+.scan-icon {
+  color: var(--accent);
+  opacity: 0.7;
 }
 
 .empty-row {
@@ -761,72 +1187,333 @@ onUnmounted(() => {
 }
 .gear-detail-resize:hover,
 .gear-detail-resize:active {
-  background: var(--accent-bg, #6b1a3d);
+  background: var(--accent-soft);
 }
 
 .gear-detail {
   border-top: 1px solid var(--border, #222);
-  padding: 8px 10px;
-  font-size: 11px;
   overflow-y: auto;
   flex-shrink: 0;
+  background: var(--bg-alt, #0a0a0a);
+}
+
+.detail-card {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 14px;
+  padding: 12px;
+}
+
+.detail-photo {
+  width: 140px;
+  height: 140px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #0d0d0d;
+  border: 1px solid var(--border, #222);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.detail-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.detail-photo.empty {
+  border-style: dashed;
+}
+.photo-add {
+  background: transparent;
+  border: 0;
+  color: var(--muted, #555);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  font-size: 10px;
+}
+.photo-add:hover {
+  color: var(--text-secondary, #aaa);
+}
+
+.detail-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-headline {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.star-btn {
+  background: transparent;
+  border: 0;
+  color: var(--muted, #555);
+  cursor: pointer;
+  padding: 2px;
+  margin-top: 1px;
+}
+.star-btn:hover {
+  color: var(--warning);
+}
+.star-btn .starred {
+  color: var(--warning);
+}
+
+.detail-name-block {
+  flex: 1;
+  min-width: 0;
 }
 
 .detail-name {
   font-weight: 600;
-  font-size: 12px;
-  margin-bottom: 4px;
+  font-size: 13px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.detail-grid {
+.detail-sub {
+  font-size: 10px;
+  color: var(--text-tertiary, #888);
+  margin-top: 2px;
+}
+
+.headline-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  color: var(--text-secondary, #aaa);
+  border: 1px solid var(--border, #222);
+  border-radius: 3px;
+  padding: 2px 7px;
+  font-size: 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.link-btn:hover {
+  background: var(--bg-alt, #161616);
+  color: var(--text, #ddd);
+}
+.link-btn.primary {
+  border-color: var(--accent-soft);
+  color: var(--accent);
+}
+.link-btn.primary:hover {
+  background: var(--accent-soft);
+  color: #fff;
+}
+
+.detail-fields {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px 12px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px 12px;
+}
+.detail-fields .field.span2 {
+  grid-column: span 3;
 }
 
-.detail-grid .span2 {
-  grid-column: span 2;
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
 }
 
 .lbl {
-  color: var(--muted, #888);
-  margin-right: 5px;
-  font-size: 10px;
+  color: var(--muted, #666);
+  font-size: 9px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+  min-width: 52px;
 }
 
-.inline-edit {
-  margin-top: 6px;
-  display: flex;
-  gap: 4px;
-}
-
-.inline-edit input {
-  flex: 1;
-  background: var(--bg-alt, #0d0d0d);
+.val {
+  background: transparent;
+  border: 1px solid transparent;
   color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 2px 5px;
+  border-radius: 2px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.val:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border, #222);
+}
+.val.truncate {
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--text-tertiary, #888);
+}
+.val.readonly {
+  cursor: default;
+}
+.val.readonly:hover {
+  background: transparent;
+  border-color: transparent;
+}
+.val.readonly.stale {
+  color: var(--warning);
+}
+
+.field input,
+.field textarea {
+  flex: 1;
+  background: var(--bg, #050505);
+  color: inherit;
+  border: 1px solid var(--accent-soft);
+  border-radius: 2px;
+  padding: 2px 5px;
+  font-size: 11px;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.loc-edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+.loc-edit input {
+  flex: 1;
+}
+
+.mini-btn {
+  background: transparent;
+  color: var(--text-secondary, #aaa);
   border: 1px solid var(--border, #222);
-  border-radius: 3px;
-  padding: 3px 6px;
+  border-radius: 2px;
+  padding: 2px 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.mini-btn:hover {
+  background: var(--bg-alt, #161616);
+}
+
+.detail-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.detail-tags input {
+  flex: 1;
+  background: var(--bg, #050505);
+  color: inherit;
+  border: 1px solid var(--accent-soft);
+  border-radius: 2px;
+  padding: 2px 5px;
   font-size: 11px;
   font-family: inherit;
 }
-
-.inline-edit button {
-  background: var(--accent, #6eedf7);
-  color: #000;
-  border: 0;
-  border-radius: 3px;
-  padding: 0 8px;
-  font-size: 11px;
+.tag-chip {
+  background: rgba(110, 237, 247, 0.08);
+  border: 1px solid rgba(110, 237, 247, 0.2);
+  color: var(--accent);
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 10px;
   cursor: pointer;
+  font-family: inherit;
+}
+.tag-chip:hover {
+  background: rgba(110, 237, 247, 0.18);
+}
+.tag-add {
+  background: transparent;
+  border: 1px dashed var(--border, #222);
+  color: var(--muted, #666);
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.tag-add:hover {
+  color: var(--text-secondary, #aaa);
+}
+
+.detail-notes {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.detail-notes .lbl {
+  margin-top: 4px;
+}
+.detail-notes textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 56px;
+  line-height: 1.4;
+}
+.notes-display {
+  flex: 1;
+  background: transparent;
+  border: 1px solid transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  min-height: 28px;
+  line-height: 1.4;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+.notes-display:hover {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--border, #222);
+}
+.notes-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.detail-urls {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
 }
 
 .shortcuts {
-  margin-top: 8px;
-  font-size: 10px;
-  color: var(--muted, #666);
+  margin-top: 4px;
+  font-size: 9px;
+  color: var(--muted, #555);
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -839,6 +1526,6 @@ onUnmounted(() => {
   border-radius: 2px;
   padding: 0 4px;
   margin-right: 3px;
-  font-size: 10px;
+  font-size: 9px;
 }
 </style>

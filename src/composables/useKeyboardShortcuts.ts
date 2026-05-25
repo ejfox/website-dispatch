@@ -10,7 +10,7 @@ export function useKeyboardShortcuts(options: {
   showSettings: Ref<boolean>
   newPostOpen: Ref<boolean>
   showHelp: Ref<boolean>
-  rightTab: Ref<'preview' | 'media' | 'journal' | 'gear'>
+  rightTab: Ref<'preview' | 'media' | 'activity' | 'journal' | 'gear'>
   filePreviewRef: Ref<{ openPublishConfirm: (isRepublish: boolean) => void } | null>
   openSearch: () => void
   closeSearch: () => void
@@ -43,10 +43,10 @@ export function useKeyboardShortcuts(options: {
       return
     }
 
-    // Cmd+1..4 jump to right-panel tab
-    if ((e.metaKey || e.ctrlKey) && ['1', '2', '3', '4'].includes(e.key)) {
+    // Cmd+1..5 jump to right-panel tab
+    if ((e.metaKey || e.ctrlKey) && ['1', '2', '3', '4', '5'].includes(e.key)) {
       e.preventDefault()
-      const tabs = ['preview', 'media', 'journal', 'gear'] as const
+      const tabs = ['preview', 'media', 'activity', 'journal', 'gear'] as const
       options.rightTab.value = tabs[parseInt(e.key) - 1]
       return
     }

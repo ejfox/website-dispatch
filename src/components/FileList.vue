@@ -226,13 +226,13 @@ async function showContextMenu(file: MarkdownFile, e: MouseEvent) {
 function getAgeColor(ts: number): string {
   const days = Math.min(Math.floor((Date.now() / 1000 - ts) / 86400), 365)
   const t = days / 365
-  if (t < 0.1) return '#fde724'
-  if (t < 0.25) return '#f89540'
-  if (t < 0.4) return '#e45a31'
-  if (t < 0.55) return '#c42d52'
-  if (t < 0.7) return '#8b1a79'
-  if (t < 0.85) return '#4e179a'
-  return '#30123b'
+  if (t < 0.1) return 'var(--warning)'
+  if (t < 0.25) return 'var(--warning)'
+  if (t < 0.4) return 'var(--warning)'
+  if (t < 0.55) return 'var(--danger)'
+  if (t < 0.7) return 'var(--accent-strong)'
+  if (t < 0.85) return 'var(--accent-strong)'
+  return 'var(--accent-strong)'
 }
 </script>
 
@@ -283,6 +283,15 @@ function getAgeColor(ts: number): string {
         <button
           v-for="file in group.files"
           :key="file.path"
+          v-memo="[
+            file.path,
+            file.modified,
+            file.published_url,
+            file.published_word_count,
+            file.word_count,
+            file.warnings.length,
+            selected?.path === file.path,
+          ]"
           class="item"
           :class="{
             selected: selected?.path === file.path,
@@ -397,8 +406,9 @@ function getAgeColor(ts: number): string {
     var(--bg-secondary) 0%,
     color-mix(in srgb, var(--bg-secondary) 95%, var(--bg-tertiary)) 100%
   );
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  /* No backdrop-filter here — the window is opaque (transparent:false in
+     tauri.conf.json) so the blur was invisible but cost a full-area GPU
+     pass on every scroll frame. */
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -452,14 +462,14 @@ function getAgeColor(ts: number): string {
 .filters .week-toggle {
   margin-left: 4px;
   background: rgba(245, 158, 11, 0.12);
-  color: #f59e0b;
+  color: var(--warning);
   border-radius: 8px;
   letter-spacing: 0.5px;
   font-weight: 600;
 }
 .filters .week-toggle:hover {
   background: rgba(245, 158, 11, 0.2);
-  color: #f59e0b;
+  color: var(--warning);
 }
 .filters .week-toggle.off {
   background: transparent;
@@ -544,8 +554,8 @@ function getAgeColor(ts: number): string {
   letter-spacing: 0.6px;
   color: var(--text-tertiary);
   background: color-mix(in srgb, var(--bg-tertiary) 80%, var(--bg-secondary));
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  /* Sticky group label — solid background, no blur needed (and blur on a
+     position:sticky element causes layout-shift hitches during scroll). */
   border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
@@ -584,8 +594,8 @@ function getAgeColor(ts: number): string {
 }
 
 .item.selected {
-  background: rgba(10, 132, 255, 0.15);
-  border-left: 2px solid rgba(10, 132, 255, 0.8);
+  background: var(--accent-soft);
+  border-left: 2px solid var(--accent);
   border-bottom-color: rgba(255, 255, 255, 0.04);
 }
 
@@ -669,14 +679,14 @@ function getAgeColor(ts: number): string {
   letter-spacing: 0;
   opacity: 0.85;
 }
-.modified-delta.pos { color: #4ade80; }
-.modified-delta.neg { color: #f87171; }
+.modified-delta.pos { color: var(--success); }
+.modified-delta.neg { color: var(--danger); }
 
 .unlisted-badge {
   font-size: 7.5px;
   font-weight: 600;
-  background: rgba(99, 102, 241, 0.15);
-  color: #818cf8;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
   padding: 1px 5px;
   border-radius: 8px;
   flex-shrink: 0;
@@ -689,8 +699,8 @@ function getAgeColor(ts: number): string {
 .protected-badge {
   font-size: 7.5px;
   font-weight: 600;
-  background: rgba(139, 92, 246, 0.15);
-  color: #a78bfa;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
   padding: 1px 5px;
   border-radius: 8px;
   flex-shrink: 0;
@@ -704,7 +714,7 @@ function getAgeColor(ts: number): string {
   font-size: 7.5px;
   font-weight: 600;
   background: rgba(245, 158, 11, 0.12);
-  color: #f59e0b;
+  color: var(--warning);
   padding: 1px 5px;
   border-radius: 8px;
   flex-shrink: 0;
@@ -712,7 +722,7 @@ function getAgeColor(ts: number): string {
 }
 
 .item.weeknote .age-bar {
-  background: #f59e0b !important;
+  background: var(--warning) !important;
   opacity: 0.6;
   display: block;
 }
@@ -726,8 +736,8 @@ function getAgeColor(ts: number): string {
   flex-shrink: 0;
   padding: 1px 4px;
   border-radius: 2px;
-  background: rgba(99, 102, 241, 0.2);
-  color: #6366f1;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
 }
 
 .protected-badge-draft {
@@ -735,8 +745,8 @@ function getAgeColor(ts: number): string {
   flex-shrink: 0;
   padding: 1px 4px;
   border-radius: 2px;
-  background: rgba(139, 92, 246, 0.2);
-  color: #8b5cf6;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
 }
 
 .scheduled-badge {

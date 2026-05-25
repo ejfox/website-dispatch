@@ -22,12 +22,15 @@ mod companion; // Companion web UI server for mobile access
 pub mod config; // App configuration (vault path, publish targets, editors)
 mod gear;
 mod journal; // Publishing journal, streaks, milestones
+mod media; // Multi-destination upload orchestrator (Cloudinary / R2 / both)
 mod menu; // Application menu bar builder
 mod obsidian; // Talks to Obsidian's Local REST API for backlinks
 mod open; // Open files in Obsidian, editors, terminal
 mod patterns; // Shared compiled regex patterns (LazyLock statics)
 mod preview; // Manages a local Node.js server for previewing posts
 mod publish; // Handles git operations to publish posts to your website
+mod publish_diff; // Computes a line-level diff between vault source and the published copy
+mod r2; // Cloudflare R2 (S3-compatible) uploader with hand-rolled SigV4
 mod sketchybar_cache; // Snapshot JSON for sketchybar / ambient surfaces
 mod syndication; // Post-publish social distribution (Mastodon, etc.)
 mod syndication_queue; // Scheduled syndication queue with background sender
@@ -598,6 +601,32 @@ async fn cloudinary_upload(
     cloudinary::upload_file(&file_path, folder.as_deref(), None).await
 }
 
+// --- MEDIA COMMANDS (multi-destination) ---
+// Unified upload that respects the user's primary/mirror config. The drop
+// handler in App.vue calls `media_upload`; `cloudinary_upload` is kept for
+// existing call sites (MediaLibrary, LocalMediaFixer).
+
+#[tauri::command]
+async fn media_upload(
+    file_path: String,
+    folder: Option<String>,
+) -> Result<media::MediaUploadResult, String> {
+    Ok(media::upload(&file_path, folder.as_deref()).await)
+}
+
+#[tauri::command]
+async fn check_media_status() -> Result<media::MediaStatus, String> {
+    Ok(media::status().await)
+}
+
+/// Return a line-level diff between the vault source markdown and the
+/// published copy in the website repo, for use by the StatusBanner "See
+/// changes" panel.
+#[tauri::command]
+fn get_publish_diff(file_path: String) -> Result<publish_diff::PublishDiff, String> {
+    publish_diff::compute_publish_diff(&file_path)
+}
+
 // Upload multiple files to Cloudinary
 #[tauri::command]
 async fn cloudinary_upload_batch(
@@ -1022,6 +1051,9 @@ pub fn run() {
             cloudinary_list_assets,
             cloudinary_search,
             cloudinary_list_folders,
+            media_upload,
+            check_media_status,
+            get_publish_diff,
             get_local_media,
             fix_local_media,
             apply_media_fixes,
@@ -1069,6 +1101,7 @@ pub fn run() {
             gear::mark_gear_used,
             gear::update_gear_location,
             gear::set_gear_scan_url,
+            gear::update_gear_field,
             gear::gear_pending_changes,
             gear::commit_gear_changes,
             play_system_sound,

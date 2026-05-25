@@ -1,23 +1,69 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useLocalStorage } from '@vueuse/core'
 import { X } from 'lucide-vue-next'
-import type { AppConfig } from '../types'
+import type { AppConfig, MediaDestinationKind, MediaStatus } from '../types'
 
-const homeTab = useLocalStorage<'preview' | 'media' | 'journal' | 'gear'>(
+const homeTab = useLocalStorage<'preview' | 'media' | 'activity' | 'journal' | 'gear'>(
   'dispatch-home-tab',
   'preview',
 )
 
 const emit = defineEmits<{ close: []; saved: [] }>()
 
-const activeTab = ref<'vault' | 'publishing' | 'editors' | 'connections'>('vault')
+const activeTab = ref<'vault' | 'publishing' | 'editors' | 'media' | 'connections'>('vault')
 const config = ref<AppConfig | null>(null)
 const configPath = ref('')
 const saving = ref(false)
 const saveMessage = ref('')
+
+// Media destination status (Cloudinary / R2 reachable?)
+const mediaStatus = ref<MediaStatus | null>(null)
+const checkingMedia = ref(false)
+async function checkMedia() {
+  checkingMedia.value = true
+  try {
+    mediaStatus.value = (await invoke('check_media_status')) as MediaStatus
+  } catch (e) {
+    console.warn('check_media_status failed', e)
+    mediaStatus.value = null
+  } finally {
+    checkingMedia.value = false
+  }
+}
+
+function ensureMediaShape() {
+  if (!config.value) return
+  if (!config.value.media) {
+    config.value.media = { primary: 'cloudinary', mirrors: [], cloudinary: null, r2: null }
+  }
+  if (!config.value.media.cloudinary) {
+    config.value.media.cloudinary = { cloud_name: '', api_key: '', api_secret: '' }
+  }
+  if (!config.value.media.r2) {
+    config.value.media.r2 = {
+      account_id: '',
+      access_key_id: '',
+      secret_access_key: '',
+      bucket: '',
+      public_url_base: '',
+    }
+  }
+}
+
+function toggleMirror(kind: MediaDestinationKind, on: boolean) {
+  if (!config.value) return
+  const mirrors = config.value.media.mirrors
+  const idx = mirrors.indexOf(kind)
+  if (on && idx === -1) mirrors.push(kind)
+  if (!on && idx !== -1) mirrors.splice(idx, 1)
+}
+
+function isMirror(kind: MediaDestinationKind) {
+  return !!config.value?.media.mirrors.includes(kind)
+}
 
 // Validation state
 const vaultPathValid = ref<boolean | null>(null)
@@ -51,10 +97,23 @@ onMounted(async () => {
   try {
     config.value = (await invoke('get_app_config')) as AppConfig
     configPath.value = (await invoke('get_config_path')) as string
+    ensureMediaShape()
+    // Don't block initial render — fire the probe in the background.
+    void checkMedia()
   } catch (e) {
     console.error('Failed to load config:', e)
   }
 })
+
+// Esc closes the modal — matches PublishConfirmModal / SearchModal behavior.
+function onEscape(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    e.stopPropagation()
+    emit('close')
+  }
+}
+onMounted(() => window.addEventListener('keydown', onEscape))
+onUnmounted(() => window.removeEventListener('keydown', onEscape))
 
 async function browseVaultPath() {
   const selected = await open({ directory: true, title: 'Select Obsidian Vault' })
@@ -185,6 +244,7 @@ async function save() {
           <button :class="{ active: activeTab === 'vault' }" @click="activeTab = 'vault'">Vault</button>
           <button :class="{ active: activeTab === 'publishing' }" @click="activeTab = 'publishing'">Publishing</button>
           <button :class="{ active: activeTab === 'editors' }" @click="activeTab = 'editors'">Editors</button>
+          <button :class="{ active: activeTab === 'media' }" @click="activeTab = 'media'">Media</button>
           <button :class="{ active: activeTab === 'connections' }" @click="activeTab = 'connections'">
             Connections
           </button>
@@ -201,6 +261,7 @@ async function save() {
               <div class="segmented">
                 <button :class="{ active: homeTab === 'preview' }" @click="homeTab = 'preview'">Preview</button>
                 <button :class="{ active: homeTab === 'media' }" @click="homeTab = 'media'">Media</button>
+                <button :class="{ active: homeTab === 'activity' }" @click="homeTab = 'activity'">Activity</button>
                 <button :class="{ active: homeTab === 'journal' }" @click="homeTab = 'journal'">Journal</button>
                 <button :class="{ active: homeTab === 'gear' }" @click="homeTab = 'gear'">Gear</button>
               </div>
@@ -338,14 +399,149 @@ async function save() {
             </div>
           </div>
 
-          <!-- Connections Tab -->
-          <div v-if="activeTab === 'connections'" class="tab-content">
+          <!-- Media Tab: where dropped screenshots go -->
+          <div v-if="activeTab === 'media'" class="tab-content">
             <div class="field">
-              <label>Cloudinary Cloud Name</label>
-              <input v-model="config.cloudinary_cloud_name" placeholder="your-cloud-name" />
-              <span class="hint">API keys configured via .env file</span>
+              <label>
+                Primary destination
+                <span class="hint">URL used in the markdown reference after a drag-drop</span>
+              </label>
+              <div class="segmented">
+                <button
+                  :class="{ active: config.media.primary === 'cloudinary' }"
+                  @click="config.media.primary = 'cloudinary'"
+                >
+                  Cloudinary
+                </button>
+                <button
+                  :class="{ active: config.media.primary === 'r2' }"
+                  @click="config.media.primary = 'r2'"
+                >
+                  R2
+                </button>
+              </div>
             </div>
 
+            <div class="field">
+              <label>
+                Also mirror to
+                <span class="hint">extra archival uploads — failures don't block the drop</span>
+              </label>
+              <div class="mirror-row">
+                <label class="mirror-toggle">
+                  <input
+                    type="checkbox"
+                    :checked="isMirror('cloudinary')"
+                    :disabled="config.media.primary === 'cloudinary'"
+                    @change="toggleMirror('cloudinary', ($event.target as HTMLInputElement).checked)"
+                  />
+                  Cloudinary
+                </label>
+                <label class="mirror-toggle">
+                  <input
+                    type="checkbox"
+                    :checked="isMirror('r2')"
+                    :disabled="config.media.primary === 'r2'"
+                    @change="toggleMirror('r2', ($event.target as HTMLInputElement).checked)"
+                  />
+                  R2
+                </label>
+              </div>
+            </div>
+
+            <div class="field-divider"></div>
+
+            <div class="media-section-header">
+              <h3>
+                Cloudinary
+                <span class="status-dot" :class="{
+                  ok: mediaStatus?.cloudinary === true,
+                  bad: mediaStatus?.cloudinary === false,
+                  unknown: mediaStatus === null,
+                }" :title="
+                  mediaStatus?.cloudinary
+                    ? 'Reachable'
+                    : mediaStatus === null
+                      ? 'Not checked yet'
+                      : 'Credentials missing or invalid'
+                "></span>
+              </h3>
+              <button class="verify-btn" :disabled="checkingMedia" @click="checkMedia">
+                {{ checkingMedia ? 'Checking…' : 'Test' }}
+              </button>
+            </div>
+            <div class="field">
+              <label>Cloud name</label>
+              <input v-model="config.media.cloudinary!.cloud_name" placeholder="your-cloud-name" />
+            </div>
+            <div class="field">
+              <label>API key</label>
+              <input v-model="config.media.cloudinary!.api_key" type="password" placeholder="••••••" />
+            </div>
+            <div class="field">
+              <label>API secret</label>
+              <input v-model="config.media.cloudinary!.api_secret" type="password" placeholder="••••••" />
+              <span class="hint">
+                If <code>CLOUDINARY_*</code> env vars are set (e.g. from <code>.env</code>),
+                they take precedence over these fields.
+              </span>
+            </div>
+
+            <div class="field-divider"></div>
+
+            <div class="media-section-header">
+              <h3>
+                Cloudflare R2
+                <span class="status-dot" :class="{
+                  ok: mediaStatus?.r2 === true,
+                  bad: mediaStatus?.r2 === false,
+                  unknown: mediaStatus === null,
+                }" :title="
+                  mediaStatus?.r2
+                    ? 'Reachable'
+                    : mediaStatus === null
+                      ? 'Not checked yet'
+                      : 'Credentials missing or invalid'
+                "></span>
+              </h3>
+              <button class="verify-btn" :disabled="checkingMedia" @click="checkMedia">
+                {{ checkingMedia ? 'Checking…' : 'Test' }}
+              </button>
+            </div>
+            <div class="field">
+              <label>Account ID</label>
+              <input v-model="config.media.r2!.account_id" placeholder="cloudflare account id" />
+              <span class="hint">
+                Find in Cloudflare dashboard → R2 → Manage R2 API Tokens (or any R2 page sidebar).
+              </span>
+            </div>
+            <div class="field">
+              <label>Bucket</label>
+              <input v-model="config.media.r2!.bucket" placeholder="ejfox-media" />
+            </div>
+            <div class="field">
+              <label>Access key ID</label>
+              <input v-model="config.media.r2!.access_key_id" type="password" placeholder="••••••" />
+            </div>
+            <div class="field">
+              <label>Secret access key</label>
+              <input v-model="config.media.r2!.secret_access_key" type="password" placeholder="••••••" />
+            </div>
+            <div class="field">
+              <label>Public URL base</label>
+              <input v-model="config.media.r2!.public_url_base" placeholder="https://r2.ejfox.com" />
+              <span class="hint">
+                The CNAME (or pub-XXX.r2.dev) that serves this bucket. Final URLs: <code>{base}/{key}</code>
+              </span>
+            </div>
+
+            <div class="config-path">
+              Config file: <code>{{ configPath }}</code>
+            </div>
+          </div>
+
+          <!-- Connections Tab -->
+          <div v-if="activeTab === 'connections'" class="tab-content">
             <div class="field">
               <label>Analytics URL</label>
               <input v-model="config.analytics_url" placeholder="https://analytics.example.com" />
@@ -363,6 +559,21 @@ async function save() {
               <button @click="verifyMastodon" class="verify-btn" :disabled="verifyingMastodon">
                 {{ verifyingMastodon ? 'Checking...' : mastodonStatus || 'Verify connection' }}
               </button>
+            </div>
+
+            <div class="field-divider"></div>
+            <div class="field">
+              <label class="checkbox-row">
+                <input type="checkbox" v-model="config.webmentions_bridgy_fed" />
+                <span>
+                  Also notify the fediverse (via Bridgy Fed)
+                  <span class="hint inline-hint">
+                    Webmentions fire automatically after every publish. Turn this on to
+                    also forward them through <a href="https://fed.brid.gy" target="_blank">Bridgy&nbsp;Fed</a>
+                    so Mastodon / fediverse servers see the post.
+                  </span>
+                </span>
+              </label>
             </div>
 
             <div class="config-path">
@@ -435,7 +646,7 @@ async function save() {
 }
 
 .close-btn:hover {
-  background: var(--accent);
+  background: var(--hover-bg);
   color: var(--text-primary);
 }
 
@@ -501,6 +712,49 @@ async function save() {
   gap: 14px;
 }
 
+.media-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.media-section-header h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border, #444);
+}
+.status-dot.ok { background: var(--success); }
+.status-dot.bad { background: var(--danger); }
+.status-dot.unknown { background: var(--border, #444); }
+
+.mirror-row {
+  display: flex;
+  gap: 16px;
+}
+.mirror-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.mirror-toggle input[disabled] + * { opacity: 0.5; }
+
 .field {
   display: flex;
   flex-direction: column;
@@ -513,6 +767,30 @@ async function save() {
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.checkbox-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+.checkbox-row input[type='checkbox'] {
+  margin-top: 2px;
+}
+.inline-hint {
+  display: block;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  margin-top: 2px;
+}
+.inline-hint a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.inline-hint a:hover {
+  text-decoration: underline;
 }
 
 .hint {
@@ -560,7 +838,7 @@ async function save() {
 .add-btn {
   padding: 6px 12px;
   font-size: 11px;
-  background: var(--accent);
+  background: var(--hover-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text-primary);
@@ -584,7 +862,7 @@ async function save() {
   gap: 4px;
   padding: 3px 8px;
   font-size: 11px;
-  background: var(--accent);
+  background: var(--hover-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
   color: var(--text-secondary);
@@ -701,7 +979,7 @@ async function save() {
 .add-target-btn {
   padding: 8px;
   font-size: 11px;
-  background: var(--accent);
+  background: var(--hover-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text-secondary);
@@ -803,7 +1081,7 @@ async function save() {
 .cancel-btn {
   padding: 6px 14px;
   font-size: 12px;
-  background: var(--accent);
+  background: var(--hover-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text-secondary);
@@ -817,16 +1095,16 @@ async function save() {
 .save-btn {
   padding: 6px 14px;
   font-size: 12px;
-  background: var(--selection-bg);
+  background: var(--accent);
   border: none;
   border-radius: 6px;
-  color: #fff;
+  color: var(--accent-contrast);
   cursor: pointer;
   font-weight: 500;
 }
 
 .save-btn:hover {
-  opacity: 0.9;
+  background: var(--accent-strong);
 }
 .save-btn:disabled {
   opacity: 0.5;

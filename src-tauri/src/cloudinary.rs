@@ -56,18 +56,41 @@ pub struct MediaFixResult {
     pub replacement_text: Option<String>,
 }
 
-/// Load Cloudinary configuration from environment variables
+/// Resolve Cloudinary configuration.
+///
+/// Source priority: env vars first (for power-user / dev `.env` overrides),
+/// then `AppConfig.media.cloudinary` (set via Settings UI). All three fields
+/// must come from the same source — we don't mix-and-match. If env partially
+/// sets fields and config.json has full creds, the latter wins.
 pub fn get_config() -> Result<CloudinaryConfig, String> {
-    let cloud_name =
-        std::env::var("CLOUDINARY_CLOUD_NAME").map_err(|_| "CLOUDINARY_CLOUD_NAME not set")?;
-    let api_key = std::env::var("CLOUDINARY_API_KEY").map_err(|_| "CLOUDINARY_API_KEY not set")?;
-    let api_secret =
-        std::env::var("CLOUDINARY_API_SECRET").map_err(|_| "CLOUDINARY_API_SECRET not set")?;
+    if let (Ok(cloud_name), Ok(api_key), Ok(api_secret)) = (
+        std::env::var("CLOUDINARY_CLOUD_NAME"),
+        std::env::var("CLOUDINARY_API_KEY"),
+        std::env::var("CLOUDINARY_API_SECRET"),
+    ) {
+        if !cloud_name.is_empty() && !api_key.is_empty() && !api_secret.is_empty() {
+            return Ok(CloudinaryConfig {
+                cloud_name,
+                api_key,
+                api_secret,
+            });
+        }
+    }
 
+    let app_config = crate::config::get()
+        .map_err(|e| format!("Cloudinary creds unavailable — config load failed: {}", e))?;
+    let creds = app_config.media.cloudinary.ok_or(
+        "Cloudinary credentials not configured. Open Settings → Media and fill in cloud name, API key, and API secret.",
+    )?;
+    if creds.cloud_name.is_empty() || creds.api_key.is_empty() || creds.api_secret.is_empty() {
+        return Err(
+            "Cloudinary credentials incomplete. Open Settings → Media to fix.".into(),
+        );
+    }
     Ok(CloudinaryConfig {
-        cloud_name,
-        api_key,
-        api_secret,
+        cloud_name: creds.cloud_name,
+        api_key: creds.api_key,
+        api_secret: creds.api_secret,
     })
 }
 

@@ -5,7 +5,6 @@ import {
   PhPlay,
   PhArrowSquareOut,
   PhArrowsClockwise,
-  PhGlobe,
   PhArrowSquareUpRight,
   PhTrash,
   PhTrophy,
@@ -21,7 +20,6 @@ defineProps<{
   selectedTargetId: string | null
   isLive: boolean
   liveUrl: string | null
-  sendingWebmentions: boolean
   isCrowned: boolean
   crowning: boolean
   unpublishing: boolean
@@ -37,7 +35,6 @@ defineEmits<{
   'open-preview': []
   'select-target': [id: string]
   'view-live': []
-  'trigger-webmentions': []
   'show-syndication': []
   'crown-post': []
   unpublish: []
@@ -81,15 +78,6 @@ defineEmits<{
           <PhArrowSquareOut :size="12" weight="bold" />
           View
         </a>
-        <button
-          @click="$emit('trigger-webmentions')"
-          :disabled="sendingWebmentions"
-          class="btn webmention-btn"
-          data-tip="Send webmentions to linked sites"
-        >
-          <PhGlobe :size="12" weight="bold" />
-          {{ sendingWebmentions ? 'Sending...' : 'Webmention' }}
-        </button>
         <button @click="$emit('show-syndication')" class="btn syndicate-btn" data-tip="Share to social platforms">
           <PhArrowSquareUpRight :size="12" weight="bold" />
           Syndicate
@@ -237,8 +225,8 @@ defineEmits<{
 }
 
 .btn.accent {
-  background: color-mix(in srgb, var(--success) 20%, var(--bg-tertiary));
-  color: var(--success);
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 600;
 }
 
@@ -259,12 +247,12 @@ defineEmits<{
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: var(--success) !important;
-  color: #000 !important;
+  background: var(--accent) !important;
+  color: var(--accent-contrast) !important;
 }
 
 .publish-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--success) 90%, #fff) !important;
+  background: var(--accent-strong) !important;
 }
 
 .publish-btn:disabled {
@@ -273,13 +261,13 @@ defineEmits<{
 }
 
 .publish-unlisted-btn {
-  background: rgba(99, 102, 241, 0.15) !important;
-  color: #818cf8 !important;
-  border: 1px solid rgba(99, 102, 241, 0.3) !important;
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent) !important;
 }
 
 .publish-unlisted-btn:hover {
-  background: rgba(99, 102, 241, 0.25) !important;
+  background: color-mix(in srgb, var(--accent) 22%, transparent) !important;
 }
 
 .shortcut-hint {
@@ -299,7 +287,7 @@ defineEmits<{
 /* Crown button */
 .crown-btn {
   background: rgba(245, 158, 11, 0.15) !important;
-  color: #f59e0b !important;
+  color: var(--warning) !important;
   border: 1px solid rgba(245, 158, 11, 0.2) !important;
 }
 .crown-btn:hover:not(:disabled) {
@@ -312,25 +300,14 @@ defineEmits<{
   gap: 3px;
   font-size: 9px;
   font-weight: 600;
-  color: #f59e0b;
+  color: var(--warning);
   padding: 3px 8px;
   border-radius: 6px;
   background: rgba(245, 158, 11, 0.1);
   letter-spacing: 0.03em;
 }
 
-/* Webmention styles */
-.webmention-btn {
-  background: rgba(99, 102, 241, 0.15) !important;
-  color: #818cf8 !important;
-  border: 1px solid rgba(99, 102, 241, 0.2) !important;
-}
-
-.webmention-btn:hover:not(:disabled) {
-  background: rgba(99, 102, 241, 0.25) !important;
-}
-
 .syndicate-btn {
-  color: #a78bfa !important;
+  color: var(--accent) !important;
 }
 </style>

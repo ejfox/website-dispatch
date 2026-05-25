@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { PhCheck, PhX, PhPencilSimple, PhSparkle } from '@phosphor-icons/vue'
+import { PhCheck, PhX, PhPencilSimple, PhSparkle, PhCloudArrowUp, PhFilmSlate } from '@phosphor-icons/vue'
 
 interface AltTextSuggestion {
   image_url: string
@@ -16,8 +16,16 @@ interface AltTextResult {
   skipped: number
 }
 
-const props = defineProps<{ filePath: string; count: number }>()
-const emit = defineEmits<{ close: []; applied: [] }>()
+const props = defineProps<{
+  filePath: string
+  count: number
+  /** How many local-vault image refs the parent found in this file.
+   *  When > 0 and we're in the empty state, we offer a one-click handoff
+   *  to LocalMediaFixer instead of leaving the user at a dead end. */
+  localImageCount?: number
+  localVideoCount?: number
+}>()
+const emit = defineEmits<{ close: []; applied: []; 'open-local-fixer': [] }>()
 
 // State
 const generating = ref(false)
@@ -251,8 +259,36 @@ generate()
 
       <!-- Empty state (all skipped) -->
       <div v-else-if="!generating" class="empty-state">
-        <p>No Cloudinary images found to generate alt text for.</p>
-        <p v-if="skippedCount > 0" class="muted">{{ skippedCount }} skipped (video or local files)</p>
+        <PhCloudArrowUp v-if="(localImageCount ?? 0) > 0" :size="32" weight="duotone" class="empty-icon" />
+        <PhFilmSlate v-else :size="32" weight="duotone" class="empty-icon muted-icon" />
+
+        <h3 class="empty-title">Nothing to describe yet</h3>
+
+        <p class="empty-explain">
+          Alt text generation needs a public image URL to send to the vision model.
+          The {{ skippedCount }} image{{ skippedCount === 1 ? '' : 's' }} in this post
+          {{ skippedCount === 1 ? 'is' : 'are' }} stored locally or are videos, so there's
+          no URL to look at.
+        </p>
+
+        <ul class="empty-breakdown" v-if="(localImageCount ?? 0) > 0 || (localVideoCount ?? 0) > 0">
+          <li v-if="(localImageCount ?? 0) > 0">
+            <strong>{{ localImageCount }}</strong> local image{{ (localImageCount ?? 0) === 1 ? '' : 's' }}
+            <span class="muted">— upload to Cloudinary to enable alt text</span>
+          </li>
+          <li v-if="(localVideoCount ?? 0) > 0">
+            <strong>{{ localVideoCount }}</strong> video{{ (localVideoCount ?? 0) === 1 ? '' : 's' }}
+            <span class="muted">— videos don't get alt text</span>
+          </li>
+        </ul>
+
+        <div class="empty-actions" v-if="(localImageCount ?? 0) > 0">
+          <button class="btn primary" @click="emit('open-local-fixer')">
+            <PhCloudArrowUp :size="14" weight="bold" />
+            Upload {{ localImageCount }} to Cloudinary
+          </button>
+          <span class="empty-hint">Then come back and run Describe again.</span>
+        </div>
       </div>
 
       <!-- Footer -->
@@ -296,7 +332,7 @@ generate()
   background: rgba(30, 30, 34, 0.95);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-light);
   border-radius: 12px;
   display: flex;
   flex-direction: column;
@@ -307,14 +343,14 @@ generate()
 /* Header */
 .modal-header {
   padding: 14px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
 .header-icon {
-  color: #a78bfa;
+  color: var(--accent);
 }
 
 .modal-header h2 {
@@ -340,7 +376,7 @@ generate()
 }
 .close-btn:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--hover-bg);
 }
 
 /* Error */
@@ -348,7 +384,7 @@ generate()
   padding: 8px 16px;
   background: rgba(239, 68, 68, 0.15);
   border-bottom: 1px solid rgba(239, 68, 68, 0.2);
-  color: #fca5a5;
+  color: var(--danger);
   font-size: 11px;
 }
 
@@ -360,7 +396,7 @@ generate()
 
 .progress-bar {
   height: 3px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--hover-bg);
   border-radius: 2px;
   overflow: hidden;
   margin-bottom: 12px;
@@ -369,7 +405,7 @@ generate()
 .progress-fill.indeterminate {
   height: 100%;
   width: 40%;
-  background: linear-gradient(90deg, #a78bfa, #7c3aed);
+  background: linear-gradient(90deg, var(--accent), var(--accent));
   border-radius: 2px;
   animation: indeterminate 1.4s ease-in-out infinite;
 }
@@ -393,7 +429,7 @@ generate()
 }
 
 .spin {
-  color: #a78bfa;
+  color: var(--accent);
   animation: spin 2s linear infinite;
 }
 
@@ -409,7 +445,7 @@ generate()
 /* Summary bar */
 .summary-bar {
   padding: 8px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -428,16 +464,16 @@ generate()
 
 .summary-chip.confident {
   background: rgba(34, 197, 94, 0.15);
-  color: #4ade80;
+  color: var(--success);
 }
 
 .summary-chip.review {
   background: rgba(251, 191, 36, 0.15);
-  color: #fbbf24;
+  color: var(--warning);
 }
 
 .summary-chip.skipped {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--hover-bg);
   color: var(--text-tertiary);
 }
 
@@ -446,7 +482,7 @@ generate()
   font-size: 10px;
   padding: 2px 10px;
   background: none;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-light);
   color: var(--text-secondary);
   border-radius: 10px;
   cursor: pointer;
@@ -480,7 +516,7 @@ generate()
 }
 
 .review-item.needs-review:not(.is-accepted) {
-  border-left: 2px solid #fbbf24;
+  border-left: 2px solid var(--warning);
 }
 
 /* Thumbnail */
@@ -525,19 +561,19 @@ generate()
 
 .conf-badge.high {
   background: rgba(34, 197, 94, 0.2);
-  color: #4ade80;
+  color: var(--success);
 }
 .conf-badge.good {
   background: rgba(34, 197, 94, 0.12);
-  color: #86efac;
+  color: var(--success);
 }
 .conf-badge.low {
   background: rgba(251, 191, 36, 0.15);
-  color: #fbbf24;
+  color: var(--warning);
 }
 .conf-badge.poor {
   background: rgba(239, 68, 68, 0.15);
-  color: #fca5a5;
+  color: var(--danger);
 }
 
 .line-num {
@@ -569,7 +605,7 @@ generate()
   padding: 4px 6px;
   background: rgba(0, 0, 0, 0.3);
   color: var(--text-primary);
-  border: 1px solid #7c3aed;
+  border: 1px solid var(--accent);
   border-radius: 4px;
   resize: vertical;
   outline: none;
@@ -577,8 +613,8 @@ generate()
 }
 
 .alt-textarea:focus {
-  border-color: #a78bfa;
-  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.3);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 /* Actions column */
@@ -593,7 +629,7 @@ generate()
 .action-btn {
   width: 26px;
   height: 26px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-light);
   border-radius: 6px;
   background: none;
   color: var(--text-tertiary);
@@ -612,25 +648,82 @@ generate()
 .action-btn.accept.active {
   background: rgba(34, 197, 94, 0.2);
   border-color: rgba(34, 197, 94, 0.4);
-  color: #4ade80;
+  color: var(--success);
 }
 
 .action-btn.edit:hover {
-  border-color: rgba(167, 139, 250, 0.4);
-  color: #a78bfa;
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
 }
 
 /* Empty state */
 .empty-state {
-  padding: 32px 16px;
+  padding: 32px 24px;
   text-align: center;
   font-size: 12px;
   color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
 }
 .empty-state .muted {
   color: var(--text-tertiary);
   font-size: 11px;
+}
+.empty-icon {
+  color: var(--accent);
+}
+.empty-icon.muted-icon {
+  color: var(--text-tertiary);
+}
+.empty-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.empty-explain {
+  margin: 0;
+  max-width: 380px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.empty-breakdown {
+  list-style: none;
+  padding: 8px 12px;
+  margin: 0;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  text-align: left;
+  min-width: 280px;
+}
+.empty-breakdown li {
+  padding: 3px 0;
+  color: var(--text-secondary);
+}
+.empty-breakdown li strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  margin-right: 4px;
+}
+.empty-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   margin-top: 4px;
+}
+.empty-actions .btn.primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.empty-hint {
+  font-size: 10px;
+  color: var(--text-tertiary);
 }
 
 /* Footer */
@@ -652,33 +745,43 @@ generate()
   gap: 8px;
 }
 
+/* Shared button system — primary uses the macOS accent, secondary is the
+   subtle Cancel/Close style. Matches the one in LocalMediaFixer so the two
+   modals feel like the same product surface. */
 .btn {
   padding: 6px 14px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   border-radius: 6px;
   cursor: pointer;
   border: none;
-  transition: all 0.15s;
+  transition: background 0.15s;
+  font-family: inherit;
 }
-
 .btn.secondary {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-tertiary);
   color: var(--text-secondary);
 }
 .btn.secondary:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--hover-bg);
+  color: var(--text-primary);
 }
-
 .btn.primary {
-  background: #7c3aed;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-contrast);
 }
 .btn.primary:hover {
-  background: #6d28d9;
+  background: var(--accent-strong);
 }
-.btn.primary:disabled {
-  opacity: 0.4;
+.btn:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
+}
+.btn:disabled:hover {
+  background: var(--accent);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 </style>

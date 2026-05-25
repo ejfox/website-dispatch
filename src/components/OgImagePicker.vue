@@ -228,7 +228,7 @@ watch(
 }
 
 .header-icon {
-  color: #a78bfa;
+  color: var(--accent);
 }
 
 .header-title {
@@ -273,7 +273,7 @@ watch(
 }
 .spin {
   animation: spin 1.5s linear infinite;
-  color: #a78bfa;
+  color: var(--accent);
 }
 @keyframes spin {
   from {
@@ -322,7 +322,7 @@ watch(
   border-color: rgba(255, 255, 255, 0.15);
 }
 .variant-card.selected {
-  border-color: #ef4444;
+  border-color: var(--danger);
 }
 .variant-card.generating {
   opacity: 0.4;
@@ -354,7 +354,7 @@ watch(
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color: #ef4444;
+  color: var(--danger);
   background: rgba(0, 0, 0, 0.5);
   border-radius: 50%;
   width: 28px;
@@ -366,7 +366,7 @@ watch(
 
 .picker-success {
   font-size: 10px;
-  color: #4ade80;
+  color: var(--success);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -385,7 +385,7 @@ watch(
   padding: 4px 12px;
   font-size: 10px;
   font-family: inherit;
-  background: #7c3aed;
+  background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 4px;
@@ -393,7 +393,7 @@ watch(
 }
 
 .upload-btn:hover {
-  background: #6d28d9;
+  background: var(--accent-strong);
 }
 .upload-btn:disabled {
   opacity: 0.4;

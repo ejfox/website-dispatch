@@ -106,15 +106,15 @@ const collapsed = useLocalStorage('dispatch-lint-collapsed', true)
   background: rgba(239, 68, 68, 0.1);
   padding: 2px 6px;
   border-radius: 3px;
-  border-left: 2px solid #ef4444;
+  border-left: 2px solid var(--danger);
 }
 
 .lint-receipt-bullet.privacy {
-  color: #ef4444;
+  color: var(--danger);
   font-size: 10px;
 }
 .lint-receipt-item.privacy .lint-receipt-text {
-  color: #ef4444;
+  color: var(--danger);
   font-weight: 500;
 }
 .lint-receipt-footer {

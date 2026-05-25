@@ -337,7 +337,7 @@ function handleConfirm() {
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 10px;
   font-weight: 600;
-  color: #f59e0b;
+  color: var(--warning);
   background: rgba(245, 158, 11, 0.15);
   padding: 2px 8px;
   border-radius: 4px;

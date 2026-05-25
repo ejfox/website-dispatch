@@ -16,6 +16,10 @@ export function usePublishing(options: {
   isPasswordProtected: () => boolean
   isUnlisted: () => boolean
   onPublished: () => void
+  /** Called after a successful publish/republish with the live URL.
+   *  Used by FilePreview to silently auto-fire webmentions. Optional —
+   *  if omitted, no auto-fire happens. */
+  onPublishSuccess?: (url: string) => void
 }) {
   const publishing = ref(false)
   const justPublished = ref<string | null>(null)
@@ -117,6 +121,15 @@ export function usePublishing(options: {
       }, 1500)
 
       setTimeout(() => options.onPublished(), 500)
+      // Fire-and-forget post-publish hook (auto webmentions, etc).
+      // Owner of the callback handles its own delays and silence.
+      if (options.onPublishSuccess) {
+        try {
+          options.onPublishSuccess(url)
+        } catch (e) {
+          console.warn('onPublishSuccess threw', e)
+        }
+      }
     } catch (e) {
       toasts.error('Publish failed', String(e))
     }

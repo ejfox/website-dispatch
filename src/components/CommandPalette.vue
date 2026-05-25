@@ -688,12 +688,12 @@ function flatIdx(sectionIdx: number, itemIdx: number) {
   color: var(--text-secondary);
 }
 .palette-badge.tone-unlisted {
-  background: color-mix(in srgb, #818cf8 22%, transparent);
-  color: #a5b4fc;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent-soft);
 }
 .palette-badge.tone-protected {
-  background: color-mix(in srgb, #c084fc 22%, transparent);
-  color: #d8b4fe;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent-soft);
 }
 .palette-badge.tone-modified {
   background: color-mix(in srgb, var(--warning) 22%, transparent);

@@ -125,7 +125,7 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
 <style scoped>
 .error {
   padding: 16px;
-  color: #ff6b6b;
+  color: var(--danger);
   text-align: center;
   font-size: 12px;
 }

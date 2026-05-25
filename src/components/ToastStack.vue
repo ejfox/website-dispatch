@@ -133,7 +133,7 @@ const iconFor = {
 }
 
 .toast-action:hover {
-  background: var(--accent);
+  background: var(--hover-bg);
   color: var(--text-primary);
 }
 
@@ -149,7 +149,7 @@ const iconFor = {
 
 .toast-dismiss:hover {
   opacity: 1;
-  background: var(--accent);
+  background: var(--hover-bg);
 }
 
 /* TransitionGroup animations — slide up from the bottom, fade out. */

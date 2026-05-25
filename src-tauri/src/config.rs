@@ -12,12 +12,78 @@ pub struct AppConfig {
     pub publish_targets: Vec<PublishTarget>,
     pub editors: Vec<EditorConfig>,
     pub default_editor: String,
+    /// Deprecated: superseded by `media.cloudinary.cloud_name`. Kept for backward
+    /// compatibility on existing on-disk configs — migrated forward on first load.
     #[serde(default)]
     pub cloudinary_cloud_name: Option<String>,
     #[serde(default)]
     pub analytics_url: Option<String>,
     #[serde(default)]
     pub mastodon_instance: Option<String>,
+    #[serde(default)]
+    pub media: MediaConfig,
+    /// When true, every successful publish/republish also forwards webmentions
+    /// to Bridgy Fed (which relays them to the fediverse / Mastodon).
+    /// Defaults to false — turn it on in Settings → Connections.
+    #[serde(default)]
+    pub webmentions_bridgy_fed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaDestinationKind {
+    Cloudinary,
+    R2,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaConfig {
+    /// Destination whose URL goes in the markdown reference on drop.
+    pub primary: MediaDestinationKind,
+    /// Additional destinations to upload to for archival. Failures are best-effort.
+    #[serde(default)]
+    pub mirrors: Vec<MediaDestinationKind>,
+    #[serde(default)]
+    pub cloudinary: Option<CloudinaryCreds>,
+    #[serde(default)]
+    pub r2: Option<R2Creds>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CloudinaryCreds {
+    #[serde(default)]
+    pub cloud_name: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub api_secret: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct R2Creds {
+    #[serde(default)]
+    pub account_id: String,
+    #[serde(default)]
+    pub access_key_id: String,
+    #[serde(default)]
+    pub secret_access_key: String,
+    #[serde(default)]
+    pub bucket: String,
+    /// Public URL prefix where the bucket is served, e.g. `https://r2.ejfox.com/`.
+    /// Trailing slash optional; final URL = `{public_url_base}/{key}`.
+    #[serde(default)]
+    pub public_url_base: String,
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        MediaConfig {
+            primary: MediaDestinationKind::Cloudinary,
+            mirrors: Vec::new(),
+            cloudinary: None,
+            r2: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +162,8 @@ impl Default for AppConfig {
             cloudinary_cloud_name: None,
             analytics_url: None,
             mastodon_instance: None,
+            media: MediaConfig::default(),
+            webmentions_bridgy_fed: false,
         }
     }
 }
@@ -111,8 +179,13 @@ fn load_or_create() -> AppConfig {
     let path = config_path();
     if path.exists() {
         match fs::read_to_string(&path) {
-            Ok(json) => match serde_json::from_str(&json) {
-                Ok(config) => return config,
+            Ok(json) => match serde_json::from_str::<AppConfig>(&json) {
+                Ok(mut config) => {
+                    if migrate_legacy_cloudinary(&mut config) {
+                        let _ = save_config(&config);
+                    }
+                    return config;
+                }
                 Err(e) => log::warn!("Config parse error, using defaults: {}", e),
             },
             Err(e) => log::warn!("Config read error, using defaults: {}", e),
@@ -121,6 +194,28 @@ fn load_or_create() -> AppConfig {
     let config = AppConfig::default();
     let _ = save_config(&config);
     config
+}
+
+/// Carry the deprecated top-level `cloudinary_cloud_name` forward into
+/// `media.cloudinary.cloud_name` so the new code path sees it. Returns true
+/// if the config was mutated (caller should persist).
+fn migrate_legacy_cloudinary(config: &mut AppConfig) -> bool {
+    let Some(legacy) = config.cloudinary_cloud_name.as_deref().filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    let existing_cloud_name = config
+        .media
+        .cloudinary
+        .as_ref()
+        .map(|c| c.cloud_name.as_str())
+        .unwrap_or("");
+    if existing_cloud_name == legacy {
+        return false;
+    }
+    let mut creds = config.media.cloudinary.clone().unwrap_or_default();
+    creds.cloud_name = legacy.to_string();
+    config.media.cloudinary = Some(creds);
+    true
 }
 
 fn save_config(config: &AppConfig) -> Result<(), String> {
@@ -274,5 +369,23 @@ mod tests {
         let config: AppConfig = serde_json::from_str(json).unwrap();
         assert!(config.cloudinary_cloud_name.is_none());
         assert!(config.analytics_url.is_none());
+        assert!(matches!(config.media.primary, MediaDestinationKind::Cloudinary));
+        assert!(config.media.mirrors.is_empty());
+        assert!(config.media.cloudinary.is_none());
+        assert!(config.media.r2.is_none());
+    }
+
+    #[test]
+    fn test_legacy_cloudinary_cloud_name_migrates_forward() {
+        let mut config = AppConfig::default();
+        config.cloudinary_cloud_name = Some("ejfox-cloud".into());
+        let mutated = migrate_legacy_cloudinary(&mut config);
+        assert!(mutated);
+        assert_eq!(
+            config.media.cloudinary.as_ref().map(|c| c.cloud_name.as_str()),
+            Some("ejfox-cloud")
+        );
+        // Idempotent.
+        assert!(!migrate_legacy_cloudinary(&mut config));
     }
 }

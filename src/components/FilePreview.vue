@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, watch, computed, nextTick } from 'vue'
+import { ref, watch, computed, nextTick, markRaw } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhTextAa, PhTrophy, PhCaretDown } from '@phosphor-icons/vue'
 import LintReceipt from './LintReceipt.vue'
-import LocalMediaSection from './LocalMediaSection.vue'
+import LocalMediaFixer from './LocalMediaFixer.vue'
 import BacklinksGraph from './BacklinksGraph.vue'
 import AltTextReviewer from './AltTextReviewer.vue'
 import SyndicationWizard from './SyndicationWizard.vue'
@@ -12,7 +12,7 @@ import StatusBanner from './StatusBanner.vue'
 import MetadataPanel from './MetadataPanel.vue'
 import ActionToolbar from './ActionToolbar.vue'
 import PublishConfirmModal from './PublishConfirmModal.vue'
-import WebmentionReportComponent from './WebmentionReport.vue'
+import WebmentionStatus from './WebmentionStatus.vue'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
@@ -55,15 +55,21 @@ const activeTargetDomain = computed(() => {
   return picked?.domain || ''
 })
 
+// Wrapped in `markRaw` so Vue doesn't deep-proxy the unified pipeline (which
+// is a big graph of plugin closures, AST schemas, and trie tables). Without
+// `markRaw`, every file switch pays for re-tracking thousands of nested
+// objects — measurable on long posts.
 const markdownProcessor = computed(() =>
-  unified()
-    .use(remarkParse)
-    .use(remarkGfm)
-    .use(remarkObsidianWikilinks, { baseUrl: activeTargetDomain.value })
-    .use(remarkMermaid)
-    .use(remarkRehype, { allowDangerousHtml: true })
-    .use(rehypeRaw)
-    .use(rehypeStringify, { allowDangerousHtml: true }),
+  markRaw(
+    unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      .use(remarkObsidianWikilinks, { baseUrl: activeTargetDomain.value })
+      .use(remarkMermaid)
+      .use(remarkRehype, { allowDangerousHtml: true })
+      .use(rehypeRaw)
+      .use(rehypeStringify, { allowDangerousHtml: true }),
+  ),
 )
 
 function selectTarget(id: string) {
@@ -83,6 +89,33 @@ const localMedia = ref<LocalMediaRef[]>([])
 const loadingLocalMedia = ref(false)
 const showMediaFixer = ref(false)
 const metadataExpanded = ref(false)
+
+// Image / video breakdown of localMedia — surfaced to AltTextReviewer
+// so its empty state can give a real next-step ("upload N images") instead
+// of a dead-end "0 images found" message.
+const localImageCount = computed(() => localMedia.value.filter((m) => m.media_type !== 'video').length)
+const localVideoCount = computed(() => localMedia.value.filter((m) => m.media_type === 'video').length)
+
+// AltTextReviewer's empty state offers "Upload to Cloudinary" — wire that
+// to close the Describe modal and open the uploader in one motion.
+function onOpenLocalFixerFromAltText() {
+  showAltTextReviewer.value = false
+  showMediaFixer.value = true
+}
+
+// LocalMediaFixer's success state offers "Now describe images" — wire that
+// to close the uploader and open the Describe modal so the second step is
+// one click away.
+function onOpenAltTextFromFixer() {
+  showMediaFixer.value = false
+  showAltTextReviewer.value = true
+}
+
+// Tell the parent something changed so it can refetch the post (the
+// markdown source was rewritten and Cloudinary URLs are now in place).
+function onLocalMediaFixed() {
+  emit('published')
+}
 
 function showCopyFeedback(msg: string) {
   copyFeedback.value = msg
@@ -119,6 +152,12 @@ const {
   isPasswordProtected: () => isPasswordProtected.value,
   isUnlisted: () => isUnlisted.value,
   onPublished: () => emit('published'),
+  // Auto-fire webmentions after publish/republish. Bridgy Fed forwarding
+  // is opt-in via Settings → Connections (default off).
+  onPublishSuccess: () => {
+    const bridgyFed = appConfig.value?.webmentions_bridgy_fed === true
+    autoTriggerOnPublish(bridgyFed)
+  },
 })
 
 // Tag suggestions composable
@@ -172,9 +211,9 @@ watch(
   async (file) => {
     if (!file) return
 
-    // Wait for next tick to ensure component is fully mounted before invoking Tauri
-    await nextTick()
-
+    // Reset refs synchronously so the next paint shows a clean slate
+    // before any IPC round-trips return. Without this you briefly see
+    // the OLD post's analytics / backlinks under the NEW post's metadata.
     justPublished.value = null
     backlinks.value = []
     localMedia.value = []
@@ -182,89 +221,89 @@ watch(
     pageviewSeries.value = []
     showMediaFixer.value = false
     webmentionReport.value = null
+    content.value = ''
+    renderedContent.value = ''
+    loadingBacklinks.value = true
+    loadingLocalMedia.value = true
+    loadingStats.value = !!file.published_url
 
-    // Set this file as the preview target (Node server for accurate rendering)
+    // Fire-and-forget: preview servers don't gate any UI render.
     fetch('http://127.0.0.1:6419/set-file', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: file.path }),
-    }).catch(() => {
-      /* preview server may not be running - non-critical */
-    })
-
-    // Also tell Rust server (fallback)
+    }).catch(() => {})
     invoke('set_preview_file', { path: file.path })
 
-    try {
-      const raw: string = await invoke('get_file_content', { path: file.path })
-      // Strip YAML frontmatter from preview since metadata is shown above
-      content.value = raw.replace(/^---\n[\s\S]*?\n---\n*/, '')
-      // Render markdown to HTML
-      try {
-        const result = await markdownProcessor.value.process(content.value)
-        renderedContent.value = String(result)
-        nextTick(() => {
-          renderMermaidIn(document)
-        })
-      } catch {
+    // Kick off ALL IPC calls in parallel — none of them depend on each
+    // other, and we want the metadata header to paint as soon as Vue's
+    // reactivity flushes (which happens before any of these resolve).
+    //
+    // We DON'T await the whole batch as a unit; each ref updates as its
+    // own request returns, so the user sees a progressive fill instead
+    // of a wait-then-flash render.
+
+    invoke('get_file_content', { path: file.path })
+      .then(async (raw) => {
+        const stripped = (raw as string).replace(/^---\n[\s\S]*?\n---\n*/, '')
+        content.value = stripped
+        // Yield a frame so the unstyled-content paint can happen, then
+        // run the heavy unified processor. For long posts this turns a
+        // ~120ms stall into a ~16ms first-paint.
+        await nextTick()
+        try {
+          const result = await markdownProcessor.value.process(stripped)
+          renderedContent.value = String(result)
+          nextTick(() => renderMermaidIn(document))
+        } catch {
+          renderedContent.value = ''
+        }
+        // Tag analysis depends on content; run it after first paint.
+        await fetchAvailableTags()
+        suggestedTags.value = analyzeTags(stripped, file.tags || [])
+      })
+      .catch((e) => {
+        content.value = `Error: ${e}`
         renderedContent.value = ''
-      }
-    } catch (e) {
-      content.value = `Error: ${e}`
-      renderedContent.value = ''
+      })
+
+    invoke('get_backlinks', { filename: file.filename })
+      .then((res) => {
+        backlinks.value = res as Backlink[]
+      })
+      .catch((e) => console.log('Backlinks unavailable:', e))
+      .finally(() => {
+        loadingBacklinks.value = false
+      })
+
+    invoke('get_local_media', { path: file.path })
+      .then((res) => {
+        localMedia.value = res as LocalMediaRef[]
+      })
+      .catch((e) => console.log('Local media detection unavailable:', e))
+      .finally(() => {
+        loadingLocalMedia.value = false
+      })
+
+    if (file.published_url) {
+      invoke('get_post_analytics', { url: file.published_url, days: 30 })
+        .then((res) => {
+          postStats.value = res as PostAnalytics
+        })
+        .catch(() => {
+          postStats.value = null
+        })
+        .finally(() => {
+          loadingStats.value = false
+        })
+      invoke('get_post_pageview_series', { url: file.published_url, days: 30 })
+        .then((res) => {
+          pageviewSeries.value = (res as number[]) || []
+        })
+        .catch(() => {
+          pageviewSeries.value = []
+        })
     }
-
-    // Fetch backlinks + local media + analytics in parallel
-    loadingBacklinks.value = true
-    loadingLocalMedia.value = true
-    loadingStats.value = !!file.published_url
-    await Promise.all([
-      invoke('get_backlinks', { filename: file.filename })
-        .then((res) => {
-          backlinks.value = res as Backlink[]
-        })
-        .catch((e) => {
-          console.log('Backlinks unavailable:', e)
-        })
-        .finally(() => {
-          loadingBacklinks.value = false
-        }),
-      invoke('get_local_media', { path: file.path })
-        .then((res) => {
-          localMedia.value = res as LocalMediaRef[]
-        })
-        .catch((e) => {
-          console.log('Local media detection unavailable:', e)
-        })
-        .finally(() => {
-          loadingLocalMedia.value = false
-        }),
-      ...(file.published_url
-        ? [
-            invoke('get_post_analytics', { url: file.published_url, days: 30 })
-              .then((res) => {
-                postStats.value = res as PostAnalytics
-              })
-              .catch(() => {
-                postStats.value = null
-              })
-              .finally(() => {
-                loadingStats.value = false
-              }),
-            invoke('get_post_pageview_series', { url: file.published_url, days: 30 })
-              .then((res) => {
-                pageviewSeries.value = (res as number[]) || []
-              })
-              .catch(() => {
-                pageviewSeries.value = []
-              }),
-          ]
-        : []),
-    ])
-
-    // Analyze content for tag suggestions
-    await fetchAvailableTags()
-    suggestedTags.value = analyzeTags(content.value, file.tags || [])
   },
   { immediate: true },
 )
@@ -300,12 +339,14 @@ const titleIsDerived = computed(() => !props.file.title)
 
 // Extract <year>/<slug> from the file's path. website2 organizes processed
 // posts as content/processed/<year>/<slug>.json, so OG generation needs the
-// year prefix to find the JSON. Falls back to bare filename for posts that
-// aren't in a year directory (rare/legacy).
+// year prefix to find the JSON. Returns empty string for anything outside
+// blog/ (e.g. week-notes, drafts) so consumers like OgImagePicker can opt
+// out via `v-if="slug"` instead of triggering ENOENT on a non-blog file.
 const slug = computed(() => {
   const baseName = props.file.filename.replace('.md', '')
   const yearMatch = props.file.path.match(/\/blog\/(\d{4})\//)
-  return yearMatch ? `${yearMatch[1]}/${baseName}` : baseName
+  if (yearMatch) return `${yearMatch[1]}/${baseName}`
+  return props.file.path.includes('/blog/') ? baseName : ''
 })
 
 const targetUrl = computed(() => {
@@ -351,6 +392,7 @@ const {
   unpublishing,
   crownPost,
   triggerWebmentions,
+  autoTriggerOnPublish,
   unpublish,
 } = usePostActions({
   slug,
@@ -493,10 +535,20 @@ async function openPreview() {
       :publish-at="file.publish_at"
       :visibility-label="visibilityLabel"
       :publishing="publishing"
+      :file-path="file.path"
       @copy-url="copyUrl"
       @copy-url-password="copyUrlAndPassword"
       @republish="publish(true)"
       @cancel-schedule="cancelSchedule"
+    />
+
+    <!-- Webmention status — auto-fires after publish/republish, surfaced
+         inline so the user sees an outcome without an extra click. -->
+    <WebmentionStatus
+      v-if="isLive && (sendingWebmentions || webmentionReport)"
+      :report="webmentionReport"
+      :sending="sendingWebmentions"
+      @resend="triggerWebmentions({ bridgyFed: appConfig?.webmentions_bridgy_fed === true, force: true })"
     />
 
     <!-- Header -->
@@ -570,20 +622,72 @@ async function openPreview() {
     <!-- Lint Receipt (only when warnings exist) -->
     <LintReceipt :warnings="lintWarnings" />
 
-    <!-- Alt Text -->
-    <div v-if="missingAltTextCount > 0" class="alt-text-section">
-      <div class="alt-text-header">
-        <button class="alt-text-toggle" @click="altTextCollapsed = !altTextCollapsed" :aria-expanded="!altTextCollapsed">
+    <!-- Media health: Local upload (prerequisite) → Alt text (depends on URLs).
+         Order matters — Local Media must come before Alt Text because alt text
+         generation needs publicly-hosted URLs. The cross-references in the
+         hint copy spell this out so users don't dead-end in the Describe modal. -->
+
+    <!-- Local Media (Step 1 of media flow) -->
+    <div v-if="localImageCount > 0 || localVideoCount > 0" class="media-section">
+      <div class="media-section-header">
+        <span class="label">
+          <PhImageSquare :size="10" weight="duotone" />
+          Local Media
+          <span v-if="missingAltTextCount > 0" class="step-pill">step 1 of 2</span>
+        </span>
+        <span class="count" :class="{ warning: localImageCount > 0 }">{{ localImageCount + localVideoCount }}</span>
+        <button v-if="localImageCount > 0" @click.stop="showMediaFixer = true" class="section-btn primary">
+          Upload to Cloudinary
+        </button>
+      </div>
+      <div class="media-section-hint">
+        <template v-if="localImageCount > 0 && localVideoCount > 0">
+          {{ localImageCount }} image{{ localImageCount === 1 ? '' : 's' }} +
+          {{ localVideoCount }} video{{ localVideoCount === 1 ? '' : 's' }} live in your vault.
+          Uploading rewrites the markdown refs to public URLs.
+        </template>
+        <template v-else-if="localImageCount > 0">
+          {{ localImageCount }} image{{ localImageCount === 1 ? '' : 's' }} live in your vault.
+          Uploading rewrites the markdown refs to public URLs.
+        </template>
+        <template v-else>
+          {{ localVideoCount }} video{{ localVideoCount === 1 ? '' : 's' }} in your vault — videos
+          stay local; nothing to upload here.
+        </template>
+      </div>
+    </div>
+
+    <!-- Alt Text (Step 2 of media flow) -->
+    <div v-if="missingAltTextCount > 0" class="media-section">
+      <div class="media-section-header">
+        <button class="section-toggle" @click="altTextCollapsed = !altTextCollapsed" :aria-expanded="!altTextCollapsed">
           <PhCaretDown :size="9" weight="bold" class="caret" :class="{ collapsed: altTextCollapsed }" />
           <span class="label">
             <PhImageSquare :size="10" weight="duotone" />
             Alt Text
+            <span v-if="localImageCount > 0" class="step-pill">step 2 of 2</span>
           </span>
-          <span class="count warning">{{ missingAltTextCount }}</span>
+          <span class="count" :class="{ warning: localImageCount === 0 }">{{ missingAltTextCount }}</span>
         </button>
-        <button @click.stop="showAltTextReviewer = true" class="fix-btn">Describe</button>
+        <button
+          @click.stop="showAltTextReviewer = true"
+          class="section-btn"
+          :class="localImageCount > 0 ? 'ghost' : 'primary'"
+          :title="localImageCount > 0 ? 'Open describer (will prompt to upload local images first)' : ''"
+        >
+          Describe
+        </button>
       </div>
-      <div v-if="!altTextCollapsed" class="alt-text-hint">{{ missingAltTextCount }} image(s) need descriptions</div>
+      <div v-if="!altTextCollapsed" class="media-section-hint">
+        <template v-if="localImageCount > 0">
+          Local images need a public URL before they can be described —
+          run <strong>Upload to Cloudinary</strong> above first.
+        </template>
+        <template v-else>
+          {{ missingAltTextCount }} image{{ missingAltTextCount === 1 ? '' : 's' }} ready to
+          describe with AI.
+        </template>
+      </div>
     </div>
 
     <!-- Alt Text Reviewer Modal -->
@@ -591,8 +695,11 @@ async function openPreview() {
       v-if="showAltTextReviewer"
       :file-path="file.path"
       :count="missingAltTextCount"
+      :local-image-count="localImageCount"
+      :local-video-count="localVideoCount"
       @close="showAltTextReviewer = false"
       @applied="onAltTextApplied"
+      @open-local-fixer="onOpenLocalFixerFromAltText"
     />
 
     <!-- Backlinks -->
@@ -631,15 +738,14 @@ async function openPreview() {
          picking an OG before publish is a natural part of the publish flow. -->
     <OgImagePicker v-if="slug" :slug="slug" @picked="() => {}" />
 
-    <!-- Local Media -->
-    <LocalMediaSection
-      :local-media="localMedia"
-      :loading-local-media="loadingLocalMedia"
-      :show-media-fixer="showMediaFixer"
+    <!-- Local Media Fixer (the modal — surface lives in the Local Media section above) -->
+    <LocalMediaFixer
+      v-if="showMediaFixer"
       :file-path="file.path"
-      @show-fixer="showMediaFixer = true"
-      @close-fixer="showMediaFixer = false"
-      @media-fixed="$emit('published')"
+      :local-media="localMedia"
+      @close="showMediaFixer = false"
+      @fixed="onLocalMediaFixed"
+      @open-alt-text="onOpenAltTextFromFixer"
     />
 
     <!-- Toolbar -->
@@ -650,7 +756,6 @@ async function openPreview() {
       :selected-target-id="selectedTargetId"
       :is-live="isLive"
       :live-url="liveUrl"
-      :sending-webmentions="sendingWebmentions"
       :is-crowned="isCrowned"
       :crowning="crowning"
       :unpublishing="unpublishing"
@@ -662,7 +767,6 @@ async function openPreview() {
       @open-editor="openInEditor"
       @open-preview="openPreview"
       @select-target="selectTarget"
-      @trigger-webmentions="triggerWebmentions(false)"
       @show-syndication="showSyndicationWizard = true"
       @crown-post="crownPost"
       @unpublish="unpublish"
@@ -697,14 +801,6 @@ async function openPreview() {
       @queued="onSyndicationQueued"
     />
 
-    <!-- Webmention Results -->
-    <WebmentionReportComponent
-      v-if="webmentionReport"
-      :report="webmentionReport"
-      :sending-webmentions="sendingWebmentions"
-      @close="webmentionReport = null"
-      @resend-bridgy="triggerWebmentions(true)"
-    />
 
     <!-- Publish Confirmation -->
     <PublishConfirmModal
@@ -743,8 +839,9 @@ async function openPreview() {
   min-height: 0;
   overflow: hidden;
   background: var(--bg-primary);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  /* No backdrop-filter on the scroll container — the parent window is
+     opaque, so the blur was decorative only and cost a GPU pass per frame
+     while scrolling long posts. */
   animation: panelEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -844,7 +941,7 @@ async function openPreview() {
 }
 
 .success-toast.milestone {
-  background: linear-gradient(135deg, #f59e0b, #f97316);
+  background: linear-gradient(135deg, var(--warning), var(--warning));
   color: #000;
   padding: 20px 36px;
   border-radius: 14px;
@@ -994,20 +1091,21 @@ async function openPreview() {
   text-overflow: ellipsis;
 }
 
-/* Alt Text */
-.alt-text-section {
+/* Media health sections (Local Media + Alt Text) — shared shell so both
+   feel like steps of the same flow. */
+.media-section {
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
 }
 
-.alt-text-header {
+.media-section-header {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
 }
 
-.alt-text-toggle {
+.section-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1021,17 +1119,68 @@ async function openPreview() {
   text-align: left;
 }
 
-.alt-text-toggle .caret {
+.section-toggle .caret {
   transition: transform 0.15s;
   color: var(--text-tertiary);
 }
-.alt-text-toggle .caret.collapsed {
+.section-toggle .caret.collapsed {
   transform: rotate(-90deg);
 }
 
-.alt-text-hint {
+.media-section-hint {
   font-size: 10px;
   color: var(--text-tertiary);
+  line-height: 1.4;
+}
+.media-section-hint strong {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* Sequence pill — "step 1 of 2" / "step 2 of 2" — only renders when both
+   sections are visible so a single-step flow stays uncluttered. */
+.step-pill {
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  border-radius: 999px;
+}
+
+/* Inline section buttons (Upload to Cloudinary / Describe). Primary uses
+   the macOS accent; ghost is a subtle secondary for "you can do this but
+   it's not the recommended next step right now." */
+.section-btn {
+  margin-left: auto;
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.section-btn.primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+.section-btn.primary:hover {
+  background: var(--accent-strong);
+}
+.section-btn.ghost {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.section-btn.ghost:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
 }
 
 /* Schedule Picker Buttons */
@@ -1143,7 +1292,7 @@ async function openPreview() {
   text-transform: lowercase;
 }
 .analytics-strip .stat.warn strong {
-  color: var(--warning, #f59e0b);
+  color: var(--warning, var(--warning));
 }
 .analytics-strip .sparkline {
   height: 22px;

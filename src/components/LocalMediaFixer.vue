@@ -37,6 +37,9 @@ const props = defineProps<Props>()
 const emit = defineEmits<{
   close: []
   fixed: []
+  /** User chose to chain into AltTextReviewer after a successful apply.
+   *  Parent should close this modal and open the Describe modal. */
+  'open-alt-text': []
 }>()
 
 const uploading = ref(false)
@@ -45,6 +48,9 @@ const currentUpload = ref<string | null>(null)
 const results = ref<MediaFixResult[]>([])
 const error = ref<string | null>(null)
 const showConfirmApply = ref(false)
+/** Set true after a successful `applyFixes()` so the modal can pivot to
+ *  the "now describe images" handoff instead of just closing. */
+const justApplied = ref(false)
 
 const successCount = computed(() => results.value.filter((r) => r.upload_result.success).length)
 
@@ -94,7 +100,11 @@ async function applyFixes() {
       fixes: fixesToApply.value,
     })
     emit('fixed')
-    emit('close')
+    // Don't auto-close: pivot the modal into a "done — what's next?" state
+    // so the user can chain into Alt Text Review without going back to the
+    // sidebar to find the button.
+    showConfirmApply.value = false
+    justApplied.value = true
   } catch (e) {
     error.value = `Failed to apply fixes: ${String(e)}`
   }
@@ -124,8 +134,12 @@ function getStatusClass(result: MediaFixResult): string {
   <div class="modal-overlay" @click.self="$emit('close')">
     <div class="modal">
       <div class="modal-header">
-        <h2>Fix Local Media</h2>
-        <span class="count">{{ localMedia.length }} files</span>
+        <h2>
+          <template v-if="justApplied">Done</template>
+          <template v-else-if="results.length === 0">Upload local images</template>
+          <template v-else>Upload results</template>
+        </h2>
+        <span v-if="!justApplied" class="count">{{ localMedia.length }} files</span>
         <button class="close-btn" @click="$emit('close')">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
             <path
@@ -133,6 +147,12 @@ function getStatusClass(result: MediaFixResult): string {
             />
           </svg>
         </button>
+      </div>
+
+      <div v-if="!uploading && !justApplied && results.length === 0" class="intro-blurb">
+        Each file gets uploaded to Cloudinary, and the markdown reference is
+        rewritten to point at the public URL. After that you can generate alt
+        text for them.
       </div>
 
       <div v-if="error" class="error-banner">
@@ -196,27 +216,43 @@ function getStatusClass(result: MediaFixResult): string {
 
       <!-- Confirm apply dialog -->
       <div v-if="showConfirmApply" class="confirm-dialog">
-        <p>This will modify the source file:</p>
+        <p>This will rewrite the markdown file:</p>
         <code>{{ filePath }}</code>
-        <p>{{ fixesToApply.length }} replacement(s) will be made.</p>
+        <p>{{ fixesToApply.length }} reference{{ fixesToApply.length === 1 ? '' : 's' }} will be replaced with Cloudinary URLs.</p>
         <div class="confirm-actions">
-          <button @click="showConfirmApply = false">Cancel</button>
-          <button class="danger" @click="applyFixes">Apply Changes</button>
+          <button class="btn secondary" @click="showConfirmApply = false">Cancel</button>
+          <button class="btn primary" @click="applyFixes">Apply changes</button>
         </div>
       </div>
 
+      <!-- "Done — what's next?" state, shown after applyFixes succeeds. -->
+      <div v-if="justApplied" class="done-state">
+        <div class="done-icon">✓</div>
+        <h3>{{ successCount }} image{{ successCount === 1 ? '' : 's' }} uploaded</h3>
+        <p>Your markdown now points at public URLs. Next up: generate alt text descriptions for each one.</p>
+      </div>
+
       <div class="modal-footer">
-        <template v-if="results.length === 0">
-          <button @click="uploadAll" :disabled="uploading || localMedia.every((m) => !m.resolved_path)" class="primary">
-            {{ uploading ? 'Uploading...' : 'Upload All to Cloudinary' }}
+        <template v-if="justApplied">
+          <button class="btn secondary" @click="$emit('close')">Close</button>
+          <button class="btn primary" @click="$emit('open-alt-text')">Describe images →</button>
+        </template>
+        <template v-else-if="results.length === 0">
+          <button class="btn secondary" @click="$emit('close')">Cancel</button>
+          <button
+            class="btn primary"
+            @click="uploadAll"
+            :disabled="uploading || localMedia.every((m) => !m.resolved_path)"
+          >
+            {{ uploading ? 'Uploading…' : `Upload ${localMedia.filter((m) => m.resolved_path).length} to Cloudinary` }}
           </button>
         </template>
         <template v-else-if="successCount > 0">
-          <button @click="copyFixedContent">Copy Fixed Content</button>
-          <button @click="showConfirmApply = true" class="primary">Apply to Source File</button>
+          <button class="btn secondary" @click="copyFixedContent">Copy to clipboard</button>
+          <button class="btn primary" @click="showConfirmApply = true">Apply to source file</button>
         </template>
         <template v-else>
-          <button @click="$emit('close')">Close</button>
+          <button class="btn secondary" @click="$emit('close')">Close</button>
         </template>
       </div>
     </div>
@@ -268,9 +304,18 @@ function getStatusClass(result: MediaFixResult): string {
 .count {
   font-size: 11px;
   color: var(--warning);
-  background: rgba(255, 159, 10, 0.2);
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
   padding: 2px 8px;
   border-radius: 4px;
+}
+
+.intro-blurb {
+  padding: 12px 16px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
 }
 
 .close-btn {
@@ -290,8 +335,8 @@ function getStatusClass(result: MediaFixResult): string {
 
 .error-banner {
   padding: 10px 16px;
-  background: rgba(255, 107, 107, 0.2);
-  color: #ff6b6b;
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
   font-size: 12px;
 }
 
@@ -358,7 +403,7 @@ function getStatusClass(result: MediaFixResult): string {
 
 .progress-fill {
   height: 100%;
-  background: var(--accent);
+  background: var(--hover-bg);
   transition: width 0.3s ease;
 }
 
@@ -389,7 +434,7 @@ function getStatusClass(result: MediaFixResult): string {
 }
 
 .fail-count {
-  color: #ff6b6b;
+  color: var(--danger);
   font-size: 12px;
   font-weight: 500;
 }
@@ -430,7 +475,7 @@ function getStatusClass(result: MediaFixResult): string {
 
 .result-item.error .result-icon,
 .result-item.missing .result-icon {
-  color: #ff6b6b;
+  color: var(--danger);
 }
 
 .result-info {
@@ -454,7 +499,7 @@ function getStatusClass(result: MediaFixResult): string {
 
 .result-error {
   font-size: 10px;
-  color: #ff6b6b;
+  color: var(--danger);
   margin-top: 4px;
 }
 
@@ -487,58 +532,85 @@ function getStatusClass(result: MediaFixResult): string {
   margin-top: 16px;
 }
 
-.confirm-actions button {
-  padding: 8px 16px;
+/* "Done — what's next?" state shown after Apply succeeds. */
+.done-state {
+  padding: 28px 24px 12px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.done-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--success) 22%, transparent);
+  color: var(--success);
+  font-size: 18px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.done-state h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+.done-state p {
   font-size: 12px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.confirm-actions button:first-child {
-  background: rgba(255, 255, 255, 0.1);
-  border: none;
   color: var(--text-secondary);
-}
-
-.confirm-actions button.danger {
-  background: #ff6b6b;
-  border: none;
-  color: #fff;
+  max-width: 360px;
+  line-height: 1.5;
+  margin: 0;
 }
 
 .modal-footer {
   padding: 12px 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--border);
   display: flex;
   gap: 8px;
   justify-content: flex-end;
 }
 
-.modal-footer button {
-  padding: 8px 16px;
+/* Shared button system — primary uses the macOS accent; secondary is the
+   subtle "Cancel" / "Close" style. Applied to all confirm + footer buttons. */
+.btn {
+  padding: 6px 14px;
   font-size: 12px;
+  font-weight: 500;
   border-radius: 6px;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.1);
   border: none;
+  transition: background 0.15s;
+  font-family: inherit;
+}
+.btn.secondary {
+  background: var(--bg-tertiary);
   color: var(--text-secondary);
 }
-
-.modal-footer button:hover {
-  background: rgba(255, 255, 255, 0.15);
+.btn.secondary:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
 }
-
-.modal-footer button:disabled {
+.btn.primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+.btn.primary:hover {
+  background: var(--accent-strong);
+}
+.btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-
-.modal-footer button.primary {
+.btn:disabled:hover {
   background: var(--accent);
-  color: #fff;
 }
-
-.modal-footer button.primary:hover {
-  filter: brightness(1.1);
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 </style>

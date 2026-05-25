@@ -253,12 +253,12 @@ const emit = defineEmits<{
 }
 
 .vis-unlisted {
-  background: #6366f1;
+  background: var(--accent);
   color: #fff;
 }
 
 .vis-protected {
-  background: #8b5cf6;
+  background: var(--accent);
   color: #fff;
 }
 
