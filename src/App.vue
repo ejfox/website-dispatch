@@ -239,7 +239,11 @@ async function showVaultMenu(e: MouseEvent) {
 
 async function showMediaMenu(e: MouseEvent) {
   e.preventDefault()
-  const cloud = appConfig.value?.cloudinary_cloud_name
+  // Prefer the new nested location (media.cloudinary.cloud_name); fall back to
+  // the deprecated top-level field for any user whose config hasn't yet been
+  // round-tripped through the migration in `config::load_or_create`.
+  const cloud =
+    appConfig.value?.media?.cloudinary?.cloud_name || appConfig.value?.cloudinary_cloud_name
   const items_: any[] = [
     await MenuItem.new({
       text: 'Show Media Library',
