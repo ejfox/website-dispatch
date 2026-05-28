@@ -199,29 +199,32 @@ defineEmits<{
 }
 
 .btn {
-  padding: 8px 16px;
+  /* macOS push-button proportions — tighter than the old 8/16 and
+     without the lift-on-hover / brightness(1.1) animation. Mac buttons
+     darken on hover; they don't bounce. */
+  padding: 5px 12px;
   border: none;
-  border-radius: 6px;
+  border-radius: 5px;
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
   text-decoration: none;
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
-  min-height: 28px;
+  transition: background 0.12s ease, color 0.12s ease;
+  min-height: 24px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 
 .btn:hover {
-  filter: brightness(1.1);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--bg-tertiary) 70%, white);
 }
 
 .btn:active {
-  transform: translateY(0);
+  /* No transform — macOS native uses a darker fill on press, not movement. */
+  background: color-mix(in srgb, var(--bg-tertiary) 90%, black);
 }
 
 .btn.accent {

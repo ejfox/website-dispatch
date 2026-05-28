@@ -36,12 +36,16 @@ const collapsed = useLocalStorage('dispatch-lint-collapsed', true)
 </template>
 
 <style scoped>
+/* Lint Receipt — kept the "receipt" character (monospace, the DISPATCH
+   footer chip), but dropped the dashed-box widget shell so it flows in
+   line with the other inline sections (Local Media, Alt Text, OG Image).
+   The receipt metaphor now reads as a thin vertically-bounded section
+   with a soft warning tint, not a stuck-on widget. */
 .lint-receipt {
-  margin: 10px 16px 12px;
-  padding: 10px 12px;
-  background: var(--bg-tertiary);
-  border: 1px dashed var(--border-light);
-  border-radius: 4px;
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--warning) 5%, transparent);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   font-family: 'SF Mono', 'Menlo', monospace;
   font-size: 10px;
   color: var(--text-secondary);
