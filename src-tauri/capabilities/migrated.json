@@ -8,6 +8,7 @@
   ],
   "permissions": [
     "core:default",
+    "core:window:allow-start-dragging",
     "fs:allow-read-file",
     "fs:allow-write-file",
     "fs:allow-read-dir",

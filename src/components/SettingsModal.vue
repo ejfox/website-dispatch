@@ -6,7 +6,7 @@ import { useLocalStorage } from '@vueuse/core'
 import { X } from 'lucide-vue-next'
 import type { AppConfig, MediaDestinationKind, MediaStatus } from '../types'
 
-const homeTab = useLocalStorage<'preview' | 'media' | 'activity' | 'journal' | 'gear'>(
+const homeTab = useLocalStorage<'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'>(
   'dispatch-home-tab',
   'preview',
 )
@@ -262,6 +262,7 @@ async function save() {
                 <button :class="{ active: homeTab === 'preview' }" @click="homeTab = 'preview'">Preview</button>
                 <button :class="{ active: homeTab === 'media' }" @click="homeTab = 'media'">Media</button>
                 <button :class="{ active: homeTab === 'activity' }" @click="homeTab = 'activity'">Activity</button>
+                <button :class="{ active: homeTab === 'modified' }" @click="homeTab = 'modified'">Modified</button>
                 <button :class="{ active: homeTab === 'journal' }" @click="homeTab = 'journal'">Journal</button>
                 <button :class="{ active: homeTab === 'gear' }" @click="homeTab = 'gear'">Gear</button>
               </div>

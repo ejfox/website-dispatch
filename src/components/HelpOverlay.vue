@@ -103,8 +103,21 @@ const emit = defineEmits<{
             <span>publish</span>
           </div>
           <div class="help-row">
+            <kbd>&#8984;</kbd>
             <kbd>,</kbd>
             <span>settings</span>
+          </div>
+          <div class="help-row">
+            <kbd>&#8984;</kbd>
+            <kbd>0</kbd>
+            <span>toggle sidebar</span>
+          </div>
+          <div class="help-row">
+            <kbd>&#8984;</kbd>
+            <kbd>1</kbd>
+            &mdash;
+            <kbd>6</kbd>
+            <span>switch tab</span>
           </div>
         </div>
       </div>

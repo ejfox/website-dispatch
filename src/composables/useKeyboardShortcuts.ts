@@ -10,7 +10,8 @@ export function useKeyboardShortcuts(options: {
   showSettings: Ref<boolean>
   newPostOpen: Ref<boolean>
   showHelp: Ref<boolean>
-  rightTab: Ref<'preview' | 'media' | 'activity' | 'journal' | 'gear'>
+  rightTab: Ref<'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'>
+  sidebarCollapsed: Ref<boolean>
   filePreviewRef: Ref<{ openPublishConfirm: (isRepublish: boolean) => void } | null>
   openSearch: () => void
   closeSearch: () => void
@@ -34,8 +35,27 @@ export function useKeyboardShortcuts(options: {
     }
   }
 
+  /**
+   * Returns true if the focused element is a text input, textarea, or
+   * contenteditable — in which case unmodified single-key shortcuts (j, k,
+   * n, i, r, m, /, etc.) must NOT fire, otherwise typing in the alt-text
+   * editor or syndication wizard accidentally triggers nav actions.
+   *
+   * Modified shortcuts (⌘K, ⌘,, ⌘Enter, Escape) still go through.
+   */
+  function isTypingTarget(e: KeyboardEvent): boolean {
+    const t = e.target as HTMLElement | null
+    if (!t) return false
+    const tag = t.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+    if (t.isContentEditable) return true
+    return false
+  }
+
   function handleGlobalKey(e: KeyboardEvent) {
-    // Cmd+K for search
+    // --- COMMAND-MODIFIED SHORTCUTS — fire even while typing ---
+
+    // ⌘K toggles the command palette.
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault()
       if (options.searchOpen.value) options.closeSearch()
@@ -43,35 +63,59 @@ export function useKeyboardShortcuts(options: {
       return
     }
 
-    // Cmd+1..5 jump to right-panel tab
-    if ((e.metaKey || e.ctrlKey) && ['1', '2', '3', '4', '5'].includes(e.key)) {
+    // ⌘, opens Settings (macOS convention).
+    if ((e.metaKey || e.ctrlKey) && e.key === ',') {
       e.preventDefault()
-      const tabs = ['preview', 'media', 'activity', 'journal', 'gear'] as const
+      options.showSettings.value = !options.showSettings.value
+      return
+    }
+
+    // ⌘0 toggles the sidebar.
+    if ((e.metaKey || e.ctrlKey) && e.key === '0') {
+      e.preventDefault()
+      options.sidebarCollapsed.value = !options.sidebarCollapsed.value
+      return
+    }
+
+    // ⌘1..6 jump to right-panel tab.
+    if ((e.metaKey || e.ctrlKey) && ['1', '2', '3', '4', '5', '6'].includes(e.key)) {
+      e.preventDefault()
+      const tabs = ['preview', 'media', 'activity', 'modified', 'journal', 'gear'] as const
       options.rightTab.value = tabs[parseInt(e.key) - 1]
       return
     }
+
+    // ⌘Enter publishes the selected file (republishes if live).
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && options.selectedFile.value) {
+      e.preventDefault()
+      const isRepublish = !!options.selectedFile.value.published_url
+      options.filePreviewRef.value?.openPublishConfirm(isRepublish)
+      return
+    }
+
+    // --- MODAL-AWARE ESCAPE HANDLING ---
+    // Each modal-open guard lets only Escape through and short-circuits the
+    // rest of the handler, so opening a modal doesn't accidentally also
+    // navigate or trigger a typing shortcut.
 
     if (options.searchOpen.value) {
       if (e.key === 'Escape') options.closeSearch()
       return
     }
-
     if (options.showSettings.value) {
       if (e.key === 'Escape') options.showSettings.value = false
       return
     }
-
     if (options.newPostOpen.value) {
       if (e.key === 'Escape') options.closeNewPost()
       return
     }
 
-    // , opens settings
-    if (e.key === ',' && !e.metaKey && !e.ctrlKey) {
-      e.preventDefault()
-      options.showSettings.value = true
-      return
-    }
+    // --- TYPING GUARD ---
+    // Unmodified single-key shortcuts below would hijack typing in inputs,
+    // textareas, alt-text edit fields, syndication wizard, etc. Bail out
+    // if the user is in any editable surface.
+    if (isTypingTarget(e)) return
 
     // / opens search (vim style)
     if (e.key === '/' && !e.metaKey && !e.ctrlKey) {
@@ -195,12 +239,6 @@ export function useKeyboardShortcuts(options: {
       options.rightTab.value = options.rightTab.value === 'journal' ? 'preview' : 'journal'
     }
 
-    // Cmd+Enter to publish
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && options.selectedFile.value) {
-      e.preventDefault()
-      const isRepublish = !!options.selectedFile.value.published_url
-      options.filePreviewRef.value?.openPublishConfirm(isRepublish)
-    }
   }
 
   return { lastGPress, handleSearchKey, handleGlobalKey }

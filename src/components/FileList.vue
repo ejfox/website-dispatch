@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useLocalStorage } from '@vueuse/core'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import {
@@ -223,6 +224,25 @@ async function showContextMenu(file: MarkdownFile, e: MouseEvent) {
   await menu.popup()
 }
 
+/**
+ * Manual window-drag handler — required because `titleBarStyle: "Overlay"`
+ * breaks the CSS `-webkit-app-region: drag` mechanism on macOS Sonoma+
+ * (Tauri issues #9503 / #11605). Calling `startDragging()` from a mousedown
+ * listener is the documented workaround. Bail out on non-primary clicks
+ * and on bubbled events from buttons/inputs/links so we don't hijack
+ * intended clicks on the filter pills, sort row, etc.
+ */
+async function startWindowDrag(e: MouseEvent) {
+  if (e.button !== 0) return
+  const target = e.target as HTMLElement
+  if (target.closest('button, input, a, select, [data-no-drag]')) return
+  try {
+    await getCurrentWindow().startDragging()
+  } catch (err) {
+    console.warn('startDragging failed', err)
+  }
+}
+
 function getAgeColor(ts: number): string {
   const days = Math.min(Math.floor((Date.now() / 1000 - ts) / 86400), 365)
   const t = days / 365
@@ -238,7 +258,10 @@ function getAgeColor(ts: number): string {
 
 <template>
   <aside class="sidebar" :class="{ compact }">
-    <div class="control-bar" data-tauri-drag-region>
+    <!-- `@mousedown="startWindowDrag"` is the real drag handle — see the
+         function comment for why CSS-region drag is broken under
+         `titleBarStyle: "Overlay"`. -->
+    <div class="control-bar" data-tauri-drag-region @mousedown="startWindowDrag">
       <div class="filters">
         <button :class="{ active: filter === 'all' }" @click="filter = 'all'">All {{ counts.all }}</button>
         <button :class="{ active: filter === 'published' }" @click="filter = 'published'">
@@ -414,7 +437,11 @@ function getAgeColor(ts: number): string {
   overflow: hidden;
 }
 
-/* Titlebar-aligned control bar */
+/* Titlebar-aligned control bar — left half of the window-drag region.
+   The drag-eligible space is: (a) the strip above the bottom-aligned
+   filter buttons, and (b) any horizontal whitespace between the traffic
+   lights and the filter buttons. Bumping `padding-top` to 18px gives a
+   fatter grab strip that survives any responsive layout. */
 .control-bar {
   display: flex;
   align-items: flex-end;
@@ -425,7 +452,7 @@ function getAgeColor(ts: number): string {
   /* Clear traffic lights: 12px offset + 14px button + gap */
   padding-left: 78px;
   height: 44px;
-  padding-top: 14px;
+  padding-top: 18px;
   padding-bottom: 4px;
 }
 

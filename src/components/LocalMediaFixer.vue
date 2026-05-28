@@ -31,6 +31,11 @@ interface MediaFixResult {
 interface Props {
   filePath: string
   localMedia: LocalMediaRef[]
+  /** Upload folder (Cloudinary path / R2 prefix). Should mirror the
+   *  drag-drop handler's derivation so screenshots fixed via this modal
+   *  land next to those uploaded by drag. Defaults to "blog" if omitted
+   *  so older callers keep working. */
+  folder?: string
 }
 
 const props = defineProps<Props>()
@@ -77,7 +82,7 @@ async function uploadAll() {
       const fixResults: MediaFixResult[] = await invoke('fix_local_media', {
         sourcePath: props.filePath,
         mediaRefs: [media],
-        folder: 'blog', // Default folder for blog images
+        folder: props.folder || 'blog',
       })
 
       results.value.push(...fixResults)

@@ -118,7 +118,13 @@ fn get_resource_type(path: &str) -> &'static str {
 
     match ext.as_str() {
         "mp4" | "mov" | "avi" | "webm" | "mkv" | "m4v" => "video",
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" => "image",
+        // macOS screenshots default to HEIC; phones export HEIC/HEIF. AVIF is
+        // increasingly common from modern cameras and exports. All three are
+        // accepted by Cloudinary's image endpoint, so classify them as images
+        // (the previous "raw" classification made uploads fail silently with
+        // a misleading error).
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" | "heic" | "heif"
+        | "avif" => "image",
         _ => "raw",
     }
 }

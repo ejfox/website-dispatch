@@ -72,6 +72,171 @@ const markdownProcessor = computed(() =>
   ),
 )
 
+// LRU-ish cache of rendered HTML keyed on `path|modified`. Flipping between
+// two posts (or any post you've recently viewed) becomes instant — no
+// re-running the unified pipeline. ~80-150ms savings per cache hit on
+// long posts. Invalidates automatically when the file is edited because
+// the `modified` mtime changes.
+//
+// We also cache the parsed skeleton blocks here so the next load doesn't
+// need to re-parse — useful on cold cache-key misses where the layout is
+// still likely close to the cached version.
+type SkeletonBlock = {
+  type: 'heading' | 'paragraph' | 'code' | 'list' | 'quote' | 'image' | 'hr'
+  level?: number // for headings: 1..6
+  lines: number // how many wrapped lines to render
+  shortLast?: boolean // last line ~50% (true for prose paragraphs)
+}
+type CacheEntry = { stripped: string; rendered: string; skeleton: SkeletonBlock[] }
+const renderCache = new Map<string, CacheEntry>()
+const RENDER_CACHE_MAX = 30
+function renderCacheKey(file: { path: string; modified: number }) {
+  // Include the active publish-target domain because remarkObsidianWikilinks
+  // bakes it into the rendered HTML — same file rendered against a
+  // different target should not share cache.
+  return `${file.path}|${file.modified}|${activeTargetDomain.value}`
+}
+/**
+ * Cheap block-level parser of markdown body text. Returns a structural
+ * outline used to render an accurate loading skeleton — not a full
+ * markdown parser. We only need to know "what KIND of block is here, and
+ * how many lines does it roughly take." We deliberately don't use the
+ * unified pipeline here because the whole point is to have something
+ * before unified finishes processing.
+ *
+ * Wraps long paragraphs at ~70 chars/line for skeleton purposes, which
+ * roughly matches the rendered prose column at default zoom.
+ */
+const CHARS_PER_LINE = 70
+function parseSkeleton(markdown: string): SkeletonBlock[] {
+  if (!markdown) return []
+  const blocks: SkeletonBlock[] = []
+  const lines = markdown.split('\n')
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    const trimmed = line.trim()
+
+    if (!trimmed) {
+      i++
+      continue
+    }
+
+    // Heading
+    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/)
+    if (heading) {
+      blocks.push({
+        type: 'heading',
+        level: heading[1].length,
+        lines: 1,
+      })
+      i++
+      continue
+    }
+
+    // Horizontal rule
+    if (/^([-*_])\1\1+\s*$/.test(trimmed)) {
+      blocks.push({ type: 'hr', lines: 1 })
+      i++
+      continue
+    }
+
+    // Fenced code block
+    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
+      const fence = trimmed.slice(0, 3)
+      let codeLines = 0
+      i++
+      while (i < lines.length && !lines[i].trimStart().startsWith(fence)) {
+        codeLines++
+        i++
+      }
+      i++ // skip closing fence
+      blocks.push({ type: 'code', lines: Math.max(1, codeLines) })
+      continue
+    }
+
+    // Blockquote — collapse contiguous `>` lines into one block
+    if (trimmed.startsWith('>')) {
+      let quoteText = ''
+      while (i < lines.length && lines[i].trim().startsWith('>')) {
+        quoteText += ' ' + lines[i].replace(/^\s*>\s?/, '')
+        i++
+      }
+      const wrapped = Math.max(1, Math.ceil(quoteText.trim().length / CHARS_PER_LINE))
+      blocks.push({ type: 'quote', lines: wrapped, shortLast: true })
+      continue
+    }
+
+    // List — collapse contiguous list items into one block
+    if (/^([-*+]|\d+\.)\s+/.test(trimmed)) {
+      let listItems = 0
+      while (i < lines.length) {
+        const t = lines[i].trim()
+        if (!t) break
+        if (!/^([-*+]|\d+\.)\s+/.test(t)) break
+        listItems++
+        i++
+      }
+      blocks.push({ type: 'list', lines: listItems })
+      continue
+    }
+
+    // Standalone image (line that's only `![…](…)`)
+    if (/^!\[[^\]]*\]\([^)]+\)\s*$/.test(trimmed)) {
+      blocks.push({ type: 'image', lines: 1 })
+      i++
+      continue
+    }
+
+    // Paragraph — accumulate until blank line or block-starting line.
+    let para = trimmed
+    let j = i + 1
+    while (j < lines.length) {
+      const next = lines[j].trim()
+      if (!next) break
+      if (/^#{1,6}\s/.test(next) || /^([-*_])\1\1+\s*$/.test(next)) break
+      if (next.startsWith('```') || next.startsWith('~~~')) break
+      if (next.startsWith('>')) break
+      if (/^([-*+]|\d+\.)\s+/.test(next)) break
+      para += ' ' + next
+      j++
+    }
+    const wrappedLines = Math.max(1, Math.ceil(para.length / CHARS_PER_LINE))
+    blocks.push({ type: 'paragraph', lines: wrappedLines, shortLast: true })
+    i = j
+  }
+  return blocks
+}
+
+function cacheRender(key: string, entry: CacheEntry) {
+  // Evict oldest if over the cap. Map preserves insertion order, so the
+  // first key is the oldest. Re-set to bump recency on hits.
+  if (renderCache.size >= RENDER_CACHE_MAX && !renderCache.has(key)) {
+    const first = renderCache.keys().next().value
+    if (first !== undefined) renderCache.delete(first)
+  }
+  renderCache.delete(key) // re-insert to mark as most-recent
+  renderCache.set(key, entry)
+}
+
+/**
+ * Secondary cache keyed by file path ONLY (no mtime). The full render
+ * cache invalidates on every edit, but the structural outline is usually
+ * still close to the previous version — close enough for a skeleton.
+ * This lets the second-visit-after-edit show an accurate-shaped skeleton
+ * instead of falling back to generic random widths.
+ */
+const skeletonCache = new Map<string, SkeletonBlock[]>()
+const SKELETON_CACHE_MAX = 50
+function cacheSkeleton(path: string, blocks: SkeletonBlock[]) {
+  if (skeletonCache.size >= SKELETON_CACHE_MAX && !skeletonCache.has(path)) {
+    const first = skeletonCache.keys().next().value
+    if (first !== undefined) skeletonCache.delete(first)
+  }
+  skeletonCache.delete(path)
+  skeletonCache.set(path, blocks)
+}
+
 function selectTarget(id: string) {
   selectedTargetId.value = id
 }
@@ -90,11 +255,159 @@ const loadingLocalMedia = ref(false)
 const showMediaFixer = ref(false)
 const metadataExpanded = ref(false)
 
+/**
+ * Loading-state machinery for the preview pane. Three principles:
+ *
+ *   1. Don't flash a skeleton on fast loads — wait ~120ms before showing
+ *      anything. The eye reads ≤100ms as "instant", so a skeleton that
+ *      appears for 50ms is just noise.
+ *   2. Cross-fade between skeleton ↔ rendered content via Vue Transition,
+ *      not a hard swap.
+ *   3. Skeleton shape varies per post (word count → number of lines) so
+ *      switching files doesn't show the same fake outline every time.
+ */
+const previewLoading = ref(false)
+const showSkeleton = ref(false)
+const showLoadingIndicator = ref(false)
+let skeletonTimer: number | null = null
+let progressTimer: number | null = null
+
+function beginPreviewLoad() {
+  previewLoading.value = true
+  if (skeletonTimer !== null) window.clearTimeout(skeletonTimer)
+  if (progressTimer !== null) window.clearTimeout(progressTimer)
+  showSkeleton.value = false
+  showLoadingIndicator.value = false
+  // 120ms: long enough to skip the flash on fast cache-miss renders,
+  // short enough that slower posts don't feel frozen.
+  skeletonTimer = window.setTimeout(() => {
+    if (previewLoading.value) showSkeleton.value = true
+  }, 120)
+  // The top progress bar shows slightly earlier (60ms) because it's
+  // unobtrusive — a thin sliver at the top of the pane.
+  progressTimer = window.setTimeout(() => {
+    if (previewLoading.value) showLoadingIndicator.value = true
+  }, 60)
+}
+
+function endPreviewLoad() {
+  previewLoading.value = false
+  showSkeleton.value = false
+  showLoadingIndicator.value = false
+  if (skeletonTimer !== null) {
+    window.clearTimeout(skeletonTimer)
+    skeletonTimer = null
+  }
+  if (progressTimer !== null) {
+    window.clearTimeout(progressTimer)
+    progressTimer = null
+  }
+}
+
+/**
+ * Block-level skeleton model. Derived from (in priority order):
+ *   1. The full render-cache entry (always 100% accurate — same content)
+ *   2. The path-only skeleton cache (last known structure — close after
+ *      small edits, drifts after big rewrites)
+ *   3. A live parse of `content.value` if it's already arrived but
+ *      markdown is still processing
+ *   4. A generic word-count-derived fallback for true first visits
+ *
+ * Tier 4 is the only one that's not structurally accurate — and it only
+ * runs once per file. After the first render, the structure is cached
+ * forever for that path.
+ */
+const skeletonBlocks = computed<SkeletonBlock[]>(() => {
+  // Tier 1: exact cache hit
+  const exact = renderCache.get(renderCacheKey(props.file))
+  if (exact) return exact.skeleton
+
+  // Tier 2: path-only skeleton cache (any prior visit, mtime irrelevant)
+  const recent = skeletonCache.get(props.file.path)
+  if (recent && recent.length) return recent
+
+  // Tier 3: content already arrived (IPC done, markdown still processing)
+  if (content.value) return parseSkeleton(content.value)
+
+  // Tier 4: first visit, no content yet — synthesize a believable shape
+  // from the file's word_count metadata so layout shift is minimal.
+  return synthesizeSkeleton(props.file.word_count || 600, props.file.path)
+})
+
+/**
+ * Generate a plausible-looking outline when we have nothing but a word
+ * count. Mixes headings + paragraphs in a realistic blog-post rhythm.
+ * Deterministic per path so the same file always shows the same shape.
+ */
+function synthesizeSkeleton(words: number, path: string): SkeletonBlock[] {
+  const seed = hashCode(path)
+  const rand = (i: number) => ((seed + i * 2654435761) >>> 0) / 0xffffffff
+  const blocks: SkeletonBlock[] = [
+    { type: 'heading', level: 1, lines: 1 },
+  ]
+  let remaining = words
+  let i = 0
+  while (remaining > 0) {
+    // Insert a subhead every ~3-4 paragraphs
+    if (blocks.length > 2 && i % 4 === 3) {
+      blocks.push({ type: 'heading', level: 2, lines: 1 })
+    }
+    // Paragraph length varies 60-180 words
+    const paraWords = Math.min(remaining, Math.round(60 + rand(i) * 120))
+    const paraChars = paraWords * 5.5 // rough chars-per-word
+    const paraLines = Math.max(1, Math.ceil(paraChars / CHARS_PER_LINE))
+    blocks.push({ type: 'paragraph', lines: paraLines, shortLast: true })
+    remaining -= paraWords
+    i++
+    if (i > 20) break // cap synthetic skeletons
+  }
+  return blocks
+}
+
+function hashCode(s: string): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) {
+    h = (h << 5) - h + s.charCodeAt(i)
+    h |= 0
+  }
+  return h
+}
+
+/**
+ * Width for a non-final wrapped line in a paragraph/list/quote — varies
+ * subtly per block+line so the skeleton doesn't look like a fake bar
+ * chart. Stable across re-renders (deterministic from path + indices).
+ */
+function skelLineWidth(blockIdx: number, lineIdx: number, block: SkeletonBlock): number {
+  const seed = hashCode(props.file.path) + blockIdx * 7919 + lineIdx * 131
+  const r = ((seed >>> 0) % 14) - 7 // [-7, +6]
+  if (block.type === 'list') return Math.min(85, 55 + r) // list items are shorter
+  if (block.type === 'code') return Math.min(95, 60 + r) // code wraps unevenly
+  return Math.min(99, 93 + r)
+}
+
+/** Last-line width for prose paragraphs — looks natural at 35-60%. */
+function skelLastLineWidth(blockIdx: number): number {
+  const seed = hashCode(props.file.path) + blockIdx * 7919
+  return 35 + ((seed >>> 0) % 26) // [35, 60]
+}
+
 // Image / video breakdown of localMedia — surfaced to AltTextReviewer
 // so its empty state can give a real next-step ("upload N images") instead
 // of a dead-end "0 images found" message.
 const localImageCount = computed(() => localMedia.value.filter((m) => m.media_type !== 'video').length)
 const localVideoCount = computed(() => localMedia.value.filter((m) => m.media_type === 'video').length)
+
+// Derive the upload folder (Cloudinary path / R2 prefix) from the post's
+// vault location. Mirrors the logic in App.vue's drag-drop handler so
+// screenshots dropped onto Dispatch and screenshots fixed via the
+// LocalMediaFixer modal land in the same place.
+const mediaUploadFolder = computed(() => {
+  const sd = props.file.source_dir
+  if (!sd) return 'blog'
+  const m = sd.match(/(\d{4})/)
+  return m ? `blog/${m[1]}` : sd
+})
 
 // AltTextReviewer's empty state offers "Upload to Cloudinary" — wire that
 // to close the Describe modal and open the uploader in one motion.
@@ -226,82 +539,120 @@ watch(
     loadingBacklinks.value = true
     loadingLocalMedia.value = true
     loadingStats.value = !!file.published_url
+    beginPreviewLoad()
 
-    // Fire-and-forget: preview servers don't gate any UI render.
+    // Fire-and-forget: the preview server is on localhost; the frontend
+    // talks to it directly. (We used to also `invoke('set_preview_file')`
+    // which round-tripped through Tauri's IPC and then made the SAME HTTP
+    // call on the Rust side via `reqwest::blocking` — pure duplicate work
+    // that hogged an IPC worker thread on every file switch.)
     fetch('http://127.0.0.1:6419/set-file', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: file.path }),
     }).catch(() => {})
-    invoke('set_preview_file', { path: file.path })
 
-    // Kick off ALL IPC calls in parallel — none of them depend on each
-    // other, and we want the metadata header to paint as soon as Vue's
-    // reactivity flushes (which happens before any of these resolve).
-    //
-    // We DON'T await the whole batch as a unit; each ref updates as its
-    // own request returns, so the user sees a progressive fill instead
-    // of a wait-then-flash render.
-
-    invoke('get_file_content', { path: file.path })
-      .then(async (raw) => {
-        const stripped = (raw as string).replace(/^---\n[\s\S]*?\n---\n*/, '')
-        content.value = stripped
-        // Yield a frame so the unstyled-content paint can happen, then
-        // run the heavy unified processor. For long posts this turns a
-        // ~120ms stall into a ~16ms first-paint.
-        await nextTick()
-        try {
-          const result = await markdownProcessor.value.process(stripped)
-          renderedContent.value = String(result)
-          nextTick(() => renderMermaidIn(document))
-        } catch {
-          renderedContent.value = ''
-        }
-        // Tag analysis depends on content; run it after first paint.
+    // Cache hit short-circuits everything below: zero IPC for content,
+    // zero markdown processing. Flipping between recently-viewed posts
+    // feels instant.
+    const cacheKey = renderCacheKey(file)
+    const cached = renderCache.get(cacheKey)
+    if (cached) {
+      content.value = cached.stripped
+      renderedContent.value = cached.rendered
+      // Cache hit is synchronous → no skeleton flash should appear.
+      endPreviewLoad()
+      // Mermaid blocks in cached HTML may not have been re-processed if
+      // the viewer unmounted between renders. The renderer skips blocks
+      // already marked processed, so this is cheap.
+      nextTick(() => renderMermaidIn(document))
+      void (async () => {
         await fetchAvailableTags()
-        suggestedTags.value = analyzeTags(stripped, file.tags || [])
-      })
-      .catch((e) => {
-        content.value = `Error: ${e}`
-        renderedContent.value = ''
-      })
+        suggestedTags.value = analyzeTags(cached.stripped, file.tags || [])
+      })()
+    } else {
+      // Cache miss — kick off content + markdown. The other IPCs below
+      // (backlinks, local media, analytics, pageviews) fire in parallel
+      // regardless of cache state.
+      //
+      // The `file.path === props.file.path` guards prevent a stale render:
+      // if the user clicks post A then quickly clicks post B, the in-flight
+      // markdown processor for A would otherwise overwrite B's content
+      // when it finally resolves. Each step bails out if the active file
+      // has changed since this watcher run started.
+      invoke('get_file_content', { path: file.path })
+        .then(async (raw) => {
+          if (file.path !== props.file.path) return
+          const stripped = (raw as string).replace(/^---\n[\s\S]*?\n---\n*/, '')
+          content.value = stripped
+          await nextTick()
+          if (file.path !== props.file.path) return
+          try {
+            const result = await markdownProcessor.value.process(stripped)
+            if (file.path !== props.file.path) return
+            const rendered = String(result)
+            renderedContent.value = rendered
+            const skeleton = parseSkeleton(stripped)
+            cacheRender(cacheKey, { stripped, rendered, skeleton })
+            cacheSkeleton(file.path, skeleton)
+            endPreviewLoad()
+            nextTick(() => renderMermaidIn(document))
+          } catch {
+            if (file.path !== props.file.path) return
+            renderedContent.value = ''
+            endPreviewLoad()
+          }
+          await fetchAvailableTags()
+          if (file.path !== props.file.path) return
+          suggestedTags.value = analyzeTags(stripped, file.tags || [])
+        })
+        .catch((e) => {
+          if (file.path !== props.file.path) return
+          content.value = `Error: ${e}`
+          renderedContent.value = ''
+          endPreviewLoad()
+        })
+    }
 
     invoke('get_backlinks', { filename: file.filename })
       .then((res) => {
+        if (file.path !== props.file.path) return
         backlinks.value = res as Backlink[]
       })
       .catch((e) => console.log('Backlinks unavailable:', e))
       .finally(() => {
-        loadingBacklinks.value = false
+        if (file.path === props.file.path) loadingBacklinks.value = false
       })
 
     invoke('get_local_media', { path: file.path })
       .then((res) => {
+        if (file.path !== props.file.path) return
         localMedia.value = res as LocalMediaRef[]
       })
       .catch((e) => console.log('Local media detection unavailable:', e))
       .finally(() => {
-        loadingLocalMedia.value = false
+        if (file.path === props.file.path) loadingLocalMedia.value = false
       })
 
     if (file.published_url) {
       invoke('get_post_analytics', { url: file.published_url, days: 30 })
         .then((res) => {
+          if (file.path !== props.file.path) return
           postStats.value = res as PostAnalytics
         })
         .catch(() => {
-          postStats.value = null
+          if (file.path === props.file.path) postStats.value = null
         })
         .finally(() => {
-          loadingStats.value = false
+          if (file.path === props.file.path) loadingStats.value = false
         })
       invoke('get_post_pageview_series', { url: file.published_url, days: 30 })
         .then((res) => {
+          if (file.path !== props.file.path) return
           pageviewSeries.value = (res as number[]) || []
         })
         .catch(() => {
-          pageviewSeries.value = []
+          if (file.path === props.file.path) pageviewSeries.value = []
         })
     }
   },
@@ -743,6 +1094,7 @@ async function openPreview() {
       v-if="showMediaFixer"
       :file-path="file.path"
       :local-media="localMedia"
+      :folder="mediaUploadFolder"
       @close="showMediaFixer = false"
       @fixed="onLocalMediaFixed"
       @open-alt-text="onOpenAltTextFromFixer"
@@ -824,8 +1176,92 @@ async function openPreview() {
 
     <!-- Preview -->
     <div class="preview">
-      <div v-if="renderedContent" class="rendered-content" v-html="renderedContent"></div>
-      <pre v-else>{{ content }}</pre>
+      <!-- Thin macOS-style indeterminate progress bar pinned to the top
+           of the preview pane. Only renders while content is loading AND
+           the load is taking long enough to be worth showing — fast loads
+           never flash it. -->
+      <div v-if="showLoadingIndicator" class="preview-progress" aria-hidden="true">
+        <div class="preview-progress-track"></div>
+      </div>
+
+      <Transition name="preview-fade" mode="out-in">
+        <div
+          v-if="renderedContent"
+          key="content"
+          class="rendered-content"
+          v-html="renderedContent"
+        ></div>
+        <div
+          v-else-if="showSkeleton"
+          key="skeleton"
+          class="preview-skeleton"
+          aria-busy="true"
+          aria-live="polite"
+        >
+          <div
+            v-for="(block, bi) in skeletonBlocks"
+            :key="bi"
+            class="skel-block"
+            :class="`skel-${block.type}`"
+          >
+            <template v-if="block.type === 'heading'">
+              <div class="skel-line skel-heading" :class="`skel-h${block.level}`" />
+            </template>
+            <template v-else-if="block.type === 'hr'">
+              <div class="skel-hr-line" />
+            </template>
+            <template v-else-if="block.type === 'image'">
+              <div class="skel-image" />
+            </template>
+            <template v-else-if="block.type === 'code'">
+              <div class="skel-code">
+                <div
+                  v-for="n in block.lines"
+                  :key="n"
+                  class="skel-line skel-code-line"
+                  :style="{ width: skelLineWidth(bi, n, block) + '%' }"
+                />
+              </div>
+            </template>
+            <template v-else-if="block.type === 'list'">
+              <div
+                v-for="n in block.lines"
+                :key="n"
+                class="skel-line skel-list-item"
+                :style="{ width: skelLineWidth(bi, n, block) + '%' }"
+              />
+            </template>
+            <template v-else-if="block.type === 'quote'">
+              <div class="skel-quote">
+                <div
+                  v-for="n in block.lines"
+                  :key="n"
+                  class="skel-line"
+                  :style="{
+                    width:
+                      block.shortLast && n === block.lines && block.lines > 1
+                        ? '45%'
+                        : skelLineWidth(bi, n, block) + '%',
+                  }"
+                />
+              </div>
+            </template>
+            <template v-else>
+              <div
+                v-for="n in block.lines"
+                :key="n"
+                class="skel-line"
+                :style="{
+                  width:
+                    block.shortLast && n === block.lines && block.lines > 1
+                      ? skelLastLineWidth(bi) + '%'
+                      : skelLineWidth(bi, n, block) + '%',
+                }"
+              />
+            </template>
+          </div>
+        </div>
+      </Transition>
     </div>
   </div>
 </template>
@@ -1255,6 +1691,215 @@ async function openPreview() {
   word-wrap: break-word;
   margin: 0;
   tab-size: 2;
+}
+
+/* --- Block-accurate loading skeleton -------------------------------------
+   The skeleton is generated by parsing the markdown source (or recalled
+   from cache). Each block type — heading, paragraph, code, list, quote,
+   image, hr — gets dedicated styling so the loading state visually
+   matches what's about to render. Cross-fades to the real content via
+   Vue Transition (see `.preview-fade-*` below). */
+.preview-skeleton {
+  display: flex;
+  flex-direction: column;
+  padding-top: 8px;
+}
+
+.skel-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* Spacing between blocks mirrors the rhythm of rendered prose. */
+.skel-block + .skel-block {
+  margin-top: 14px;
+}
+.skel-block.skel-heading + .skel-block,
+.skel-block + .skel-block.skel-heading {
+  margin-top: 18px;
+}
+.skel-block.skel-paragraph + .skel-block.skel-paragraph {
+  margin-top: 10px;
+}
+
+.skel-line {
+  height: 11px;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--hover-bg) 0%,
+    color-mix(in srgb, var(--accent) 6%, var(--hover-bg)) 50%,
+    var(--hover-bg) 100%
+  );
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.4s linear infinite;
+}
+
+/* Headings — bigger, slightly darker block to match rendered heading
+   weight. Level controls height. */
+.skel-line.skel-heading {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--text-secondary) 14%, var(--hover-bg)) 0%,
+    color-mix(in srgb, var(--accent) 12%, var(--hover-bg)) 50%,
+    color-mix(in srgb, var(--text-secondary) 14%, var(--hover-bg)) 100%
+  );
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.4s linear infinite;
+}
+.skel-line.skel-h1 {
+  height: 28px;
+  width: 70%;
+  margin-bottom: 4px;
+}
+.skel-line.skel-h2 {
+  height: 22px;
+  width: 55%;
+  margin-bottom: 2px;
+}
+.skel-line.skel-h3 {
+  height: 18px;
+  width: 45%;
+}
+.skel-line.skel-h4,
+.skel-line.skel-h5,
+.skel-line.skel-h6 {
+  height: 15px;
+  width: 38%;
+}
+
+/* Code block — distinct monospace-feeling container with a few lines. */
+.skel-code {
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--bg-tertiary) 70%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.skel-line.skel-code-line {
+  height: 9px;
+  border-radius: 2px;
+}
+
+/* List items — slight left indent + bullet dot. */
+.skel-block.skel-list {
+  padding-left: 14px;
+  gap: 7px;
+}
+.skel-line.skel-list-item {
+  height: 10px;
+  position: relative;
+}
+.skel-line.skel-list-item::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-tertiary) 60%, transparent);
+  transform: translateY(-50%);
+}
+
+/* Blockquote — indented + accent stripe on the left. */
+.skel-quote {
+  padding-left: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.skel-quote .skel-line {
+  height: 10px;
+}
+
+/* Image placeholder — wider box at typical image proportions. */
+.skel-image {
+  height: 180px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--hover-bg) 0%,
+    color-mix(in srgb, var(--accent) 6%, var(--hover-bg)) 50%,
+    var(--hover-bg) 100%
+  );
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.4s linear infinite;
+}
+
+/* HR — thin centered divider. */
+.skel-hr-line {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 0;
+}
+
+@keyframes skel-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* Vue cross-fade between skeleton and rendered content. `mode="out-in"`
+   means the leaving element finishes before the entering one starts —
+   no visual overlap. */
+.preview-fade-enter-active,
+.preview-fade-leave-active {
+  transition: opacity 0.16s ease;
+}
+.preview-fade-enter-from,
+.preview-fade-leave-to {
+  opacity: 0;
+}
+
+/* --- Thin top-of-pane progress bar ---------------------------------------
+   macOS-style indeterminate stripe. Pinned to the top edge of the
+   preview area, only renders after 60ms of loading so it doesn't flicker
+   on cache hits or fast renders. */
+.preview-progress {
+  position: sticky;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  margin: -12px -16px 8px;
+  overflow: hidden;
+  background: var(--hover-bg);
+  z-index: 1;
+}
+.preview-progress-track {
+  height: 100%;
+  width: 30%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent) 50%,
+    transparent 100%
+  );
+  animation: preview-progress-slide 1.1s ease-in-out infinite;
+}
+@keyframes preview-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skel-line,
+  .preview-progress-track {
+    animation-duration: 3s;
+  }
 }
 
 .analytics-strip {
