@@ -120,95 +120,104 @@ watch(
 </template>
 
 <style scoped>
+/* Status banners — soft state callouts, not bright full-bleed signs.
+   Each state uses a translucent tint of its semantic color with a 3px
+   left stripe, matching Apple Mail's restrained "Time-Sensitive Update"
+   chip language rather than a screaming colored bar. */
 .banner {
-  padding: 8px 16px;
+  padding: 6px 16px 6px 13px;
   font-size: 11px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  transition: all 0.2s ease;
+  gap: 10px;
+  transition: background 0.2s ease;
+  border-left: 3px solid transparent;
 }
 
 .banner-text {
   display: flex;
   align-items: center;
   gap: 5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
+/* LIVE state — soft green tint, accent on the text, no black-on-bright. */
 .banner.live {
-  background: var(--success);
-  color: #000;
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  color: var(--success);
+  border-left-color: var(--success);
 }
-
-.banner.live .banner-text {
-  font-weight: 700;
-}
-
 .banner.live a {
-  color: #000;
-  opacity: 0.8;
+  color: var(--success);
+  opacity: 0.78;
   text-decoration: none;
   flex: 1;
 }
-
 .banner.live a:hover {
   opacity: 1;
   text-decoration: underline;
 }
-
 .banner.live button {
-  background: rgba(0, 0, 0, 0.2);
+  background: color-mix(in srgb, var(--success) 18%, transparent);
   border: none;
-  color: #000;
+  color: var(--success);
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: 4px;
   font-size: 10px;
   cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s;
+}
+.banner.live button:hover {
+  background: color-mix(in srgb, var(--success) 28%, transparent);
 }
 
+/* SCHEDULED state — already restrained; just normalize. */
 .banner.scheduled {
-  background: rgba(255, 159, 10, 0.15);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
   color: var(--warning);
+  border-left-color: var(--warning);
 }
-
 .banner.scheduled button {
-  background: rgba(255, 159, 10, 0.2);
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
   border: none;
   color: var(--warning);
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: 4px;
   font-size: 10px;
+  font-family: inherit;
   cursor: pointer;
+  transition: background 0.12s;
 }
-
 .banner.scheduled button:hover {
-  background: rgba(255, 159, 10, 0.35);
+  background: color-mix(in srgb, var(--warning) 28%, transparent);
 }
 
 .banner.warn {
-  background: rgba(255, 159, 10, 0.15);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
   color: var(--warning);
+  border-left-color: var(--warning);
 }
 
+/* MODIFIED state — the one users see most. Was the loudest bar; now a
+   soft amber wash with amber text, in line with the other states. */
 .banner.modified {
-  background: var(--warning);
-  color: #000;
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+  border-left-color: var(--warning);
 }
-
-.banner.modified .banner-text {
-  font-weight: 700;
-}
-
 .banner.modified .modified-msg {
   flex: 1;
+  color: color-mix(in srgb, var(--warning) 78%, var(--text-secondary));
+  font-weight: 400;
 }
-
 .banner.modified button {
-  background: rgba(0, 0, 0, 0.2);
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
   border: none;
-  color: #000;
+  color: var(--warning);
   padding: 3px 9px;
-  border-radius: 3px;
+  border-radius: 4px;
   font-size: 10px;
   font-weight: 500;
   cursor: pointer;
@@ -219,7 +228,7 @@ watch(
   transition: background 0.12s;
 }
 .banner.modified button:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.32);
+  background: color-mix(in srgb, var(--warning) 28%, transparent);
 }
 .banner.modified .see-changes .see-caret {
   transition: transform 0.15s;
@@ -227,13 +236,15 @@ watch(
 .banner.modified .see-changes.open .see-caret {
   transform: rotate(180deg);
 }
+/* Primary action button on the modified banner — sits on the soft amber
+   wash, so it gets a solid amber pill to read as "the action to take." */
 .banner.modified .republish-btn {
-  background: #000;
-  color: var(--warning);
+  background: var(--warning);
+  color: var(--bg-solid);
   font-weight: 600;
 }
 .banner.modified .republish-btn:hover:not(:disabled) {
-  background: #1a1a1a;
+  background: color-mix(in srgb, var(--warning) 88%, white);
 }
 
 .banner.ready {
@@ -241,65 +252,44 @@ watch(
   color: var(--text-secondary);
 }
 
-.banner.unlisted {
-  background: var(--accent);
-  color: #fff;
-}
-
-.banner.unlisted .banner-text {
-  font-weight: 700;
-}
-
-.banner.unlisted a {
-  color: rgba(255, 255, 255, 0.8);
-  text-decoration: none;
-  flex: 1;
-}
-
-.banner.unlisted a:hover {
-  color: #fff;
-  text-decoration: underline;
-}
-
-.banner.unlisted button {
-  background: rgba(0, 0, 0, 0.2);
-  border: none;
-  color: #fff;
-  padding: 2px 8px;
-  border-radius: 3px;
-  font-size: 10px;
-  cursor: pointer;
-}
-
+/* UNLISTED + PROTECTED — same accent palette, soft wash treatment. */
+.banner.unlisted,
 .banner.protected {
-  background: var(--accent);
-  color: #fff;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border-left-color: var(--accent);
 }
 
-.banner.protected .banner-text {
-  font-weight: 700;
-}
-
+.banner.unlisted a,
 .banner.protected a {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--accent);
+  opacity: 0.78;
   text-decoration: none;
   flex: 1;
 }
 
+.banner.unlisted a:hover,
 .banner.protected a:hover {
-  color: #fff;
+  opacity: 1;
   text-decoration: underline;
 }
 
+.banner.unlisted button,
 .banner.protected button {
-  background: rgba(0, 0, 0, 0.2);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
   border: none;
-  color: #fff;
+  color: var(--accent);
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: 4px;
   font-size: 10px;
   cursor: pointer;
+  font-family: inherit;
   margin-left: 4px;
+  transition: background 0.12s;
+}
+.banner.unlisted button:hover,
+.banner.protected button:hover {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .visibility-badge {
