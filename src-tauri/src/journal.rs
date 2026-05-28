@@ -81,6 +81,12 @@ pub struct Milestone {
     pub label: String,
     pub description: String,
     pub achieved_at: Option<String>,
+    /// Where you are right now (e.g. 5 of 7 days into a streak milestone).
+    /// Used by the frontend to draw real progress bars on locked entries
+    /// instead of a generic "locked" pill. For achieved ones this equals
+    /// `target` (or whatever the high-water mark is).
+    pub current: i64,
+    pub target: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -556,7 +562,9 @@ pub fn get_stats() -> Result<JournalStats, String> {
         })
     });
 
-    // Milestones
+    // Milestones — the standard count ladder plus a handful of "unexpected"
+    // ones (night owl, pithy, comeback, etc.) computed from richer DB queries.
+    let weird = compute_weird_stats(&db, today.date_naive());
     let milestones = compute_milestones(
         total_publishes,
         current_streak_days,
@@ -564,6 +572,7 @@ pub fn get_stats() -> Result<JournalStats, String> {
         current_weekly_streak,
         total_words_published,
         unique_posts_published,
+        &weird,
     );
 
     Ok(JournalStats {
@@ -594,6 +603,196 @@ pub fn get_stats() -> Result<JournalStats, String> {
         last_publish_at,
         days_since_last_publish,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Fun stats — feeds the "unexpected" milestones (night owl, pithy, comeback,
+// etc.) so the wins list reads as personal observations, not a 10/25/50
+// post ladder.
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct WeirdStats {
+    night_owl_count: i64,
+    dawn_count: i64,
+    min_post_words: i64,  // smallest non-zero word_count seen, or 0 if none
+    max_post_words: i64,
+    unique_weekdays: i64,
+    unique_months_active: i64,
+    days_since_first_publish: i64,
+    biggest_month_posts: i64,
+    comeback_count: i64,  // times you returned after a 30+ day silence
+
+    // ── personal-pattern stats (driven by EJ's actual data) ───────────
+    /// Longest streak of consecutive Sundays with at least one publish.
+    /// Sunday is the dominant publish day in EJ's history (~45% of all
+    /// posts) so this is the most identity-aligned streak available.
+    longest_sunday_streak: i64,
+    /// Posts in the current calendar year. Pairs with `prior_year_posts`
+    /// for the "beat last year" rolling challenge.
+    current_year_posts: i64,
+    prior_year_posts: i64,
+    /// Posts in the current calendar month vs. the all-time biggest month.
+    /// Drives "beat your best month" — resets every month-roll.
+    current_month_posts: i64,
+    /// Distinct active days in the current calendar year. Best year so far
+    /// is ~57 active days; 100 is the genuine aspirational target.
+    current_year_active_days: i64,
+    /// Publishes between 22:00 and 01:59 (inclusive). Cinderella shift —
+    /// publish-right-before-or-after-the-day-flips ritual.
+    midnight_hour_count: i64,
+}
+
+fn compute_weird_stats(db: &Connection, today: chrono::NaiveDate) -> WeirdStats {
+    let mut w = WeirdStats::default();
+
+    // Late night (>=22) or pre-dawn (<5)
+    w.night_owl_count = db.query_row(
+        "SELECT COUNT(*) FROM events WHERE event IN ('publish','republish')
+         AND (local_hour >= 22 OR local_hour < 5)",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+
+    // Early morning (5-7 inclusive)
+    w.dawn_count = db.query_row(
+        "SELECT COUNT(*) FROM events WHERE event IN ('publish','republish')
+         AND local_hour >= 5 AND local_hour < 8",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+
+    w.min_post_words = db.query_row(
+        "SELECT COALESCE(MIN(word_count), 0) FROM events
+         WHERE event = 'publish' AND word_count > 0",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+
+    w.max_post_words = db.query_row(
+        "SELECT COALESCE(MAX(word_count), 0) FROM events WHERE event = 'publish'",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+
+    w.unique_weekdays = db.query_row(
+        "SELECT COUNT(DISTINCT day_of_week) FROM events WHERE event IN ('publish','republish')",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+
+    w.unique_months_active = db.query_row(
+        "SELECT COUNT(DISTINCT substr(local_date, 1, 7)) FROM events
+         WHERE event IN ('publish','republish')",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+
+    let first_date: Option<String> = db.query_row(
+        "SELECT MIN(local_date) FROM events WHERE event IN ('publish','republish')",
+        [], |r| r.get(0),
+    ).unwrap_or(None);
+    if let Some(d) = first_date {
+        if let Ok(first) = chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d") {
+            w.days_since_first_publish = (today - first).num_days().max(0);
+        }
+    }
+
+    w.biggest_month_posts = db.query_row(
+        "SELECT COALESCE(MAX(c), 0) FROM (
+            SELECT substr(local_date, 1, 7) AS m, COUNT(*) AS c
+            FROM events WHERE event = 'publish'
+            GROUP BY m
+         )",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+
+    // Comebacks: count consecutive publish-day gaps > 30. Cheap enough since
+    // it's distinct dates (one row per active day).
+    if let Ok(dates) = get_publish_dates(db) {
+        let mut prev: Option<chrono::NaiveDate> = None;
+        for d in &dates {
+            if let Ok(cur) = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d") {
+                if let Some(p) = prev {
+                    if (cur - p).num_days() > 30 {
+                        w.comeback_count += 1;
+                    }
+                }
+                prev = Some(cur);
+            }
+        }
+    }
+
+    // ── personal-pattern queries ──────────────────────────────────────
+    let cur_year = today.format("%Y").to_string();
+    let prev_year_s = today
+        .pred_opt()
+        .map(|_| (today.year() - 1).to_string())
+        .unwrap_or_default();
+    let cur_month = today.format("%Y-%m").to_string();
+
+    w.current_year_posts = db.query_row(
+        "SELECT COUNT(*) FROM events WHERE event='publish' AND substr(local_date,1,4) = ?1",
+        rusqlite::params![cur_year],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    w.prior_year_posts = db.query_row(
+        "SELECT COUNT(*) FROM events WHERE event='publish' AND substr(local_date,1,4) = ?1",
+        rusqlite::params![prev_year_s],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    w.current_month_posts = db.query_row(
+        "SELECT COUNT(*) FROM events WHERE event='publish' AND substr(local_date,1,7) = ?1",
+        rusqlite::params![cur_month],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    w.current_year_active_days = db.query_row(
+        "SELECT COUNT(DISTINCT local_date) FROM events
+         WHERE event='publish' AND substr(local_date,1,4) = ?1",
+        rusqlite::params![cur_year],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    // Cinderella window: 22, 23, 0, 1 — narrower than night_owl_count.
+    w.midnight_hour_count = db.query_row(
+        "SELECT COUNT(*) FROM events WHERE event='publish'
+         AND local_hour IN (22, 23, 0, 1)",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+
+    // Longest consecutive-Sundays streak. Pull all Sunday publish-dates,
+    // walk forward in 7-day jumps, count the longest unbroken run.
+    if let Ok(mut stmt) = db.prepare(
+        "SELECT DISTINCT local_date FROM events
+         WHERE event='publish' AND day_of_week = 0 ORDER BY local_date ASC",
+    ) {
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).ok();
+        if let Some(rows) = rows {
+            let sundays: Vec<chrono::NaiveDate> = rows
+                .filter_map(|r| r.ok())
+                .filter_map(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
+                .collect();
+            let set: std::collections::HashSet<chrono::NaiveDate> =
+                sundays.iter().copied().collect();
+            let week = chrono::Duration::days(7);
+            let mut longest: i64 = 0;
+            for &s in &sundays {
+                // Only walk from the start of a run.
+                if set.contains(&(s - week)) {
+                    continue;
+                }
+                let mut len: i64 = 1;
+                let mut next = s + week;
+                while set.contains(&next) {
+                    len += 1;
+                    next = next + week;
+                }
+                if len > longest {
+                    longest = len;
+                }
+            }
+            w.longest_sunday_streak = longest;
+        }
+    }
+
+    w
 }
 
 // ---------------------------------------------------------------------------
@@ -758,104 +957,256 @@ fn compute_milestones(
     weekly_streak: u32,
     total_words: i64,
     _unique_posts: u32,
+    w: &WeirdStats,
 ) -> Vec<Milestone> {
-    let defs: Vec<(&str, &str, &str, bool)> = vec![
+    // (id, label, description, current_value, target_value)
+    // Copy is intentionally warm + concrete — these are personal milestones,
+    // not gamification badges. Description should read like a friend
+    // congratulating you, not like an achievement panel in a video game.
+    let posts = total_publishes as i64;
+    let streak = longest_streak as i64;
+    let weekly = weekly_streak as i64;
+    let defs: Vec<(&str, &str, &str, i64, i64)> = vec![
         (
             "first_publish",
-            "First Post!",
-            "Published your first post",
-            total_publishes >= 1,
+            "First spark",
+            "You started a thing. That's the hardest part.",
+            posts.min(1),
+            1,
         ),
         (
             "posts_10",
-            "Getting Started",
-            "Published 10 posts",
-            total_publishes >= 10,
+            "Ten in the wild",
+            "Ten ideas finished and out the door.",
+            posts.min(10),
+            10,
         ),
         (
             "posts_25",
-            "Quarter Century",
-            "Published 25 posts",
-            total_publishes >= 25,
+            "Twenty-five strong",
+            "A small archive of your own.",
+            posts.min(25),
+            25,
         ),
         (
             "posts_50",
-            "Half a Hundred",
-            "Published 50 posts",
-            total_publishes >= 50,
+            "Fifty in",
+            "Half a hundred. You're a writer who ships.",
+            posts.min(50),
+            50,
         ),
         (
             "posts_100",
-            "Century Mark",
-            "Published 100 posts",
-            total_publishes >= 100,
+            "A hundred posts",
+            "A hundred ideas, finished. That's a body of work.",
+            posts.min(100),
+            100,
         ),
         (
             "streak_3",
-            "Hat Trick",
-            "3-day publishing streak",
-            longest_streak >= 3,
+            "Three in a row",
+            "Three days back-to-back. Momentum.",
+            streak.min(3),
+            3,
         ),
         (
             "streak_7",
-            "Week Warrior",
-            "7-day publishing streak",
-            longest_streak >= 7,
+            "Seven straight",
+            "A week of daily posts. That's a practice.",
+            streak.min(7),
+            7,
         ),
         (
             "streak_14",
-            "Two-Week Flow",
-            "14-day publishing streak",
-            longest_streak >= 14,
+            "Two weeks unbroken",
+            "Fourteen days. The habit's stuck.",
+            streak.min(14),
+            14,
         ),
         (
             "streak_30",
-            "Monthly Machine",
-            "30-day publishing streak",
-            longest_streak >= 30,
+            "A month, daily",
+            "Thirty days of posts. The well runs deep.",
+            streak.min(30),
+            30,
         ),
         (
             "weekly_4",
-            "Monthly Regular",
-            "Published every week for a month",
-            weekly_streak >= 4,
+            "Steady month",
+            "Posted every week for a full month.",
+            weekly.min(4),
+            4,
         ),
         (
             "weekly_12",
-            "Quarterly Cadence",
-            "Published every week for 3 months",
-            weekly_streak >= 12,
+            "Steady quarter",
+            "Posted every week for three months. Reliable.",
+            weekly.min(12),
+            12,
         ),
         (
             "words_10k",
-            "10,000 Words",
-            "Published 10,000 words total",
-            total_words >= 10_000,
+            "Ten thousand words",
+            "A novella's worth, out in the world.",
+            total_words.min(10_000),
+            10_000,
         ),
         (
             "words_50k",
-            "NaNoWriMo",
-            "Published 50,000 words total",
-            total_words >= 50_000,
+            "Fifty-thousand words",
+            "NaNoWriMo distance — published, not drafted.",
+            total_words.min(50_000),
+            50_000,
         ),
         (
             "words_100k",
-            "Novel Length",
-            "Published 100,000 words total",
-            total_words >= 100_000,
+            "A novel's worth",
+            "Six figures of words. A whole novel's worth of thinking.",
+            total_words.min(100_000),
+            100_000,
+        ),
+
+        // ── unexpected ones — patterns in your own behavior you maybe
+        // didn't notice you were building. ─────────────────────────────
+        (
+            "night_owl",
+            "Night owl",
+            "Ten posts after 10 PM. The 1 AM brain has things to say.",
+            w.night_owl_count.min(10),
+            10,
+        ),
+        (
+            "dawn_writer",
+            "Dawn writer",
+            "Five posts before 8 AM. Sunrise has been good to you.",
+            w.dawn_count.min(5),
+            5,
+        ),
+        (
+            "pithy",
+            "Pithy",
+            "Published a post under 100 words. Sometimes the shortest one says the most.",
+            // Binary: 1 if any non-zero post is below 100 words.
+            if w.min_post_words > 0 && w.min_post_words < 100 { 1 } else { 0 },
+            1,
+        ),
+        (
+            "longread",
+            "Longread",
+            "A single post over 5,000 words — a whole essay, finished.",
+            if w.max_post_words >= 5_000 { 1 } else { 0 },
+            1,
+        ),
+        (
+            "across_the_week",
+            "Across the week",
+            "You've published on every weekday at some point. All seven sides.",
+            w.unique_weekdays.min(7),
+            7,
+        ),
+        (
+            "year_on_the_wire",
+            "A year on the wire",
+            "You've shown up in twelve different calendar months.",
+            w.unique_months_active.min(12),
+            12,
+        ),
+        (
+            "long_haul",
+            "Long haul",
+            "A thousand days since your first post. You've been at this a while.",
+            w.days_since_first_publish.min(1000),
+            1000,
+        ),
+        (
+            "dump_month",
+            "The dump month",
+            "Ten posts in a single calendar month. Sometimes the well overflows.",
+            w.biggest_month_posts.min(10),
+            10,
+        ),
+        (
+            "comeback_kid",
+            "Comeback kid",
+            "You came back after 30+ days of silence. The most important post is the next one.",
+            w.comeback_count.min(1),
+            1,
+        ),
+
+        // ── personal-pattern milestones — grounded in your actual data ──
+        // Sunday is your strongest identity (~45% of all publishes land on
+        // Sunday). Three tiers: a month, a quarter, a year.
+        (
+            "sunday_devotional_4",
+            "Sunday devotional",
+            "Four Sundays in a row. The rhythm you already trust.",
+            w.longest_sunday_streak.min(4),
+            4,
+        ),
+        (
+            "sunday_devotional_12",
+            "Sunday quarter",
+            "Twelve consecutive Sundays. A season of showing up.",
+            w.longest_sunday_streak.min(12),
+            12,
+        ),
+        (
+            "sunday_devotional_52",
+            "Year of Sundays",
+            "A full year of Sundays, unbroken. The writer you already are.",
+            w.longest_sunday_streak.min(52),
+            52,
+        ),
+        // Rolling year-over-year challenge. Target = beat prior year's count.
+        // If prior year was zero, just clear the floor of 1.
+        (
+            "beat_last_year",
+            "Beat last year",
+            "Publish more this year than last. Past you is the only fair competitor.",
+            w.current_year_posts,
+            (w.prior_year_posts + 1).max(1),
+        ),
+        // Personal-record month — beat your biggest. biggest_month_posts is
+        // computed all-time, so once this month becomes the new biggest the
+        // record holds and a fresh month resets the challenge.
+        (
+            "beat_best_month",
+            "Beat your best month",
+            "More posts this month than any single month before.",
+            w.current_month_posts,
+            (w.biggest_month_posts + 1).max(1),
+        ),
+        // Aspirational. Best year so far has been ~57 distinct active days.
+        // 100 means you stop being weekly and become more than weekly.
+        (
+            "hundred_day_year",
+            "100-day year",
+            "A hundred distinct days of publishing in one calendar year. More than weekly. A real practice.",
+            w.current_year_active_days.min(100),
+            100,
+        ),
+        // Cinderella shift — your actual midnight-publishing ritual. 22–01.
+        (
+            "cinderella",
+            "Cinderella shift",
+            "Fifty posts pushed through right before or after midnight. The hour you actually write.",
+            w.midnight_hour_count.min(50),
+            50,
         ),
     ];
 
     defs.into_iter()
-        .map(|(id, label, desc, achieved)| Milestone {
+        .map(|(id, label, desc, current, target)| Milestone {
             id: id.to_string(),
             label: label.to_string(),
             description: desc.to_string(),
-            achieved_at: if achieved {
-                Some("achieved".to_string()) // We could query the exact date, but this is simpler
+            achieved_at: if current >= target {
+                Some("achieved".to_string())
             } else {
                 None
             },
+            current,
+            target,
         })
         .collect()
 }

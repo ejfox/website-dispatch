@@ -90,6 +90,8 @@ interface Milestone {
   label: string
   description: string
   achieved_at: string | null
+  current: number
+  target: number
 }
 
 interface JournalStats {
@@ -173,6 +175,34 @@ const backfilling = ref(false)
 const earnedMilestones = computed(() => stats.value?.milestones.filter((m) => m.achieved_at) || [])
 
 const unearnedMilestones = computed(() => stats.value?.milestones.filter((m) => !m.achieved_at) || [])
+
+// Pick the locked milestone closest to being earned (highest progress ratio).
+// Featured in its own card above the grid so the next aspiration is the
+// first thing your eye lands on, instead of buried in a wall of pills.
+const nextMilestone = computed<Milestone | null>(() => {
+  let best: Milestone | null = null
+  let bestRatio = -1
+  for (const m of unearnedMilestones.value) {
+    if (!m.target) continue
+    const r = m.current / m.target
+    if (r > bestRatio) {
+      bestRatio = r
+      best = m
+    }
+  }
+  return best
+})
+
+function progressPct(m: Milestone): number {
+  if (!m.target) return 0
+  return Math.min(100, Math.max(0, (m.current / m.target) * 100))
+}
+
+/** Compact "5 / 7" for streak/post counts, "2.9k / 10k" for word counts. */
+function progressText(m: Milestone): string {
+  const fmt = (n: number) => (n >= 10_000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : n.toLocaleString())
+  return `${fmt(m.current)} / ${fmt(m.target)}`
+}
 
 const hourMax = computed(() => Math.max(...(stats.value?.publish_hour_distribution || [0]), 1))
 
@@ -489,9 +519,25 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- Milestones -->
-    <div class="milestones-section" v-if="earnedMilestones.length > 0">
-      <div class="section-label">Milestones</div>
+    <!-- Milestones — personal wins. Featured "next up" card highlights the
+         closest-to-earned so the section reads as a thing you're heading
+         toward, not a wall of grey checkboxes. -->
+    <div class="milestones-section" v-if="stats && stats.milestones.length > 0">
+      <div class="section-label">Your wins</div>
+
+      <!-- Next up: the one locked milestone closest to being earned. -->
+      <div v-if="nextMilestone" class="milestone-next" @contextmenu="showMilestoneMenu(nextMilestone, $event)">
+        <div class="milestone-next-header">
+          <span class="milestone-next-eyebrow">Next up</span>
+          <span class="milestone-next-count">{{ progressText(nextMilestone) }}</span>
+        </div>
+        <div class="milestone-next-label">{{ nextMilestone.label }}</div>
+        <div class="milestone-next-desc">{{ nextMilestone.description }}</div>
+        <div class="milestone-next-bar">
+          <div class="fill" :style="{ width: progressPct(nextMilestone) + '%' }"></div>
+        </div>
+      </div>
+
       <div class="milestone-grid">
         <div
           v-for="m in earnedMilestones"
@@ -503,15 +549,19 @@ onMounted(async () => {
           <PhCheckCircle :size="14" weight="fill" />
           <span>{{ m.label }}</span>
         </div>
+        <!-- All locked, with progress fill inside each pill — gives the
+             "almost there" texture without needing the user to hover. -->
         <div
-          v-for="m in unearnedMilestones.slice(0, 3)"
+          v-for="m in unearnedMilestones"
           :key="m.id"
           class="milestone locked"
           :data-tip="m.description"
           @contextmenu="showMilestoneMenu(m, $event)"
         >
+          <div class="milestone-fill" :style="{ width: progressPct(m) + '%' }" aria-hidden="true"></div>
           <PhCircleWavy :size="14" weight="duotone" />
-          <span>{{ m.label }}</span>
+          <span class="milestone-label">{{ m.label }}</span>
+          <span class="milestone-progress">{{ progressText(m) }}</span>
         </div>
       </div>
     </div>
@@ -897,10 +947,74 @@ onMounted(async () => {
   flex: 1;
 }
 
-/* Milestones */
+/* Milestones — "Your wins" section. Featured next-up card + progress on
+   locked pills so this reads as something you're heading toward, not a
+   grey-out gamification grid. */
 .milestones-section {
-  padding-bottom: 10px;
+  padding-bottom: 14px;
   border-bottom: 1px solid var(--border);
+}
+
+/* Featured "next up" card. Sits above the grid, draws the eye, shows real
+   progress. The one milestone you're closest to earning. */
+.milestone-next {
+  margin: 4px 0 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 10%, transparent),
+    color-mix(in srgb, var(--accent) 4%, transparent)
+  );
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  cursor: default;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.milestone-next:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.milestone-next-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+.milestone-next-eyebrow {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  font-weight: 600;
+}
+.milestone-next-count {
+  font-size: 10px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+.milestone-next-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+.milestone-next-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+  margin-bottom: 8px;
+}
+.milestone-next-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  overflow: hidden;
+}
+.milestone-next-bar .fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .milestone-grid {
@@ -910,14 +1024,17 @@ onMounted(async () => {
 }
 
 .milestone {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   padding: 3px 8px;
   border-radius: 10px;
   font-size: 8.5px;
   font-weight: 500;
   letter-spacing: 0.01em;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .milestone.earned {
@@ -927,10 +1044,34 @@ onMounted(async () => {
 }
 
 .milestone.locked {
-  background: transparent;
   color: var(--text-tertiary);
-  opacity: 0.35;
+  background: transparent;
   border: 1px solid var(--border);
+  /* Lighter than the old 0.35 — pills should still look real, just
+     subdued, so progress fill underneath actually reads. */
+  opacity: 0.7;
+}
+
+/* Progress fill behind the label on locked pills — subtle but gives the
+   "you're 5/7 of the way there" feeling without an extra row of UI. */
+.milestone.locked .milestone-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  z-index: 0;
+  transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.milestone.locked > svg,
+.milestone.locked .milestone-label,
+.milestone.locked .milestone-progress {
+  position: relative;
+  z-index: 1;
+}
+.milestone.locked .milestone-progress {
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+  font-size: 8px;
 }
 
 /* Activity Log */
