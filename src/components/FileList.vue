@@ -506,18 +506,15 @@ function getAgeColor(ts: number): string {
    fatter grab strip that survives any responsive layout. */
 .control-bar {
   display: flex;
-  align-items: flex-end;
-  /* Border-bottom dropped — the sidebar vibrancy reads as one continuous
-     translucent column from the titlebar through the file list. A divider
-     here cuts that effect in half. */
+  align-items: center;
   background: transparent;
   flex-shrink: 0;
-  -webkit-app-region: drag;
-  /* Clear traffic lights: 12px offset + 14px button + gap */
-  padding-left: 78px;
-  height: 44px;
-  padding-top: 18px;
-  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  /* Traffic lights now live in the unified titlebar above, so the old
+     78px keepout is gone. Standard 10px sidebar padding. */
+  padding: 0 10px;
+  height: 32px;
+  gap: 6px;
 }
 
 .filters {

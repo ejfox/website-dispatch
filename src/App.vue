@@ -143,6 +143,16 @@ const destinationLabel = computed(() => {
 // Count of MODIFIED posts (source diverged from live). Drives the small
 // badge on the Modified tab so the user sees "I have stuff to triage"
 // without having to click in.
+// Title text in the unified titlebar — mirrors what Mail does (showing
+// the selected mailbox name). For Dispatch the selected file's title
+// (falls back to filename, then app name) reads as the current focus.
+const titlebarTitle = computed(() => {
+  const f = selectedFile.value
+  if (!f) return 'Dispatch'
+  // Strip .md and prefer the human title if the file has one parsed.
+  return (f as any).title || f.filename?.replace(/\.md$/, '') || 'Dispatch'
+})
+
 const modifiedCount = computed(
   () => files.value.filter((f) => f.warnings.includes('Modified since publish')).length,
 )
@@ -844,6 +854,28 @@ onUnmounted(() => {
       </div>
     </Transition>
 
+    <!-- Unified macOS-style titlebar across the whole window. Traffic lights
+         sit in the left padding (tauri trafficLightPosition x:12 y:12),
+         title text in the middle, trailing toolbar actions on the right.
+         Mirrors Apple Mail's chrome exactly. -->
+    <header class="titlebar" data-tauri-drag-region @mousedown="startWindowDrag">
+      <div class="titlebar-title">{{ titlebarTitle }}</div>
+      <div class="titlebar-btns">
+        <button @click="openNewPost" class="titlebar-btn" data-tip="New Post">
+          <Plus :size="16" />
+        </button>
+        <button @click="openSearch" class="titlebar-btn" data-tip="Search">
+          <Search :size="16" />
+        </button>
+        <button @click="loadFiles" class="titlebar-btn" :class="{ spinning: loading }" data-tip="Refresh">
+          <RefreshCw :size="16" />
+        </button>
+        <button @click="showSettings = true" class="titlebar-btn" data-tip="Settings">
+          <Settings :size="16" />
+        </button>
+      </div>
+    </header>
+
     <main class="main">
       <FileList
         :files="files"
@@ -864,9 +896,11 @@ onUnmounted(() => {
              macOS Sonoma+ (Tauri issues #9503, #11605). The data-* attribute
              stays as a hint, but the mousedown handler is what actually
              moves the window. -->
-        <div class="panel-tabs" data-tauri-drag-region @mousedown="startWindowDrag">
-          <!-- Leading icons on each tab match Apple Mail's Primary/Transactions
-               header. Icon + label reads as a real macOS toolbar segment. -->
+        <!-- Pill tabs only — trailing toolbar buttons live in the unified
+             titlebar above (see <header class="titlebar"> just above <main>).
+             This is the Apple Mail two-row chrome: titlebar (title + actions)
+             on top, tab strip below. -->
+        <div class="panel-tabs">
           <button :class="{ active: rightTab === 'preview' }" @click="rightTab = 'preview'">
             <Eye :size="13" />
             <span>Preview</span>
@@ -892,21 +926,6 @@ onUnmounted(() => {
             <Backpack :size="13" />
             <span>Gear</span>
           </button>
-          <div class="panel-tabs-spacer" data-tauri-drag-region @mousedown="startWindowDrag"></div>
-          <div class="titlebar-btns">
-            <button @click="openNewPost" class="titlebar-btn" data-tip="New Post">
-              <Plus :size="16" />
-            </button>
-            <button @click="openSearch" class="titlebar-btn" data-tip="Search">
-              <Search :size="16" />
-            </button>
-            <button @click="loadFiles" class="titlebar-btn" :class="{ spinning: loading }" data-tip="Refresh">
-              <RefreshCw :size="16" />
-            </button>
-            <button @click="showSettings = true" class="titlebar-btn" data-tip="Settings">
-              <Settings :size="16" />
-            </button>
-          </div>
         </div>
 
         <div class="panel-content">
@@ -1106,16 +1125,16 @@ onUnmounted(() => {
 
 <style scoped>
 /* === LAYOUT SYSTEM ===
-   The entire app is a CSS Grid with fixed regions.
-   Nothing inside needs to know about traffic lights or titlebar height.
-   The grid handles it all.
+   Two-row macOS chrome (matches Apple Mail):
 
-   ┌──────────────┬──────────────────────────┐
-   │  sidebar-bar │  panel-tabs              │  ← 44px titlebar row
+   ┌─────────────────────────────────────────┐
+   │  ◐◐◐  Title text         · · · ⊕ Q ⟳ ⚙  │  ← 38px titlebar (traffic
+   ├──────────────┬──────────────────────────┤    lights, title, buttons)
+   │  filters     │  ⌑ pill tabs             │  ← 32px sub-headers
    ├──────────────┼──────────────────────────┤
-   │  sidebar     │  panel-content           │  ← fills remaining space
+   │  sidebar     │  panel-content           │  ← 1fr content
    ├──────────────┴──────────────────────────┤
-   │  statusbar                              │  ← 22px status row
+   │  statusbar                              │  ← 22px status
    └─────────────────────────────────────────┘
 */
 
@@ -1125,8 +1144,16 @@ onUnmounted(() => {
   /* Width is user-draggable (see useResizable / ResizeHandle). Falls back to
      the old responsive clamp if the var isn't set yet. */
   grid-template-columns: var(--sidebar-width, clamp(240px, 38.2%, 400px)) 1fr;
-  grid-template-rows: 44px 1fr 22px;
+  /* Two-row top — matches Apple Mail's chrome:
+       row 1 (titlebar):       traffic lights · title text · trailing buttons,
+                               spans both columns as a unified bar.
+       row 2 (sidebar-bar / panel-bar): per-column sub-headers (sidebar
+                               filters + sort, right-side pill tabs).
+       row 3:                  content (sidebar + panel).
+       row 4 (status):         info strip. */
+  grid-template-rows: 38px 32px 1fr 22px;
   grid-template-areas:
+    'titlebar     titlebar'
     'sidebar-bar  panel-bar'
     'sidebar      panel'
     'status       status';
@@ -1142,11 +1169,12 @@ onUnmounted(() => {
   transition: none;
 }
 
-/* Park the divider on the sidebar/panel seam. The handle component is
-   position-agnostic; here we anchor it absolutely on the grid seam. */
+/* Park the divider on the sidebar/panel seam. Starts at 38px to clear
+   the unified titlebar — dragging the seam inside the titlebar would
+   conflict with the window-drag region above. */
 .sidebar-resize {
   position: absolute;
-  top: 0;
+  top: 38px;
   bottom: 0;
   left: var(--sidebar-width, 300px);
   transform: translateX(-50%);
@@ -1176,19 +1204,45 @@ onUnmounted(() => {
    (b) `.panel-tabs-spacer`. If you add another tab here, double-check the
    spacer still has real width on the narrowest window you support — otherwise
    the window becomes effectively non-draggable. */
+/* === Unified titlebar (row 1, spans both columns) === */
+.titlebar {
+  grid-area: titlebar;
+  display: flex;
+  align-items: center;
+  /* Vibrant — sits on the window material; same translucent overlay as
+     the sidebar so the entire top reads as one continuous surface. */
+  background: color-mix(in srgb, var(--bg-solid) 32%, transparent);
+  /* Leaves the 78px traffic-light keepout on the left, like Mail. */
+  padding: 0 12px 0 78px;
+  gap: 12px;
+  -webkit-app-region: drag;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+}
+.titlebar-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Title is the only non-draggable thing in this row besides buttons;
+     allow text selection if user wants to copy the title. */
+  -webkit-app-region: no-drag;
+}
+.app.unfocused .titlebar-title {
+  color: var(--text-tertiary);
+}
+
 .panel-tabs {
   grid-area: panel-bar;
   display: flex;
-  align-items: flex-end;
-  /* No bottom border — pill tabs float on the panel background; a divider
-     under them reads as 90s tabbed-interface, not modern macOS. */
+  align-items: center;
   background: var(--bg-secondary);
-  -webkit-app-region: drag;
-  /* Bigger top padding = fatter drag-stripe above the tab buttons.
-     Buttons sit at the bottom (align-items: flex-end), so this entire
-     padding-top region is window-drag. 18px gives you a comfortable
-     grab even on a very narrow window. */
-  padding-top: 18px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
   overflow: hidden;
 }
 
@@ -1197,7 +1251,6 @@ onUnmounted(() => {
      state with a subtle wash. Same idiom Mail uses for its
      Primary/Transactions/Updates/Promotions header. */
   padding: 4px 9px;
-  margin-bottom: 6px;
   font-size: 11px;
   font-weight: 500;
   flex-shrink: 0;
@@ -1207,7 +1260,6 @@ onUnmounted(() => {
   color: var(--text-tertiary);
   cursor: pointer;
   -webkit-app-region: no-drag;
-  align-self: flex-end;
   transition: background 0.12s ease, color 0.12s ease;
   /* Icon + label sit on one baseline. */
   display: inline-flex;
@@ -1262,26 +1314,18 @@ onUnmounted(() => {
    is load-bearing — Tauri 2's `data-tauri-drag-region` attribute alone is
    unreliable in dev mode; the CSS rule is what actually activates the
    OS-level drag handle. */
-.panel-tabs-spacer {
-  flex: 1;
-  min-width: 120px;
-  align-self: stretch;
-  -webkit-app-region: drag;
-}
+/* .panel-tabs-spacer removed — the unified titlebar above now hosts the
+   trailing toolbar buttons and the window-drag region, so the panel-tabs
+   row no longer needs a spacer between tabs and (former) right-side
+   buttons. */
 
 .titlebar-btns {
   -webkit-app-region: no-drag;
   display: flex;
-  /* Slightly more breathing room between buttons — closer to NSToolbar's
-     ~4px spacing than the previous 2px shoulder-to-shoulder pack. */
+  /* Apple's NSToolbar trailing item spacing is ~4px. */
   gap: 4px;
-  /* Mirror the 12px trafficLightPosition inset on the left so the trailing
-     buttons clear the window's rounded corner with the same visual margin.
-     8px wasn't enough once the buttons grew to 30px. */
-  margin-right: 12px;
-  align-self: center;
-  margin-bottom: 4px;
   flex-shrink: 0;
+  align-items: center;
 }
 
 .titlebar-btn {
@@ -1553,6 +1597,7 @@ onUnmounted(() => {
   transition: opacity 0.2s ease;
 }
 
+.titlebar,
 .sidebar,
 .panel-tabs,
 .statusbar {
