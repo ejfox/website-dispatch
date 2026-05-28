@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import {
-  PhTextAa,
   PhTag,
   PhCalendarBlank,
   PhFolder,
@@ -69,21 +68,19 @@ defineEmits<{
 
 <template>
   <div class="info">
-    <!-- Summary bar (always visible, clickable) -->
+    <!-- Summary bar (always visible, clickable). Native idiom — just the
+         values separated by middots; no leading label-icons. Mail does the
+         same in its message info strip: "2 attachments · 4 KB" reads as
+         pure information, no decorative glyphs. -->
     <div class="info-summary" @click="$emit('toggle-metadata')">
       <span class="info-toggle" :class="{ expanded: metadataExpanded }">&#9654;</span>
-      <span class="info-chip">
-        <PhTextAa :size="9" weight="duotone" />
-        {{ file.word_count }}w
+      <span class="info-chip">{{ file.word_count.toLocaleString() }} words</span>
+      <span v-if="file.tags.length" class="date-sep">&middot;</span>
+      <span v-if="file.tags.length" class="info-chip">
+        {{ file.tags.length }} {{ file.tags.length === 1 ? 'tag' : 'tags' }}
       </span>
       <span class="date-sep">&middot;</span>
       <span class="info-chip">
-        <PhTag :size="9" weight="duotone" />
-        {{ file.tags.length }} tags
-      </span>
-      <span class="date-sep">&middot;</span>
-      <span class="info-chip">
-        <PhCalendarBlank :size="9" weight="duotone" />
         {{ file.date ? formatDate(file.date) : formatDateCompact(file.created) }}
       </span>
     </div>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, nextTick, markRaw } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhTextAa, PhTrophy, PhCaretDown } from '@phosphor-icons/vue'
+import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhTrophy, PhCaretDown } from '@phosphor-icons/vue'
 import LintReceipt from './LintReceipt.vue'
 import LocalMediaFixer from './LocalMediaFixer.vue'
 import BacklinksGraph from './BacklinksGraph.vue'
@@ -1228,12 +1228,10 @@ async function openPreview() {
       @confirm="(isRepublish: boolean) => publish(isRepublish)"
     />
 
-    <!-- Content Divider -->
+    <!-- Content divider — plain tracked-caps label, no decorative glyph.
+         Mail uses the same restraint on its section labels. -->
     <div class="content-divider">
-      <span>
-        <PhTextAa :size="10" weight="duotone" />
-        CONTENT
-      </span>
+      <span>CONTENT</span>
     </div>
 
     <!-- Preview -->
@@ -1437,20 +1435,26 @@ async function openPreview() {
 
 /* Success Toast */
 .success-toast {
+  /* Ephemeral confirmation — quieted from a giant green-on-black slab to
+     a small translucent pill, accent text only. Reads like a macOS HUD
+     notification (think volume-key overlay) rather than a webby toast. */
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: var(--success);
-  color: #000;
-  padding: 16px 32px;
-  border-radius: 12px;
-  font-size: 16px;
+  background: color-mix(in srgb, var(--bg-solid) 88%, transparent);
+  color: var(--success);
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-size: 13px;
   font-weight: 600;
   z-index: 100;
+  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
   box-shadow:
-    0 8px 32px rgba(48, 209, 88, 0.4),
-    0 0 0 1px rgba(48, 209, 88, 0.2);
+    0 8px 24px rgba(0, 0, 0, 0.35),
+    0 0 0 1px color-mix(in srgb, var(--success) 15%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1458,15 +1462,15 @@ async function openPreview() {
 }
 
 .success-toast.milestone {
-  background: linear-gradient(135deg, var(--warning), var(--warning));
-  color: #000;
-  padding: 20px 36px;
-  border-radius: 14px;
-  font-size: 17px;
+  background: color-mix(in srgb, var(--bg-solid) 88%, transparent);
+  color: var(--warning);
+  padding: 12px 22px;
+  border-radius: 10px;
+  font-size: 14px;
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
   box-shadow:
-    0 8px 40px rgba(245, 158, 11, 0.45),
-    0 0 0 1px rgba(245, 158, 11, 0.3),
-    0 0 80px rgba(245, 158, 11, 0.1);
+    0 8px 28px rgba(0, 0, 0, 0.4),
+    0 0 0 1px color-mix(in srgb, var(--warning) 18%, transparent);
 }
 
 .toast-enter-active {
@@ -1503,14 +1507,16 @@ async function openPreview() {
   }
 }
 
-/* Panel glow on publish */
+/* Panel glow on publish — quieted from a 60px inset green glow to a
+   thinner edge wash that fades quickly. Apple animations are brief and
+   restrained; a 1.2s neon flood reads like a web animation. */
 .panel.just-published {
-  animation: successGlow 1.2s ease-out forwards;
+  animation: successGlow 0.8s ease-out forwards;
 }
 
 @keyframes successGlow {
   0% {
-    box-shadow: inset 0 0 60px color-mix(in srgb, var(--success) 30%, transparent);
+    box-shadow: inset 0 0 24px color-mix(in srgb, var(--success) 18%, transparent);
   }
   100% {
     box-shadow: none;
@@ -1654,18 +1660,18 @@ async function openPreview() {
   font-weight: 600;
 }
 
-/* Sequence pill — "step 1 of 2" / "step 2 of 2" — only renders when both
-   sections are visible so a single-step flow stays uncluttered. */
+/* Sequence indicator — "step 1 of 2" / "step 2 of 2" — only renders when
+   both sections are visible. Quieted from a filled pill to plain muted
+   tracked-caps text; the section label itself is the headline, the step
+   info is just an annotation. */
 .step-pill {
   margin-left: 6px;
-  padding: 1px 6px;
   font-size: 9px;
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-tertiary);
-  background: var(--bg-tertiary);
-  border-radius: 999px;
+  opacity: 0.7;
 }
 
 /* Inline section buttons (Upload to Cloudinary / Describe). Primary uses
