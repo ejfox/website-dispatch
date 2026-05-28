@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useLocalStorage } from '@vueuse/core'
-import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
+import { Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tauri-apps/api/menu'
 import ResizeHandle from './ResizeHandle.vue'
 import { useResizable } from '../composables/useResizable'
 import {
@@ -217,17 +217,116 @@ function flash(msg: string) {
   }, 2000)
 }
 
+// Helper used by both context menu and detail-panel handlers — sets a single
+// gear field on the backend and refreshes the list.
+async function setGearField(name: string, field: string, value: string, msg?: string) {
+  await invoke('update_gear_field', { name, field, value })
+  if (msg) flash(msg)
+  await load()
+}
+
+const ARCHIVED_CONTAINER = 'archived'
+
+// Shared menu-item factory — used by the right-click submenu *and* the `m`
+// keyboard shortcut, so both surfaces stay in sync.
+async function buildMoveMenuItems(it: Gear): Promise<(MenuItem | PredefinedMenuItem)[]> {
+  const out: (MenuItem | PredefinedMenuItem)[] = []
+  for (const [name] of containerOptions.value) {
+    if (name === it.parent_container) continue
+    out.push(
+      await MenuItem.new({
+        text: name,
+        action: () => setGearField(it.name, 'parent_container', name, `moved to ${name}`),
+      }),
+    )
+  }
+  if (it.parent_container) {
+    out.push(await PredefinedMenuItem.new({ item: 'Separator' }))
+    out.push(
+      await MenuItem.new({
+        text: 'Remove from container',
+        action: () => setGearField(it.name, 'parent_container', '', 'removed from container'),
+      }),
+    )
+  }
+  out.push(await PredefinedMenuItem.new({ item: 'Separator' }))
+  out.push(
+    await MenuItem.new({
+      text: 'New container…',
+      action: async () => {
+        const v = window.prompt('New container name:')?.trim()
+        if (v) await setGearField(it.name, 'parent_container', v, `moved to ${v}`)
+      },
+    }),
+  )
+  return out
+}
+
+// "Got a new one (today)" — stamps a replacement event onto the item.
+// Bumps purchase_date to today and condition back to "new". Doesn't touch
+// last_used (use `u` separately if you're putting the new one into service).
+async function markReplaced() {
+  if (!selected.value) return
+  const name = selected.value.name
+  const t = today()
+  try {
+    await invoke('update_gear_field', { name, field: 'purchase_date', value: t })
+    await invoke('update_gear_field', { name, field: 'condition', value: 'new' })
+    flash(`got a new ${name} (${t})`)
+    await load()
+  } catch (e: any) {
+    error.value = String(e)
+  }
+}
+
+// Pop the move menu as a standalone (used by the `m` keyboard shortcut).
+async function popMoveMenu() {
+  if (!selected.value) return
+  const items = await buildMoveMenuItems(selected.value)
+  const menu = await Menu.new({ items })
+  await menu.popup()
+}
+
 async function showRowContextMenu(it: Gear, idx: number, e: MouseEvent) {
   e.preventDefault()
   cursor.value = idx
-  const items_ = [
+  const isArchived = (it.parent_container || '').toLowerCase() === ARCHIVED_CONTAINER
+
+  const moveSubmenu = await Submenu.new({
+    text: 'Move to Container  (m)',
+    items: await buildMoveMenuItems(it),
+  })
+
+  const items_: (MenuItem | PredefinedMenuItem | Submenu)[] = [
     await MenuItem.new({
-      text: `Mark "${it.name}" as Used Today`,
+      text: `Mark "${it.name}" as Used Today  (u)`,
       action: async () => {
         await invoke('mark_gear_used', { names: [it.name] })
         flash('marked used')
         await load()
       },
+    }),
+    await MenuItem.new({
+      text: 'Got a new one (today)  (R)',
+      action: async () => {
+        const t = today()
+        await invoke('update_gear_field', { name: it.name, field: 'purchase_date', value: t })
+        await invoke('update_gear_field', { name: it.name, field: 'condition', value: 'new' })
+        flash(`got a new ${it.name} (${t})`)
+        await load()
+      },
+    }),
+    await PredefinedMenuItem.new({ item: 'Separator' }),
+    moveSubmenu,
+    await MenuItem.new({
+      text: isArchived ? 'Unarchive' : 'Archive',
+      action: () =>
+        setGearField(
+          it.name,
+          'parent_container',
+          isArchived ? '' : ARCHIVED_CONTAINER,
+          isArchived ? 'unarchived' : 'archived',
+        ),
     }),
     await PredefinedMenuItem.new({ item: 'Separator' }),
     await MenuItem.new({
@@ -467,6 +566,17 @@ function onKey(e: KeyboardEvent) {
       load()
       e.preventDefault()
       break
+    case 'm':
+      // Move-to-container picker. Pops a native menu of every container
+      // the selected item isn't already in.
+      popMoveMenu()
+      e.preventDefault()
+      break
+    case 'R':
+      // "Got a new one of that" — bumps purchase_date + condition.
+      markReplaced()
+      e.preventDefault()
+      break
     case '/': {
       const el = document.querySelector<HTMLInputElement>('#gear-filter')
       if (el) {
@@ -587,8 +697,23 @@ onUnmounted(() => {
           <span v-if="it.type" class="type-chip">{{ it.type }}</span>
         </span>
         <span class="col-container">
-          <span v-if="!containerFilter && it.parent_container" class="container-chip" :title="`in ${it.parent_container}`">
+          <!-- Click the chip to filter the list to that container; click again
+               to clear. Always visible so you can use it to clear the filter
+               from any visible row. -->
+          <button
+            v-if="it.parent_container"
+            class="container-chip"
+            :class="{ active: containerFilter === it.parent_container }"
+            :title="containerFilter === it.parent_container ? 'clear container filter' : `filter to ${it.parent_container}`"
+            @click.stop="containerFilter = (containerFilter === it.parent_container ? '' : it.parent_container)"
+          >
             {{ it.parent_container }}
+          </button>
+          <!-- No container? Fall back to location so the column reads
+               consistently even for top-level bags. Muted to signal it's a
+               fallback, not an actual container. -->
+          <span v-else-if="it.location_room" class="container-fallback" :title="`location: ${it.location_room}`">
+            {{ it.location_room }}
           </span>
         </span>
         <span class="col-location">
@@ -981,6 +1106,8 @@ onUnmounted(() => {
 
           <div class="shortcuts">
             <span><kbd>u</kbd> used</span>
+            <span><kbd>m</kbd> move</span>
+            <span><kbd>R</kbd> new one</span>
             <span><kbd>l</kbd> location</span>
             <span><kbd>n</kbd> notes</span>
             <span><kbd>s</kbd> scan</span>
@@ -1258,12 +1385,42 @@ onUnmounted(() => {
 }
 
 .container-chip {
+  background: transparent;
+  border: none;
+  padding: 0 4px;
+  margin: 0;
+  border-radius: 2px;
   font-size: 9px;
+  font-family: inherit;
   color: var(--text-tertiary, #777);
   text-transform: lowercase;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.container-chip:hover {
+  background: var(--accent-softer);
+  color: var(--text-secondary, #aaa);
+}
+.container-chip.active {
+  background: var(--accent-soft);
+  color: var(--text-primary, #fff);
 }
 .gear-row.active .container-chip {
   color: var(--accent-soft);
+}
+.gear-row.active .container-chip.active {
+  background: rgba(0, 0, 0, 0.2);
+  color: #fff;
+}
+.container-fallback {
+  font-size: 9px;
+  color: var(--text-tertiary, #555);
+  font-style: italic;
+  opacity: 0.7;
 }
 
 .weight {
