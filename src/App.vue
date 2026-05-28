@@ -1640,7 +1640,7 @@ onUnmounted(() => {
 }
 
 .np-btn.accent:hover {
-  filter: brightness(1.1);
+  background: color-mix(in srgb, var(--selection-bg) 88%, white);
 }
 
 .np-btn:disabled {

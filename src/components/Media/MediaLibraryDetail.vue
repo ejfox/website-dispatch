@@ -204,7 +204,7 @@ const emit = defineEmits<{
 }
 
 .action-btn.primary:hover {
-  filter: brightness(1.1);
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .detail-usage {

@@ -321,7 +321,7 @@ function formatAge(ts: number): string {
   font-family: inherit;
 }
 .bulk-btn:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background: color-mix(in srgb, var(--warning) 88%, white);
 }
 .bulk-btn:disabled {
   opacity: 0.6;

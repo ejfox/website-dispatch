@@ -41,13 +41,18 @@
 }
 
 .rendered-content a {
-  color: #5b9bd5;
+  /* System accent — adapts to the user's selected accent color. Used to
+     be a hard-coded #5b9bd5 blue. */
+  color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  transition: text-decoration-color 0.12s ease;
 }
 
 .rendered-content a:hover {
-  color: #7bb8eb;
+  text-decoration-color: var(--accent);
 }
 
 .rendered-content code {

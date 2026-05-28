@@ -485,12 +485,11 @@ function handleConfirm() {
 }
 
 .pub-btn-go:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--success) 40%, transparent);
+  background: color-mix(in srgb, var(--success) 88%, white);
 }
 
 .pub-btn-go:active:not(:disabled) {
-  transform: translateY(0);
+  background: color-mix(in srgb, var(--success) 80%, black);
 }
 
 .pub-btn-go:disabled {
