@@ -162,9 +162,9 @@ defineEmits<{
   color: var(--text-secondary);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 5px;
   cursor: pointer;
-  transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 
 .tool-btn:hover {
@@ -174,7 +174,8 @@ defineEmits<{
 }
 
 .tool-btn:active {
-  transform: scale(0.97);
+  /* No scale(0.97) — macOS push-buttons darken on press, not shrink. */
+  background: color-mix(in srgb, var(--bg-tertiary) 90%, black);
 }
 
 .tool-btn svg {

@@ -378,18 +378,18 @@ defineEmits<{
   border-radius: 12px;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 
 .tag-chip:hover {
+  /* No scale bump on hover — macOS chips darken/lighten, not grow. */
   background: var(--bg-tertiary);
   border-color: var(--border-light);
   color: var(--text-primary);
-  transform: scale(1.05);
 }
 
 .tag-chip:active {
-  transform: scale(0.95);
+  background: color-mix(in srgb, var(--bg-tertiary) 80%, black);
 }
 
 .tag-chip:disabled {

@@ -1410,7 +1410,8 @@ onUnmounted(() => {
 }
 
 .titlebar-btn:active {
-  transform: scale(0.92);
+  /* macOS push-buttons darken on press, not shrink. */
+  background: color-mix(in srgb, var(--bg-tertiary) 80%, black);
 }
 
 .titlebar-btn.active {

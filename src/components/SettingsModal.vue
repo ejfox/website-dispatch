@@ -651,30 +651,40 @@ async function save() {
   color: var(--text-primary);
 }
 
+/* Settings tabs — pill style matching the panel tabs in the main window
+   (Preview / Media / Activity / ...). Same idiom Apple uses on its own
+   tabbed settings sheets. */
 .settings-tabs {
   display: flex;
+  align-items: center;
+  gap: 4px;
   border-bottom: 1px solid var(--border);
-  padding: 0 16px;
+  padding: 8px 12px;
 }
 
 .settings-tabs button {
-  padding: 8px 14px;
+  padding: 4px 10px;
   font-size: 11px;
   font-weight: 500;
-  background: none;
+  background: transparent;
   border: none;
+  border-radius: 6px;
   color: var(--text-tertiary);
   cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .settings-tabs button:hover {
   color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 .settings-tabs button.active {
   color: var(--text-primary);
-  border-bottom-color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  font-weight: 600;
+}
+.settings-tabs button.active:hover {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .settings-body {
