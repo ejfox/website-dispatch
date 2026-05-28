@@ -117,6 +117,7 @@ export function useKeyboardShortcuts(options: {
     // if the user is in any editable surface.
     if (isTypingTarget(e)) return
 
+    // ── UNIVERSAL APP SHORTCUTS — always fire, any tab ────────────────
     // / opens search (vim style)
     if (e.key === '/' && !e.metaKey && !e.ctrlKey) {
       e.preventDefault()
@@ -131,16 +132,45 @@ export function useKeyboardShortcuts(options: {
       return
     }
 
-    // Arrow / j/k navigation only applies when the right pane is on
-    // Preview — every other tab (Gear, Media, Activity, Modified, Journal)
-    // owns its own list navigation, and grabbing arrows here would steal
-    // them out from under the user (the bug where arrow-keys were still
-    // walking the blog-post sidebar while looking at the gear table).
-    if (options.rightTab.value !== 'preview') {
-      // gg/G still feel right on the file list regardless of tab; only
-      // bail on the list-mover keys.
-      if (['ArrowUp', 'ArrowDown', 'j', 'k'].includes(e.key)) return
+    // n - new post (universal app action)
+    if (e.key === 'n' && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault()
+      options.openNewPost()
+      return
     }
+
+    // r - refresh files (universal app action)
+    if (e.key === 'r' && !e.metaKey && !e.ctrlKey) {
+      options.loadFiles()
+    }
+
+    // m - toggle media tab (universal navigation)
+    if (e.key === 'm' && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault()
+      options.rightTab.value = options.rightTab.value === 'media' ? 'preview' : 'media'
+      return
+    }
+
+    // J - toggle journal tab (universal navigation)
+    if (e.key === 'J' && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault()
+      options.rightTab.value = options.rightTab.value === 'journal' ? 'preview' : 'journal'
+      return
+    }
+
+    // ── PANE OWNERSHIP ────────────────────────────────────────────────
+    // Everything below is Preview-tab-specific (file-list nav + file
+    // actions). On other tabs the pane owns its own single-key bindings;
+    // running these in the background would step on them silently.
+    // Bugs this prevents:
+    //   - on Gear, arrows walked the sidebar selection in the background
+    //   - `c` copied the bg-selected file's URL AND committed gear changes
+    //   - `o`/`i`/`p`/`v` operated on the bg-selected file from any tab
+    // The universal shortcuts above this point still fire everywhere.
+    // Panes that share a key with a universal (e.g. Gear's `m` for Move)
+    // register with `capture: true` and call stopImmediatePropagation so
+    // they run first and block the universal handler.
+    if (options.rightTab.value !== 'preview') return
 
     const currentIndex = options.selectedFile.value
       ? options.files.value.findIndex((f) => f.path === options.selectedFile.value?.path)
@@ -224,30 +254,6 @@ export function useKeyboardShortcuts(options: {
     // c - copy URL
     if (e.key === 'c' && options.selectedFile.value?.published_url && !e.metaKey) {
       navigator.clipboard.writeText(options.selectedFile.value.published_url)
-    }
-
-    // n - new post
-    if (e.key === 'n' && !e.metaKey && !e.ctrlKey) {
-      e.preventDefault()
-      options.openNewPost()
-      return
-    }
-
-    // r - refresh
-    if (e.key === 'r' && !e.metaKey && !e.ctrlKey) {
-      options.loadFiles()
-    }
-
-    // m - toggle media library
-    if (e.key === 'm' && !e.metaKey && !e.ctrlKey) {
-      e.preventDefault()
-      options.rightTab.value = options.rightTab.value === 'media' ? 'preview' : 'media'
-    }
-
-    // J - toggle journal
-    if (e.key === 'J' && !e.metaKey && !e.ctrlKey) {
-      e.preventDefault()
-      options.rightTab.value = options.rightTab.value === 'journal' ? 'preview' : 'journal'
     }
 
   }

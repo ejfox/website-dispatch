@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import MediaLibrarySidebar from './MediaLibrarySidebar.vue'
 import MediaLibraryGrid from './MediaLibraryGrid.vue'
@@ -328,15 +328,24 @@ watch([resourceType], () => {
   loadAssets()
 })
 
+// Ref the focusable root so keyboard nav works the moment the tab opens.
+const rootRef = ref<HTMLDivElement | null>(null)
+
 onMounted(() => {
   loadAssets()
   loadFolders()
   scanUsage()
+  // Auto-focus the inline container so ↑↓←→ / hjkl reach the gallery
+  // immediately. Without this, the user had to click into the grid first
+  // before keys did anything (same class of bug as the gear arrow-key
+  // hijack — pane wasn't actually receiving input).
+  nextTick(() => rootRef.value?.focus())
 })
 </script>
 
 <template>
   <div
+    ref="rootRef"
     :class="inline ? 'inline-container' : 'modal-overlay'"
     @click.self="!inline && $emit('close')"
     @keydown="handleKeydown"

@@ -504,6 +504,14 @@ async function openInTui() {
   }
 }
 
+// Helper: gear consumes the key and prevents the global handler from also
+// running (we're registered with capture:true). Used inside onKey for any
+// key gear claims as its own.
+function consume(e: KeyboardEvent) {
+  e.preventDefault()
+  e.stopImmediatePropagation()
+}
+
 function onKey(e: KeyboardEvent) {
   if (e.metaKey || e.ctrlKey || e.altKey) return
   const t = e.target as HTMLElement
@@ -513,77 +521,93 @@ function onKey(e: KeyboardEvent) {
       editingLocation.value = false
       ;(t as HTMLInputElement).blur()
       e.preventDefault()
+      return
     }
-    return
+    // Let ArrowUp/ArrowDown fall through to the navigation switch below
+    // even while #gear-filter is focused — up/down in a single-line
+    // input does nothing useful, and the user expects to filter-type
+    // then arrow-down into the list without an extra Tab or click.
+    // j/k stay blocked because they're real characters in a filter
+    // string ("jacket", "knife", etc).
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') {
+      return
+    }
   }
 
   switch (e.key) {
     case 'j':
     case 'ArrowDown':
       cursor.value = Math.min(cursor.value + 1, filtered.value.length - 1)
-      e.preventDefault()
+      consume(e)
       break
     case 'k':
     case 'ArrowUp':
       cursor.value = Math.max(cursor.value - 1, 0)
-      e.preventDefault()
+      consume(e)
       break
     case 'g':
       cursor.value = 0
-      e.preventDefault()
+      consume(e)
       break
     case 'G':
       cursor.value = Math.max(filtered.value.length - 1, 0)
-      e.preventDefault()
+      consume(e)
       break
     case 'u':
       markUsed()
-      e.preventDefault()
+      consume(e)
       break
     case 'l':
       beginLocationEdit()
-      e.preventDefault()
+      consume(e)
       break
     case 's':
       if (selected.value) beginEdit('scan_3d_url', selected.value.scan_3d_url)
-      e.preventDefault()
+      consume(e)
       break
     case 'n':
+      // gear's `n` = edit notes. Stops the global handler from also
+      // opening the New Post modal.
       if (selected.value) beginEdit('notes', selected.value.notes)
-      e.preventDefault()
+      consume(e)
       break
     case '*':
       toggleStar()
-      e.preventDefault()
+      consume(e)
       break
     case 'e':
       openInTui()
-      e.preventDefault()
+      consume(e)
       break
     case 'c':
+      // gear's `c` = commit. Stops the global file-action `c` (copy URL).
       commitChanges()
-      e.preventDefault()
+      consume(e)
       break
     case 'r':
+      // gear's `r` = reload gear. Stops the global `r` (refresh files).
       load()
-      e.preventDefault()
+      consume(e)
       break
     case 'm':
-      // Move-to-container picker. Pops a native menu of every container
-      // the selected item isn't already in.
+      // Move-to-container picker. Without consume() the global handler
+      // would also fire `m` and toggle to the Media tab at the same
+      // time — opening the move menu *and* switching panes.
       popMoveMenu()
-      e.preventDefault()
+      consume(e)
       break
     case 'R':
       // "Got a new one of that" — bumps purchase_date + condition.
       markReplaced()
-      e.preventDefault()
+      consume(e)
       break
     case '/': {
+      // gear's `/` focuses the gear filter. Stops global `/` from
+      // opening the search modal at the same time.
       const el = document.querySelector<HTMLInputElement>('#gear-filter')
       if (el) {
         el.focus()
-        e.preventDefault()
+        consume(e)
       }
       break
     }
@@ -600,13 +624,18 @@ const tagsList = computed(() => {
 
 onMounted(() => {
   load()
-  window.addEventListener('keydown', onKey)
+  // Capture phase so gear consumes its keys BEFORE the global
+  // useKeyboardShortcuts handler runs. Without this, gear's `m` for
+  // Move would fire AND the global `m` toggle-media handler would also
+  // fire — opening the move menu and switching tab at the same time.
+  // Gear stops propagation on any key it consumes (see onKey).
+  window.addEventListener('keydown', onKey, true)
   nextTick(() => {
     document.querySelector<HTMLInputElement>('#gear-filter')?.focus()
   })
 })
 onUnmounted(() => {
-  window.removeEventListener('keydown', onKey)
+  window.removeEventListener('keydown', onKey, true)
 })
 </script>
 
