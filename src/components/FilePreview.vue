@@ -545,6 +545,19 @@ watch(
   async (file) => {
     if (!file) return
 
+    // ── Perf instrumentation ──────────────────────────────────────────
+    // Phased timing so we can see where a slow file-switch is actually
+    // slow. T0=switch fired, T1=content IPC returned, T2=markdown
+    // processed, T3=DOM painted. Logged via console (Tauri dev surfaces
+    // webview console output to the terminal). Rust's get_file_content
+    // logs its own slice with the same [perf] prefix.
+    const switchT0 = performance.now()
+    const switchName = file.filename || file.path
+    const perf = (phase: string, fromT0 = switchT0) => {
+      const ms = (performance.now() - fromT0).toFixed(1)
+      console.log(`[perf] file-switch ${phase} ${ms}ms · ${switchName}`)
+    }
+
     // Reset refs synchronously so the next paint shows a clean slate
     // before any IPC round-trips return. Without this you briefly see
     // the OLD post's analytics / backlinks under the NEW post's metadata.
@@ -581,6 +594,7 @@ watch(
     if (cached) {
       content.value = cached.stripped
       renderedContent.value = cached.rendered
+      perf('cache-hit TOTAL')
       // Cache hit is synchronous → no skeleton flash should appear.
       endPreviewLoad()
       // Mermaid blocks in cached HTML may not have been re-processed if
@@ -604,15 +618,21 @@ watch(
       invoke('get_file_content', { path: file.path })
         .then(async (raw) => {
           if (file.path !== props.file.path) return
+          perf('content-ipc done')
           const stripped = (raw as string).replace(/^---\n[\s\S]*?\n---\n*/, '')
           content.value = stripped
           await nextTick()
           if (file.path !== props.file.path) return
           try {
+            const markdownT0 = performance.now()
             const result = await markdownProcessor.value.process(stripped)
             if (file.path !== props.file.path) return
             const rendered = String(result)
             renderedContent.value = rendered
+            console.log(
+              `[perf] file-switch markdown-only ${(performance.now() - markdownT0).toFixed(1)}ms · ${switchName}`,
+            )
+            perf('TOTAL (rendered)')
             const skeleton = parseSkeleton(stripped)
             cacheRender(cacheKey, { stripped, rendered, skeleton })
             cacheSkeleton(file.path, skeleton)

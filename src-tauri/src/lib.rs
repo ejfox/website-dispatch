@@ -130,12 +130,21 @@ fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
     vault::get_recent_files(limit)
 }
 
-// Read the contents of a file as a string
+// Read the contents of a file as a string. Times the read and prints it to
+// the dev terminal so we can see how much of a file-switch latency comes
+// from Rust IO vs. frontend markdown processing.
 #[tauri::command]
 fn get_file_content(path: String) -> Result<String, String> {
-    // fs::read_to_string reads a file and returns its contents
-    // .map_err() converts the std::io::Error to a String for the frontend
-    fs::read_to_string(&path).map_err(|e| e.to_string())
+    let t = std::time::Instant::now();
+    let result = fs::read_to_string(&path).map_err(|e| e.to_string());
+    let ms = t.elapsed().as_secs_f64() * 1000.0;
+    let name = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&path);
+    let bytes = result.as_ref().map(|s| s.len()).unwrap_or(0);
+    eprintln!("[perf] get_file_content {} {:.1}ms ({} bytes)", name, ms, bytes);
+    result
 }
 
 // Append content to the end of a file (used for adding to posts)
