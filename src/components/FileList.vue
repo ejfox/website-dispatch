@@ -123,7 +123,9 @@ async function showOverflowMenu() {
     hiddenFilterIndices.value.map(async (i) => {
       const def = filterDefs.value[i]
       return await MenuItem.new({
-        text: def.label + (def.active ? '  ✓' : ''),
+        // Active state shown with a trailing dot; native menus don't expose
+        // the "checked" state from JS in Tauri 2, so a textual cue is it.
+        text: def.label + (def.active ? '  •' : ''),
         action: def.onPick,
       })
     }),

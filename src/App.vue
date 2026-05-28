@@ -1224,7 +1224,10 @@ onUnmounted(() => {
   /* Slightly more breathing room between buttons — closer to NSToolbar's
      ~4px spacing than the previous 2px shoulder-to-shoulder pack. */
   gap: 4px;
-  margin-right: 8px;
+  /* Mirror the 12px trafficLightPosition inset on the left so the trailing
+     buttons clear the window's rounded corner with the same visual margin.
+     8px wasn't enough once the buttons grew to 30px. */
+  margin-right: 12px;
   align-self: center;
   margin-bottom: 4px;
   flex-shrink: 0;

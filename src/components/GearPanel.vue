@@ -21,6 +21,7 @@ import {
   PhCamera,
   PhDrop,
   PhPackage,
+  PhMagnifyingGlass,
 } from '@phosphor-icons/vue'
 
 interface Gear {
@@ -115,25 +116,10 @@ function toggleSort(key: SortKey) {
   }
 }
 
-// If >50% of items share the same `last_used` value, treat that as a
-// bulk-import default and suppress it in the row view — otherwise every
-// row reads identically and the date column becomes pure noise.
-const bulkLastUsed = computed(() => {
-  const counts = new Map<string, number>()
-  for (const it of items.value) {
-    if (!it.last_used) continue
-    counts.set(it.last_used, (counts.get(it.last_used) || 0) + 1)
-  }
-  let bulk: string | null = null
-  let best = 0
-  for (const [k, n] of counts) {
-    if (n > best) {
-      best = n
-      bulk = k
-    }
-  }
-  return bulk && best > items.value.length / 2 ? bulk : null
-})
+// Used to suppress the most-common last_used date in the row view, but
+// once "used" became its own column hiding values made the column look
+// broken — show real data instead. Kept removed; restore from git if a
+// future "compact" mode wants the de-duping behavior back.
 
 const filtered = computed(() => {
   const q = filter.value.trim().toLowerCase()
@@ -359,6 +345,55 @@ function openUrl(url: string) {
   window.open(url, '_blank')
 }
 
+// Build a search query from whatever identifying fields are present.
+// brand + model_number is most precise; falls back to name alone.
+function searchQuery(it: typeof selected.value): string {
+  if (!it) return ''
+  const parts = [it.brand, it.model_number, it.name].filter(Boolean) as string[]
+  return parts.join(' ').trim()
+}
+
+// "Find" menu — pops a native Tauri menu of pre-populated search providers
+// so EJ can hunt down a buy link, a review, or a spec sheet without typing
+// the item name into every site. Selected providers route to openUrl, which
+// opens in the system browser.
+async function showFindMenu() {
+  if (!selected.value) return
+  const q = searchQuery(selected.value)
+  if (!q) {
+    flash('no name to search for')
+    return
+  }
+  const e = encodeURIComponent(q)
+  const providers: Array<[string, string]> = [
+    ['Google', `https://www.google.com/search?q=${e}`],
+    ['Google Shopping', `https://www.google.com/search?tbm=shop&q=${e}`],
+    ['Google Images', `https://www.google.com/search?tbm=isch&q=${e}`],
+    ['Amazon', `https://www.amazon.com/s?k=${e}`],
+    ['eBay', `https://www.ebay.com/sch/i.html?_nkw=${e}`],
+    ['REI', `https://www.rei.com/search?q=${e}`],
+    ['Backcountry', `https://www.backcountry.com/Store/catalog/results.jsp?s=u&q=${e}`],
+    ['B&H Photo', `https://www.bhphotovideo.com/c/search?q=${e}`],
+    ['YouTube (reviews)', `https://www.youtube.com/results?search_query=${e}+review`],
+    ['DuckDuckGo', `https://duckduckgo.com/?q=${e}`],
+  ]
+  const items = await Promise.all(
+    providers.map(([label, url]) =>
+      MenuItem.new({ text: label, action: () => openUrl(url) }),
+    ),
+  )
+  // Quality-of-life extra: copy the search query itself.
+  const sep = await PredefinedMenuItem.new({ item: 'Separator' })
+  const copy = await MenuItem.new({
+    text: `Copy query  “${q.length > 28 ? q.slice(0, 28) + '…' : q}”`,
+    action: () => {
+      navigator.clipboard.writeText(q).then(() => flash('copied query'))
+    },
+  })
+  const menu = await Menu.new({ items: [...items, sep, copy] })
+  await menu.popup()
+}
+
 async function openInTui() {
   try {
     const shell = await import('@tauri-apps/plugin-shell')
@@ -497,23 +532,34 @@ onUnmounted(() => {
     <div v-if="error" class="gear-error">{{ error }}</div>
 
     <div class="gear-controls">
-      <div class="sort-row" title="Sort by">
+      <!-- Container filter lives on its own row so the sort header below
+           gets the full panel width — otherwise the dropdown ate enough
+           horizontal budget to overlap the USED column at narrow widths. -->
+      <div class="gear-filter-row">
+        <select v-model="containerFilter" class="container-select" title="Filter by container">
+          <option value="">all containers</option>
+          <option v-for="[name, n] in containerOptions" :key="name" :value="name">
+            {{ name }} ({{ n }})
+          </option>
+        </select>
+      </div>
+      <!-- Sort row doubles as a real column header — uses the same
+           --gear-cols grid template as .gear-row so headers line up over
+           their values. Every column is clickable; the active one shows a
+           direction chevron, inactives reserve the same width so layout
+           doesn't jitter when the user changes sort. -->
+      <div class="sort-row" role="row">
         <button
           v-for="k in (['name', 'weight', 'type', 'container', 'location', 'last_used'] as SortKey[])"
           :key="k"
-          :class="{ active: sortKey === k }"
+          :class="['col-' + (k === 'last_used' ? 'used' : k), { active: sortKey === k }]"
+          :title="`Sort by ${k === 'last_used' ? 'last used' : k}`"
           @click="toggleSort(k)"
         >
-          {{ k === 'last_used' ? 'used' : k }}
-          <span v-if="sortKey === k" class="dir">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+          <span class="hdr-label">{{ k === 'last_used' ? 'used' : k }}</span>
+          <span class="dir" aria-hidden="true">{{ sortKey === k ? (sortDir === 'asc' ? '↑' : '↓') : '' }}</span>
         </button>
       </div>
-      <select v-model="containerFilter" class="container-select" title="Filter by container">
-        <option value="">all containers</option>
-        <option v-for="[name, n] in containerOptions" :key="name" :value="name">
-          {{ name }} ({{ n }})
-        </option>
-      </select>
     </div>
 
     <div class="gear-list" tabindex="0">
@@ -525,31 +571,48 @@ onUnmounted(() => {
         @click="cursor = i"
         @contextmenu="showRowContextMenu(it, i, $event)"
       >
-        <span class="gear-row-lead">
+        <!-- Each cell is a direct grid child, lined up under the matching
+             column header. Empty cells render as just a blank slot so the
+             columns stay aligned across rows. -->
+        <span class="col-name">
           <component :is="typeIcon(it.type || it.category)" :size="12" class="row-type-icon" />
           <PhStar v-if="isTruthy(it.star)" :size="10" weight="fill" class="row-star" />
           <span class="gear-name">{{ it.name }}</span>
+          <PhCube v-if="it.scan_3d_url" :size="10" class="scan-icon" title="has 3D scan" />
         </span>
-        <span class="gear-meta">
+        <span class="col-weight">
+          <template v-if="parseFloat(it.weight_oz) > 0">{{ it.weight_oz }}oz</template>
+        </span>
+        <span class="col-type">
           <span v-if="it.type" class="type-chip">{{ it.type }}</span>
-          <span v-if="parseFloat(it.weight_oz) > 0" class="weight">{{ it.weight_oz }}oz</span>
+        </span>
+        <span class="col-container">
           <span v-if="!containerFilter && it.parent_container" class="container-chip" :title="`in ${it.parent_container}`">
             {{ it.parent_container }}
           </span>
-          <span v-if="it.location_room && !it.parent_container" class="loc">
+        </span>
+        <span class="col-location">
+          <!-- Location and container describe different things (which room
+               vs. which bag), so show location whenever it exists — the
+               old `&& !it.parent_container` guard was only relevant when
+               both crammed into one meta strip. -->
+          <template v-if="it.location_room">
             <PhMapPin :size="9" />
             {{ it.location_room }}
-          </span>
-          <span
-            v-if="it.last_used && it.last_used !== bulkLastUsed"
-            class="last"
-            :class="{ stale: isStale(it.last_used) }"
-            :title="`last used ${it.last_used}`"
-          >
+          </template>
+        </span>
+        <span
+          class="col-used"
+          :class="{ stale: it.last_used && isStale(it.last_used) }"
+          :title="it.last_used ? `last used ${it.last_used}` : ''"
+        >
+          <!-- Show every last_used. The bulkLastUsed suppression made sense
+               when this lived in the meta strip (kept noise down). In a
+               dedicated column, hiding values makes the column look broken. -->
+          <template v-if="it.last_used">
             <PhClock :size="9" />
             {{ it.last_used }}
-          </span>
-          <PhCube v-if="it.scan_3d_url" :size="10" class="scan-icon" title="has 3D scan" />
+          </template>
         </span>
       </div>
       <div v-if="!filtered.length && !loading" class="empty-row">no items match</div>
@@ -592,6 +655,16 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="headline-actions">
+              <!-- Native menu of search providers, pre-filled with
+                   `brand + model + name`. Lets you hunt down a buy link,
+                   spec sheet, or review without re-typing into each site. -->
+              <button
+                class="link-btn"
+                @click="showFindMenu"
+                data-tip="Search Amazon / Google / eBay / REI / …"
+              >
+                <PhMagnifyingGlass :size="11" /> find
+              </button>
               <button v-if="selected.amazon_url" class="link-btn" @click="openUrl(selected.amazon_url)" title="Amazon">
                 <PhArrowSquareOut :size="11" /> amazon
               </button>
@@ -929,6 +1002,12 @@ onUnmounted(() => {
   height: 100%;
   font-size: 12px;
   color: var(--text, #ddd);
+
+  /* Shared column template — both .sort-row (header) and .gear-row (data)
+     consume this, so the columns line up vertically. Tight fixed widths on
+     numeric / short cols keep enough flex room for name + container at
+     narrow panel widths (the gear panel can get down to ~600px). */
+  --gear-cols: minmax(0, 2.2fr) 48px 64px minmax(0, 1.5fr) 80px 70px;
 }
 
 .gear-header {
@@ -1013,37 +1092,66 @@ onUnmounted(() => {
 
 .gear-controls {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 10px 6px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 10px 0;
 }
-.sort-row {
+.gear-filter-row {
   display: flex;
-  gap: 2px;
-  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* Sort row is also the column header. Grid template comes from --gear-cols
+   on .gear-panel, so headers line up over the data rows below. */
+.sort-row {
+  display: grid;
+  grid-template-columns: var(--gear-cols);
+  column-gap: 6px;
+  align-items: center;
+  border-bottom: 1px solid var(--border, #222);
 }
 .sort-row button {
   background: transparent;
-  border: 1px solid transparent;
+  border: none;
   color: var(--text-tertiary, #777);
   font-size: 10px;
-  padding: 3px 6px;
-  border-radius: 3px;
+  padding: 4px 2px;
   cursor: pointer;
-  text-transform: lowercase;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
   font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  /* Show that every header is interactive even before hover. */
+  transition: color 0.12s ease, background 0.12s ease;
+  min-width: 0;
+  /* Truncate header label rather than overflow the next column. */
+  overflow: hidden;
+}
+.sort-row button .hdr-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sort-row button:hover {
   color: var(--text-secondary, #aaa);
+  background: rgba(255, 255, 255, 0.03);
 }
 .sort-row button.active {
-  background: var(--accent-soft);
-  color: #fff;
+  color: var(--text-primary, #fff);
 }
+/* Right-align the numeric weight header to match its data column. */
+.sort-row button.col-weight {
+  justify-content: flex-end;
+}
+/* Reserve a fixed slot for the direction chevron on every header — keeps
+   the label position stable when sort changes between columns. */
 .sort-row .dir {
-  margin-left: 3px;
+  display: inline-block;
+  width: 9px;
   font-size: 9px;
+  text-align: center;
+  color: var(--accent);
 }
 .container-select {
   background: var(--bg-alt, #0d0d0d);
@@ -1063,13 +1171,16 @@ onUnmounted(() => {
 }
 
 .gear-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--gear-cols);
+  column-gap: 6px;
   align-items: center;
-  justify-content: space-between;
-  padding: 4px 10px;
+  /* Tight rows — content is short labels and small chips, no need for the
+     old 4px top/bottom that made each row ~24px tall. */
+  padding: 1px 10px;
   cursor: pointer;
   border-bottom: 1px solid #161616;
-  gap: 8px;
+  line-height: 1.3;
 }
 
 .gear-row.active {
@@ -1077,12 +1188,39 @@ onUnmounted(() => {
   color: #fff;
 }
 
-.gear-row-lead {
+/* Every cell shares the same overflow / muted-meta defaults. The name column
+   overrides to be the brighter, primary text. */
+.gear-row > span {
+  min-width: 0;
+  font-size: 10px;
+  color: var(--muted, #888);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   display: inline-flex;
   align-items: center;
+  gap: 4px;
+}
+.gear-row .col-name {
+  font-size: 12px;
+  color: inherit;
   gap: 5px;
-  min-width: 0;
-  flex: 1;
+}
+.gear-row .col-weight {
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+.gear-row .col-used {
+  font-variant-numeric: tabular-nums;
+}
+.gear-row .col-used.stale {
+  color: var(--warning);
+}
+.gear-row.active > span {
+  color: var(--accent-soft);
+}
+.gear-row.active .col-name {
+  color: #fff;
 }
 
 .row-type-icon {
@@ -1102,19 +1240,6 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
-}
-
-.gear-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 10px;
-  color: var(--muted, #888);
-  flex-shrink: 0;
-}
-
-.gear-row.active .gear-meta {
-  color: var(--accent-soft);
 }
 
 .type-chip {
@@ -1150,20 +1275,8 @@ onUnmounted(() => {
   color: var(--accent-soft);
 }
 
-.gear-meta .loc,
-.gear-meta .last {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-variant-numeric: tabular-nums;
-}
-
-.gear-meta .last.stale {
-  color: var(--warning);
-}
-.gear-row.active .gear-meta .last.stale {
-  color: var(--warning);
-}
+/* Old .gear-meta .loc / .last styling rolled into the .col-* cells above
+   when rows moved to a CSS grid. */
 
 .scan-icon {
   color: var(--accent);
