@@ -150,7 +150,34 @@ const titlebarTitle = computed(() => {
   const f = selectedFile.value
   if (!f) return 'Dispatch'
   // Strip .md and prefer the human title if the file has one parsed.
-  return (f as any).title || f.filename?.replace(/\.md$/, '') || 'Dispatch'
+  return f.title || f.filename?.replace(/\.md$/, '') || 'Dispatch'
+})
+
+// Sub-header line in the titlebar (under the title). Mirrors Mail's
+// "Primary · 189 messages, 108 unread" treatment. With a file selected
+// it summarizes the file's state; otherwise it summarizes the vault.
+const titlebarSubtitle = computed(() => {
+  const f = selectedFile.value
+  if (f) {
+    const wc = `${f.word_count.toLocaleString()}w`
+    let state: string
+    if (f.published_url && f.warnings?.includes('Modified since publish')) {
+      state = 'modified'
+    } else if (f.published_url) {
+      state = f.password ? 'protected' : f.unlisted ? 'unlisted' : 'live'
+    } else if (f.publish_at) {
+      state = 'scheduled'
+    } else {
+      state = f.password ? 'protected draft' : f.unlisted ? 'unlisted draft' : 'draft'
+    }
+    return `${wc} · ${state}`
+  }
+  // No file selected — show vault totals.
+  const total = files.value.length
+  if (total === 0) return ''
+  const live = files.value.filter((x) => x.published_url).length
+  const drafts = total - live
+  return `${total} posts · ${live} live · ${drafts} drafts`
 })
 
 const modifiedCount = computed(
@@ -859,7 +886,10 @@ onUnmounted(() => {
          title text in the middle, trailing toolbar actions on the right.
          Mirrors Apple Mail's chrome exactly. -->
     <header class="titlebar" data-tauri-drag-region @mousedown="startWindowDrag">
-      <div class="titlebar-title">{{ titlebarTitle }}</div>
+      <div class="titlebar-text">
+        <div class="titlebar-title">{{ titlebarTitle }}</div>
+        <div v-if="titlebarSubtitle" class="titlebar-subtitle">{{ titlebarSubtitle }}</div>
+      </div>
       <div class="titlebar-btns">
         <button @click="openNewPost" class="titlebar-btn" data-tip="New Post">
           <Plus :size="16" />
@@ -901,28 +931,28 @@ onUnmounted(() => {
              This is the Apple Mail two-row chrome: titlebar (title + actions)
              on top, tab strip below. -->
         <div class="panel-tabs">
-          <button :class="{ active: rightTab === 'preview' }" @click="rightTab = 'preview'">
+          <button data-tab="preview" :class="{ active: rightTab === 'preview' }" @click="rightTab = 'preview'">
             <Eye :size="13" />
             <span>Preview</span>
           </button>
-          <button :class="{ active: rightTab === 'media' }" @click="rightTab = 'media'">
+          <button data-tab="media" :class="{ active: rightTab === 'media' }" @click="rightTab = 'media'">
             <LucideImage :size="13" />
             <span>Media</span>
           </button>
-          <button :class="{ active: rightTab === 'activity' }" @click="rightTab = 'activity'">
+          <button data-tab="activity" :class="{ active: rightTab === 'activity' }" @click="rightTab = 'activity'">
             <Activity :size="13" />
             <span>Activity</span>
           </button>
-          <button :class="{ active: rightTab === 'modified' }" @click="rightTab = 'modified'">
+          <button data-tab="modified" :class="{ active: rightTab === 'modified' }" @click="rightTab = 'modified'">
             <Pencil :size="13" />
             <span>Modified</span>
             <span v-if="modifiedCount > 0" class="tab-badge">{{ modifiedCount }}</span>
           </button>
-          <button :class="{ active: rightTab === 'journal' }" @click="rightTab = 'journal'">
+          <button data-tab="journal" :class="{ active: rightTab === 'journal' }" @click="rightTab = 'journal'">
             <BookOpen :size="13" />
             <span>Journal</span>
           </button>
-          <button :class="{ active: rightTab === 'gear' }" @click="rightTab = 'gear'">
+          <button data-tab="gear" :class="{ active: rightTab === 'gear' }" @click="rightTab = 'gear'">
             <Backpack :size="13" />
             <span>Gear</span>
           </button>
@@ -1151,7 +1181,7 @@ onUnmounted(() => {
                                filters + sort, right-side pill tabs).
        row 3:                  content (sidebar + panel).
        row 4 (status):         info strip. */
-  grid-template-rows: 38px 32px 1fr 22px;
+  grid-template-rows: 48px 32px 1fr 22px;
   grid-template-areas:
     'titlebar     titlebar'
     'sidebar-bar  panel-bar'
@@ -1174,7 +1204,7 @@ onUnmounted(() => {
    conflict with the window-drag region above. */
 .sidebar-resize {
   position: absolute;
-  top: 38px;
+  top: 48px;
   bottom: 0;
   left: var(--sidebar-width, 300px);
   transform: translateX(-50%);
@@ -1219,21 +1249,40 @@ onUnmounted(() => {
   user-select: none;
   border-bottom: 1px solid var(--border);
 }
-.titlebar-title {
+/* Stacked title + subtitle block, mirroring Mail's
+   "All Inboxes / Primary · 189 messages, 108 unread" treatment. */
+.titlebar-text {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  -webkit-app-region: no-drag;
+}
+.titlebar-title {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  /* Title is the only non-draggable thing in this row besides buttons;
-     allow text selection if user wants to copy the title. */
-  -webkit-app-region: no-drag;
+  line-height: 1.2;
 }
-.app.unfocused .titlebar-title {
+.titlebar-subtitle {
+  font-size: 10px;
   color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+.app.unfocused .titlebar-title,
+.app.unfocused .titlebar-subtitle {
+  color: var(--text-tertiary);
+  opacity: 0.7;
 }
 
 .panel-tabs {
@@ -1275,6 +1324,16 @@ onUnmounted(() => {
 .panel-tabs button.active > svg {
   opacity: 1;
 }
+
+/* Per-tab icon colors when active — matches Apple Mail's distinct-glyph
+   coloring on its Primary/Transactions/Updates/Promotions tabs. Keeps
+   each tab visually identifiable at a glance. Inactive icons stay muted. */
+.panel-tabs button[data-tab='preview'].active > svg { color: var(--accent); }
+.panel-tabs button[data-tab='media'].active > svg    { color: #a78bfa; } /* violet */
+.panel-tabs button[data-tab='activity'].active > svg { color: #34d399; } /* green */
+.panel-tabs button[data-tab='modified'].active > svg { color: var(--warning); } /* amber/orange */
+.panel-tabs button[data-tab='journal'].active > svg  { color: #fbbf24; } /* gold */
+.panel-tabs button[data-tab='gear'].active > svg     { color: #22d3ee; } /* cyan */
 
 .panel-tabs button:hover {
   color: var(--text-secondary);

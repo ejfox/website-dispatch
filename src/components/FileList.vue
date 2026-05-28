@@ -193,6 +193,37 @@ function formatTitle(file: MarkdownFile): string {
   return file.title || file.filename.replace(/\.md$/, '').replace(/-/g, ' ')
 }
 
+/** State category for the leading row dot. Drafts return null so the dot
+ *  doesn't render (keeps rest-state rows visually quiet — Mail's pattern). */
+type RowState = 'modified' | 'live' | 'unlisted' | 'protected' | 'scheduled'
+function rowState(file: MarkdownFile): RowState | null {
+  if (file.published_url && file.warnings?.includes('Modified since publish')) return 'modified'
+  if (file.published_url) {
+    if (file.password) return 'protected'
+    if (file.unlisted) return 'unlisted'
+    return 'live'
+  }
+  if (file.publish_at) return 'scheduled'
+  return null
+}
+function rowStateLabel(file: MarkdownFile): string {
+  const s = rowState(file)
+  switch (s) {
+    case 'modified':
+      return 'Modified since publish'
+    case 'live':
+      return 'Published'
+    case 'unlisted':
+      return 'Published (unlisted)'
+    case 'protected':
+      return 'Published (password-protected)'
+    case 'scheduled':
+      return 'Scheduled to publish'
+    default:
+      return ''
+  }
+}
+
 function formatAge(ts: number): string {
   const seconds = Math.floor(Date.now() / 1000 - ts)
   const minutes = Math.floor(seconds / 60)
@@ -393,6 +424,16 @@ function getAgeColor(ts: number): string {
           <div class="age-bar"></div>
           <div class="content">
             <div class="row">
+              <!-- Leading status dot — Mail's "blue unread dot" idiom, but
+                   color-coded by visibility/state. Drafts show no dot so
+                   they read as quiet. -->
+              <span
+                v-if="rowState(file)"
+                class="row-dot"
+                :data-state="rowState(file)"
+                :data-tip="rowStateLabel(file)"
+                aria-hidden="true"
+              ></span>
               <span v-if="file.content_type === 'weeknote'" class="weeknote-badge">WEEK</span>
               <span
                 v-if="file.password && !file.published_url"
@@ -782,6 +823,22 @@ function getAgeColor(ts: number): string {
   align-items: center;
   gap: 6px;
 }
+
+/* Leading status dot — Mail's blue-unread-dot pattern, generalized for the
+   visibility states Dispatch tracks. Filled circle, 6px, color-coded.
+   Drafts render no dot so the rest-state row reads quiet. */
+.row-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--text-tertiary);
+}
+.row-dot[data-state='live']      { background: var(--success, #34d399); }
+.row-dot[data-state='modified']  { background: var(--warning, #f59e0b); }
+.row-dot[data-state='scheduled'] { background: #fbbf24; }
+.row-dot[data-state='unlisted']  { background: var(--accent); }
+.row-dot[data-state='protected'] { background: #a78bfa; }
 
 .live-badge {
   font-size: 7.5px;
