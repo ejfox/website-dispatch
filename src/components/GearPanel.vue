@@ -519,10 +519,12 @@ function onKey(e: KeyboardEvent) {
 
   switch (e.key) {
     case 'j':
+    case 'ArrowDown':
       cursor.value = Math.min(cursor.value + 1, filtered.value.length - 1)
       e.preventDefault()
       break
     case 'k':
+    case 'ArrowUp':
       cursor.value = Math.max(cursor.value - 1, 0)
       e.preventDefault()
       break
@@ -1114,7 +1116,7 @@ onUnmounted(() => {
             <span><kbd>*</kbd> star</span>
             <span><kbd>e</kbd> tui</span>
             <span><kbd>c</kbd> commit</span>
-            <span><kbd>j/k</kbd> nav</span>
+            <span><kbd>↑↓</kbd> / <kbd>j/k</kbd> nav</span>
           </div>
         </div>
       </div>

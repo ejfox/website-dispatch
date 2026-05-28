@@ -131,6 +131,17 @@ export function useKeyboardShortcuts(options: {
       return
     }
 
+    // Arrow / j/k navigation only applies when the right pane is on
+    // Preview — every other tab (Gear, Media, Activity, Modified, Journal)
+    // owns its own list navigation, and grabbing arrows here would steal
+    // them out from under the user (the bug where arrow-keys were still
+    // walking the blog-post sidebar while looking at the gear table).
+    if (options.rightTab.value !== 'preview') {
+      // gg/G still feel right on the file list regardless of tab; only
+      // bail on the list-mover keys.
+      if (['ArrowUp', 'ArrowDown', 'j', 'k'].includes(e.key)) return
+    }
+
     const currentIndex = options.selectedFile.value
       ? options.files.value.findIndex((f) => f.path === options.selectedFile.value?.path)
       : -1
