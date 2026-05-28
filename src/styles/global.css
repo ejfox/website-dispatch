@@ -211,6 +211,40 @@ progress {
   color: var(--selection-text);
 }
 
+/* macOS-style overlay scrollbars. The default WebKit scrollbar is a wide
+   chunky tray. macOS shows a thin translucent thumb only when you're
+   actually scrolling; idle state is invisible. This gets us close. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  /* Idle thumb is just barely there — the macOS overlay-scrollbar look is
+     "invisible until you scroll." We can't perfectly mimic that, but a
+     very faint thumb that brightens on hover gets the same feel. */
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  transition: background 0.15s ease;
+}
+/* When the user's pointer is over a scrollable element, bring the thumb
+   up to a real visible intensity. */
+*:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-primary) 24%, transparent);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-primary) 40%, transparent);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* Global kbd style */
 kbd {
   display: inline-block;

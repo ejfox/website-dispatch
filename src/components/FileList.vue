@@ -566,10 +566,16 @@ function getAgeColor(ts: number): string {
 
 .filters button:hover {
   color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 
 .filters button.active {
+  /* Match the panel-tab pill style — a translucent accent fill instead
+     of the old "just bump the text weight" treatment. Reads as a real
+     selected state against the vibrant sidebar. */
   color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: 4px;
   font-weight: 600;
 }
 
@@ -687,21 +693,22 @@ function getAgeColor(ts: number): string {
 }
 
 .item {
-  width: 100%;
+  width: auto;
   display: flex;
   gap: 0;
   padding: 0;
-  /* Inset the rounded source-list selection from the sidebar edges by
-     painting selection state on an inner pseudo. The row itself keeps
-     its existing layout; the floating selection rect is a 6px-rounded
-     accent fill that doesn't touch the sidebar's left or right walls —
-     same idiom as Mail / Finder source lists. */
+  /* Inset the rounded source-list selection from the sidebar edges. The
+     6px margin holds the selection rect away from the sidebar walls —
+     same idiom as Mail / Finder. overflow:hidden clips the age-bar's
+     square top-left/bottom-left corners to the row's border-radius so
+     the stripe doesn't poke out of the rounded rect. */
   margin: 0 6px;
   border-radius: 6px;
   border: none;
   background: transparent;
   cursor: pointer;
   text-align: left;
+  overflow: hidden;
   transition: background 0.12s ease;
 }
 
