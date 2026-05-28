@@ -489,14 +489,11 @@ function getAgeColor(ts: number): string {
   /* Span both sidebar grid rows (bar + content) */
   grid-area: sidebar-bar / sidebar-bar / sidebar / sidebar;
   border-right: 1px solid var(--border);
-  background: linear-gradient(
-    180deg,
-    var(--bg-secondary) 0%,
-    color-mix(in srgb, var(--bg-secondary) 95%, var(--bg-tertiary)) 100%
-  );
-  /* No backdrop-filter here — the window is opaque (transparent:false in
-     tauri.conf.json) so the blur was invisible but cost a full-area GPU
-     pass on every scroll frame. */
+  /* Translucent — lets the macOS `sidebar` NSVisualEffectView material
+     (declared in tauri.conf.json#windowEffects) bleed through. This is the
+     single biggest "native Mac sidebar" cue. The thin overlay tones the
+     vibrancy down to dark-mode-appropriate, without painting it out. */
+  background: color-mix(in srgb, var(--bg-solid) 32%, transparent);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -510,8 +507,10 @@ function getAgeColor(ts: number): string {
 .control-bar {
   display: flex;
   align-items: flex-end;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-tertiary);
+  /* Border-bottom dropped — the sidebar vibrancy reads as one continuous
+     translucent column from the titlebar through the file list. A divider
+     here cuts that effect in half. */
+  background: transparent;
   flex-shrink: 0;
   -webkit-app-region: drag;
   /* Clear traffic lights: 12px offset + 14px button + gap */
@@ -692,31 +691,49 @@ function getAgeColor(ts: number): string {
   display: flex;
   gap: 0;
   padding: 0;
+  /* Inset the rounded source-list selection from the sidebar edges by
+     painting selection state on an inner pseudo. The row itself keeps
+     its existing layout; the floating selection rect is a 6px-rounded
+     accent fill that doesn't touch the sidebar's left or right walls —
+     same idiom as Mail / Finder source lists. */
+  margin: 0 6px;
+  border-radius: 6px;
   border: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   background: transparent;
   cursor: pointer;
   text-align: left;
-  transition: background 0.1s ease;
+  transition: background 0.12s ease;
+}
+
+/* Hairline divider between rows, drawn inside the row's content (so it
+   doesn't paint over the rounded selection rect). */
+.item + .item {
+  box-shadow: inset 0 1px 0 0 color-mix(in srgb, var(--border) 40%, transparent);
 }
 
 .item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
 .item:active {
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
+/* Source-list selection — translucent accent fill with rounded corners,
+   floating with margin from the sidebar edges. The macOS NSSourceList
+   look. Replaces the old solid-color row + left accent stripe. */
 .item.selected {
-  background: var(--accent-soft);
-  border-left: 2px solid var(--accent);
-  border-bottom-color: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  box-shadow: none;
+}
+.item.selected + .item {
+  /* No top divider under the selection rect — the rounded fill should
+     read as a discrete chip, not a row with a hairline above it. */
+  box-shadow: none;
 }
 
-.item.selected .content {
-  padding-left: 8px;
-}
+/* Old override compensated for the now-gone 2px left accent border — the
+   source-list rect doesn't need a content padding adjustment. */
 
 .item.selected .title {
   color: #fff;

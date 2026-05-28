@@ -125,7 +125,12 @@ body {
   font-optical-sizing: auto;
   font-size: 12px;
   color: var(--text-primary);
-  background: var(--bg-solid);
+  /* Transparent so the macOS `sidebar` vibrancy material declared in
+     tauri.conf.json#windowEffects actually reaches the eye. Individual
+     panels paint their own opaque backgrounds where they need them
+     (right `.panel`, status bar). Only the left sidebar region is left
+     translucent — same model Apple Mail uses. */
+  background: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;

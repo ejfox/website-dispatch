@@ -4,7 +4,19 @@ import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { FileText, Search, RefreshCw, Settings, Plus } from 'lucide-vue-next'
+import {
+  FileText,
+  Search,
+  RefreshCw,
+  Settings,
+  Plus,
+  Eye,
+  Image as LucideImage,
+  Activity,
+  Pencil,
+  BookOpen,
+  Backpack,
+} from 'lucide-vue-next'
 import {
   PhRows,
   PhSquaresFour,
@@ -853,15 +865,33 @@ onUnmounted(() => {
              stays as a hint, but the mousedown handler is what actually
              moves the window. -->
         <div class="panel-tabs" data-tauri-drag-region @mousedown="startWindowDrag">
-          <button :class="{ active: rightTab === 'preview' }" @click="rightTab = 'preview'">Preview</button>
-          <button :class="{ active: rightTab === 'media' }" @click="rightTab = 'media'">Media</button>
-          <button :class="{ active: rightTab === 'activity' }" @click="rightTab = 'activity'">Activity</button>
+          <!-- Leading icons on each tab match Apple Mail's Primary/Transactions
+               header. Icon + label reads as a real macOS toolbar segment. -->
+          <button :class="{ active: rightTab === 'preview' }" @click="rightTab = 'preview'">
+            <Eye :size="13" />
+            <span>Preview</span>
+          </button>
+          <button :class="{ active: rightTab === 'media' }" @click="rightTab = 'media'">
+            <LucideImage :size="13" />
+            <span>Media</span>
+          </button>
+          <button :class="{ active: rightTab === 'activity' }" @click="rightTab = 'activity'">
+            <Activity :size="13" />
+            <span>Activity</span>
+          </button>
           <button :class="{ active: rightTab === 'modified' }" @click="rightTab = 'modified'">
-            Modified
+            <Pencil :size="13" />
+            <span>Modified</span>
             <span v-if="modifiedCount > 0" class="tab-badge">{{ modifiedCount }}</span>
           </button>
-          <button :class="{ active: rightTab === 'journal' }" @click="rightTab = 'journal'">Journal</button>
-          <button :class="{ active: rightTab === 'gear' }" @click="rightTab = 'gear'">Gear</button>
+          <button :class="{ active: rightTab === 'journal' }" @click="rightTab = 'journal'">
+            <BookOpen :size="13" />
+            <span>Journal</span>
+          </button>
+          <button :class="{ active: rightTab === 'gear' }" @click="rightTab = 'gear'">
+            <Backpack :size="13" />
+            <span>Gear</span>
+          </button>
           <div class="panel-tabs-spacer" data-tauri-drag-region @mousedown="startWindowDrag"></div>
           <div class="titlebar-btns">
             <button @click="openNewPost" class="titlebar-btn" data-tip="New Post">
@@ -1150,7 +1180,8 @@ onUnmounted(() => {
   grid-area: panel-bar;
   display: flex;
   align-items: flex-end;
-  border-bottom: 1px solid var(--border);
+  /* No bottom border — pill tabs float on the panel background; a divider
+     under them reads as 90s tabbed-interface, not modern macOS. */
   background: var(--bg-secondary);
   -webkit-app-region: drag;
   /* Bigger top padding = fatter drag-stripe above the tab buttons.
@@ -1162,29 +1193,49 @@ onUnmounted(() => {
 }
 
 .panel-tabs button {
-  padding: 6px 10px;
+  /* Pill-shaped tabs — translucent accent fill on the active one, hover
+     state with a subtle wash. Same idiom Mail uses for its
+     Primary/Transactions/Updates/Promotions header. */
+  padding: 4px 9px;
+  margin-bottom: 6px;
   font-size: 11px;
   font-weight: 500;
   flex-shrink: 0;
   background: transparent;
   border: none;
+  border-radius: 6px;
   color: var(--text-tertiary);
   cursor: pointer;
-  border-bottom: 1.5px solid transparent;
-  margin-bottom: -1px;
   -webkit-app-region: no-drag;
   align-self: flex-end;
-  transition: color 0.15s ease;
+  transition: background 0.12s ease, color 0.12s ease;
+  /* Icon + label sit on one baseline. */
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 1;
+}
+.panel-tabs button > svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: opacity 0.12s ease;
+}
+.panel-tabs button.active > svg {
+  opacity: 1;
 }
 
 .panel-tabs button:hover {
   color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 
 .panel-tabs button.active {
   color: var(--text-primary);
-  border-bottom-color: var(--selection-bg);
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
   font-weight: 600;
+}
+.panel-tabs button.active:hover {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
 /* Numeric badge nested inside a panel-tab button (e.g. "Modified · 12"). */
@@ -1273,6 +1324,10 @@ onUnmounted(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  /* Opaque so the right pane reads as a solid reading surface — only the
+     left sidebar shows the window's vibrancy material. Same model as
+     Apple Mail: vibrant source list + opaque content panes. */
+  background: var(--bg-solid);
 }
 
 .empty {
