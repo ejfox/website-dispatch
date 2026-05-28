@@ -32,23 +32,21 @@ const emit = defineEmits<{
 
 <style scoped>
 /* Wide hit target, thin visual. The handle element is the grab zone; the
-   inner `.line` is the hairline you actually see. */
+   inner `.line` is the hairline you actually see.
+   Position-agnostic: works in flow as a flex sibling (Media Library, GearPanel)
+   or absolutely positioned by the parent on a grid seam (App.vue sidebar). */
 .resize-handle {
-  position: absolute;
-  z-index: 20;
   display: flex;
   align-items: stretch;
   justify-content: center;
+  flex-shrink: 0;
+  z-index: 20;
 }
 .axis-x {
-  top: 0;
-  bottom: 0;
   width: 9px;
   cursor: col-resize;
 }
 .axis-y {
-  left: 0;
-  right: 0;
   height: 9px;
   cursor: row-resize;
   flex-direction: column;
@@ -69,5 +67,27 @@ const emit = defineEmits<{
 .resize-handle:hover .line,
 .resize-handle.active .line {
   background: var(--accent);
+}
+
+/* The global [data-tip]::after positions the HUD below-center of its host.
+   That works for buttons but not for a divider that spans an entire window
+   height (axis-x) or panel width (axis-y) — the bubble would land far off
+   the visible target. Re-anchor each axis to sit close to the handle. */
+.axis-x[data-tip]::after {
+  top: 50%;
+  left: calc(100% + 6px);
+  transform: translateY(-50%);
+}
+.axis-x[data-tip]:hover::after {
+  transform: translateY(-50%);
+}
+.axis-y[data-tip]::after {
+  top: auto;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+.axis-y[data-tip]:hover::after {
+  transform: translateX(-50%);
 }
 </style>

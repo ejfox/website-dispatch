@@ -914,6 +914,19 @@ async fn open_preview(app_handle: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Frontend records a file open into the persisted Open Recent list.
+/// Reorders if already present, caps to MAX_RECENTS, rebuilds the menubar.
+#[tauri::command]
+fn record_recent_file(app: tauri::AppHandle, path: String) {
+    menu::record_recent(&app, path);
+}
+
+/// Wipe the Open Recent list (also triggered by File → Open Recent → Clear Menu).
+#[tauri::command]
+fn clear_recent_files(app: tauri::AppHandle) {
+    menu::clear_recents(&app);
+}
+
 pub fn run() {
     // --- STDIO PANIC GUARD ---
     // When Dispatch runs from a .app bundle, stdout/stderr inherit from the
@@ -958,6 +971,7 @@ pub fn run() {
     std::thread::spawn(sketchybar_cache::update);
 
     // --- BUILD AND RUN THE APP ---
+    // (Open Recent commands defined below the run block.)
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -1105,6 +1119,8 @@ pub fn run() {
             gear::gear_pending_changes,
             gear::commit_gear_changes,
             play_system_sound,
+            record_recent_file,
+            clear_recent_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

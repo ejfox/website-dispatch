@@ -71,7 +71,9 @@ const unusedCountLabel = () => {
 
 <style scoped>
 .sidebar {
-  width: 180px;
+  /* Width is driven by the parent MediaLibraryModal via a CSS custom property
+     so the user-resizable width applies uniformly to inline + modal modes. */
+  width: var(--media-sidebar-width, 180px);
   background: #141416;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;

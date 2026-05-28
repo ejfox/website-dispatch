@@ -25,9 +25,13 @@ export function useResizable(
     max: number | (() => number)
     axis?: 'x' | 'y'
     invert?: boolean
+    /** When set, the start size is read fresh on each drag (e.g. from the
+     *  DOM via offsetHeight). Lets a panel use natural sizing until the user
+     *  first drags, without the divider jumping on grab. */
+    getStartSize?: () => number | null | undefined
   }
 ) {
-  const { default: def, min, axis = 'x', invert = false } = options
+  const { default: def, min, axis = 'x', invert = false, getStartSize } = options
   const size = useLocalStorage(key, def)
   const dragging = ref(false)
 
@@ -39,7 +43,8 @@ export function useResizable(
   function start(e: PointerEvent) {
     e.preventDefault()
     const startPos = axis === 'x' ? e.clientX : e.clientY
-    const startSize = size.value
+    const measured = getStartSize?.()
+    const startSize = measured != null && measured > 0 ? measured : size.value
     const dir = invert ? -1 : 1
 
     const onMove = (ev: PointerEvent) => {

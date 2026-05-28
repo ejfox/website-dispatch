@@ -146,6 +146,15 @@ watch(
   { immediate: true },
 )
 
+// File → Open Recent. Push the selected file's path to Rust; the menubar
+// gets rebuilt there. Rust dedupes/reorders, so we don't have to.
+watch(
+  () => selectedFile.value?.path,
+  (path) => {
+    if (path) invoke('record_recent_file', { path }).catch(() => {})
+  },
+)
+
 // Right panel tab state. Persists the user's last/preferred home tab so
 // Dispatch opens where they want to be — Preview by default for most folks,
 // but switchable to Journal or Gear for routines that don't start with the post list.
@@ -501,6 +510,20 @@ onMounted(async () => {
   })
   listen('menu-search', () => openSearch())
 
+  // Open Recent: payload is the absolute file path. If the file is in the
+  // current scan, select it; otherwise the path is stale (deleted/moved) —
+  // surface a toast so the user knows why nothing happened.
+  listen<string>('menu-open-recent', (event) => {
+    const path = event.payload
+    const match = files.value.find((f) => f.path === path)
+    if (match) {
+      selectedFile.value = match
+      rightTab.value = 'preview'
+    } else {
+      toasts.info('That file is no longer in the vault.')
+    }
+  })
+
   // Auto-refresh on vault file changes (fs::notify watcher in Rust).
   // Debounced 500ms server-side; we still throttle the toast so a flurry
   // of saves doesn't spam the UI.
@@ -732,6 +755,7 @@ onUnmounted(() => {
       axis="x"
       :active="sidebarDragging"
       class="sidebar-resize"
+      data-tip="drag to resize · double-click to reset"
       @down="startSidebarResize"
       @reset="resetSidebarWidth"
     />
@@ -841,16 +865,16 @@ onUnmounted(() => {
           <div class="panel-tabs-spacer" data-tauri-drag-region @mousedown="startWindowDrag"></div>
           <div class="titlebar-btns">
             <button @click="openNewPost" class="titlebar-btn" data-tip="New Post">
-              <Plus :size="13" />
+              <Plus :size="16" />
             </button>
             <button @click="openSearch" class="titlebar-btn" data-tip="Search">
-              <Search :size="13" />
+              <Search :size="16" />
             </button>
             <button @click="loadFiles" class="titlebar-btn" :class="{ spinning: loading }" data-tip="Refresh">
-              <RefreshCw :size="13" />
+              <RefreshCw :size="16" />
             </button>
             <button @click="showSettings = true" class="titlebar-btn" data-tip="Settings">
-              <Settings :size="13" />
+              <Settings :size="16" />
             </button>
           </div>
         </div>
@@ -1088,8 +1112,12 @@ onUnmounted(() => {
   transition: none;
 }
 
-/* Park the divider on the sidebar/panel seam. */
+/* Park the divider on the sidebar/panel seam. The handle component is
+   position-agnostic; here we anchor it absolutely on the grid seam. */
 .sidebar-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
   left: var(--sidebar-width, 300px);
   transform: translateX(-50%);
 }
@@ -1193,7 +1221,9 @@ onUnmounted(() => {
 .titlebar-btns {
   -webkit-app-region: no-drag;
   display: flex;
-  gap: 2px;
+  /* Slightly more breathing room between buttons — closer to NSToolbar's
+     ~4px spacing than the previous 2px shoulder-to-shoulder pack. */
+  gap: 4px;
   margin-right: 8px;
   align-self: center;
   margin-bottom: 4px;
@@ -1204,9 +1234,11 @@ onUnmounted(() => {
   background: none;
   border: none;
   color: var(--text-tertiary);
-  width: 26px;
-  height: 26px;
-  border-radius: 5px;
+  /* NSToolbar-ish sizing — 30px hit target, 16px glyph (was a too-cute
+     26/13). Matches Finder/Mail's titlebar buttons. */
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
   cursor: pointer;
   display: flex;
   align-items: center;

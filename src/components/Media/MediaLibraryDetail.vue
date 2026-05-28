@@ -94,7 +94,8 @@ const emit = defineEmits<{
 
 <style scoped>
 .detail-panel {
-  width: 300px;
+  /* Width driven by parent MediaLibraryModal's CSS custom property. */
+  width: var(--media-detail-width, 300px);
   background: #141416;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;

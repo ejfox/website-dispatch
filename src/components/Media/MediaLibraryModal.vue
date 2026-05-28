@@ -4,6 +4,35 @@ import { invoke } from '@tauri-apps/api/core'
 import MediaLibrarySidebar from './MediaLibrarySidebar.vue'
 import MediaLibraryGrid from './MediaLibraryGrid.vue'
 import MediaLibraryDetail from './MediaLibraryDetail.vue'
+import ResizeHandle from '../ResizeHandle.vue'
+import { useResizable } from '../../composables/useResizable'
+
+// Resizable splits for the three panes. Widths flow to children via CSS vars
+// on the .inline-panel / .modal root (see <style>).
+const {
+  size: mediaSidebarWidth,
+  dragging: mediaSidebarDragging,
+  start: startMediaSidebarResize,
+  reset: resetMediaSidebarWidth,
+} = useResizable('dispatch-media-sidebar-width', {
+  default: 180,
+  min: 120,
+  max: 320,
+  axis: 'x',
+})
+const {
+  size: mediaDetailWidth,
+  dragging: mediaDetailDragging,
+  start: startMediaDetailResize,
+  reset: resetMediaDetailWidth,
+} = useResizable('dispatch-media-detail-width', {
+  default: 300,
+  min: 220,
+  max: 520,
+  axis: 'x',
+  // Detail is anchored on the right; dragging the handle left should grow it.
+  invert: true,
+})
 
 interface CloudinaryAsset {
   public_id: string
@@ -313,7 +342,16 @@ onMounted(() => {
     @keydown="handleKeydown"
     tabindex="0"
   >
-    <div :class="[inline ? 'inline-panel' : 'modal', { 'with-detail': showDetail }]">
+    <div
+      :class="[
+        inline ? 'inline-panel' : 'modal',
+        { 'with-detail': showDetail, resizing: mediaSidebarDragging || mediaDetailDragging },
+      ]"
+      :style="{
+        '--media-sidebar-width': mediaSidebarWidth + 'px',
+        '--media-detail-width': mediaDetailWidth + 'px',
+      }"
+    >
       <MediaLibrarySidebar
         :folders="folders"
         :selected-folder="selectedFolder"
@@ -324,6 +362,14 @@ onMounted(() => {
         @select-folder="handleSelectFolder"
         @toggle-unused="handleToggleUnused"
         @rescan="scanUsage"
+      />
+
+      <ResizeHandle
+        axis="x"
+        :active="mediaSidebarDragging"
+        data-tip="drag to resize · double-click to reset"
+        @down="startMediaSidebarResize"
+        @reset="resetMediaSidebarWidth"
       />
 
       <div class="main-content">
@@ -365,6 +411,15 @@ onMounted(() => {
           @load-more="loadAssets(true)"
         />
       </div>
+
+      <ResizeHandle
+        v-if="showDetail"
+        axis="x"
+        :active="mediaDetailDragging"
+        data-tip="drag to resize · double-click to reset"
+        @down="startMediaDetailResize"
+        @reset="resetMediaDetailWidth"
+      />
 
       <MediaLibraryDetail
         :show="showDetail"
@@ -410,6 +465,10 @@ onMounted(() => {
   width: 1300px;
 }
 
+/* MediaLibrarySidebar and MediaLibraryDetail read --media-sidebar-width
+   and --media-detail-width from their own scoped styles, so the parent
+   just sets the vars on .modal / .inline-panel above. */
+
 /* Inline mode (tab panel) */
 .inline-container {
   flex: 1;
@@ -425,10 +484,9 @@ onMounted(() => {
   background: var(--bg-solid);
 }
 
-:deep(.inline-panel .sidebar) {
-  width: 150px;
-  min-width: 150px;
-}
+/* Sidebar width is now controlled by --media-sidebar-width (see :deep(.sidebar)
+   above), so the inline-mode override is gone — the resizable width applies
+   to both modes uniformly. */
 
 .inline-panel .modal-header h2 {
   display: none;

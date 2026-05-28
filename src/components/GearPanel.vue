@@ -3,6 +3,8 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useLocalStorage } from '@vueuse/core'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
+import ResizeHandle from './ResizeHandle.vue'
+import { useResizable } from '../composables/useResizable'
 import {
   PhBackpack,
   PhMapPin,
@@ -63,26 +65,21 @@ const error = ref<string | null>(null)
 const pending = ref<Pending>({ dirty: false, diff_stat: '' })
 const status = ref<string | null>(null)
 
-const detailHeight = useLocalStorage('dispatch-gear-detail-height', 360)
-function startResize(e: MouseEvent) {
-  e.preventDefault()
-  const startY = e.clientY
-  const startH = detailHeight.value
-  const onMove = (ev: MouseEvent) => {
-    const next = startH + (startY - ev.clientY)
-    detailHeight.value = Math.max(160, Math.min(window.innerHeight - 180, next))
-  }
-  const onUp = () => {
-    window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
-    document.body.style.userSelect = ''
-    document.body.style.cursor = ''
-  }
-  document.body.style.userSelect = 'none'
-  document.body.style.cursor = 'ns-resize'
-  window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
-}
+// Detail-pane height. `invert: true` because the handle sits on top of the
+// detail (which is anchored to the bottom of the column) — dragging up should
+// grow it, not shrink it. Same localStorage key as before for continuity.
+const {
+  size: detailHeight,
+  dragging: detailDragging,
+  start: startResize,
+  reset: resetDetailHeight,
+} = useResizable('dispatch-gear-detail-height', {
+  default: 360,
+  min: 160,
+  max: () => window.innerHeight - 180,
+  axis: 'y',
+  invert: true,
+})
 
 // Generic inline-edit state. `editField` is the snake_case field key matching
 // the backend's whitelist. `editValue` mirrors the current input.
@@ -558,12 +555,14 @@ onUnmounted(() => {
       <div v-if="!filtered.length && !loading" class="empty-row">no items match</div>
     </div>
 
-    <div
+    <ResizeHandle
       v-if="selected"
-      class="gear-detail-resize"
-      title="drag to resize"
-      @mousedown="startResize"
-    ></div>
+      axis="y"
+      :active="detailDragging"
+      data-tip="drag to resize · double-click to reset"
+      @down="startResize"
+      @reset="resetDetailHeight"
+    />
 
     <div v-if="selected" class="gear-detail" :style="{ height: detailHeight + 'px' }">
       <div class="detail-card">
@@ -1177,18 +1176,7 @@ onUnmounted(() => {
   text-align: center;
 }
 
-.gear-detail-resize {
-  height: 5px;
-  cursor: ns-resize;
-  background: transparent;
-  border-top: 1px solid var(--border, #222);
-  flex-shrink: 0;
-  transition: background 0.15s;
-}
-.gear-detail-resize:hover,
-.gear-detail-resize:active {
-  background: var(--accent-soft);
-}
+/* Resize divider now provided by <ResizeHandle axis="y"> — see imports. */
 
 .gear-detail {
   border-top: 1px solid var(--border, #222);

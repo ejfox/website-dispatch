@@ -26,6 +26,52 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         ],
     )?;
 
+    // "Open Recent" submenu — built fresh from the persisted recents list so
+    // it reflects the latest order. See record_recent / clear_recents below;
+    // the whole menubar rebuilds on every change (muda menus aren't mutable
+    // in place).
+    let recents = read_recents(handle);
+    let recent_items: Vec<MenuItem<tauri::Wry>> = if recents.is_empty() {
+        vec![MenuItem::with_id(
+            handle,
+            "recent_empty",
+            "No Recent Files",
+            false,
+            None::<&str>,
+        )?]
+    } else {
+        recents
+            .iter()
+            .map(|path| {
+                // Display the file name; the full path lives in the ID so the
+                // event handler knows what to open.
+                let label = std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path.as_str())
+                    .to_string();
+                MenuItem::with_id(handle, format!("recent:{}", path), label, true, None::<&str>)
+            })
+            .collect::<tauri::Result<Vec<_>>>()?
+    };
+    let recent_sep = PredefinedMenuItem::separator(handle)?;
+    let clear_recents_item = MenuItem::with_id(
+        handle,
+        "clear_recent_files",
+        "Clear Menu",
+        !recents.is_empty(),
+        None::<&str>,
+    )?;
+    let mut recent_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = recent_items
+        .iter()
+        .map(|i| i as &dyn tauri::menu::IsMenuItem<tauri::Wry>)
+        .collect();
+    if !recents.is_empty() {
+        recent_refs.push(&recent_sep);
+        recent_refs.push(&clear_recents_item);
+    }
+    let open_recent = Submenu::with_items(handle, "Open Recent", true, &recent_refs)?;
+
     // File menu
     let file_menu = Submenu::with_items(
         handle,
@@ -48,6 +94,8 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
                 true,
                 Some("CmdOrCtrl+Shift+R"),
             )?,
+            &PredefinedMenuItem::separator(handle)?,
+            &open_recent,
             &PredefinedMenuItem::separator(handle)?,
             &MenuItem::with_id(handle, "refresh", "Refresh", true, Some("CmdOrCtrl+R"))?,
         ],
@@ -289,6 +337,17 @@ pub fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) 
         return;
     }
 
+    // Open Recent: id is "recent:<absolute-path>". Emit the path so the
+    // frontend can route through its existing file-select flow.
+    if let Some(path) = id.strip_prefix("recent:") {
+        let _ = app.emit("menu-open-recent", path.to_string());
+        return;
+    }
+    if id == "clear_recent_files" {
+        clear_recents(app);
+        return;
+    }
+
     // Items that open URLs directly — no need to round-trip through the frontend.
     match id {
         "report_issue" => {
@@ -298,6 +357,71 @@ pub fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) 
             let _ = open_url("https://github.com/ejfox/website-dispatch");
         }
         _ => {}
+    }
+}
+
+// ---------- Open Recent persistence ----------
+//
+// Recently opened file paths live in <app_data_dir>/recent_files.json as a
+// JSON array of absolute path strings, newest-first, capped to MAX_RECENTS.
+// Frontend calls `record_recent_file` whenever the user selects a file; the
+// File → Open Recent submenu is rebuilt from this list at app start and on
+// every record/clear (muda menus aren't mutable in place).
+
+const MAX_RECENTS: usize = 10;
+const RECENTS_FILE: &str = "recent_files.json";
+
+/// Bypass `app.path().app_data_dir()` here — this function is called by
+/// `build_app_menu`, which Tauri invokes BEFORE the PathResolver state is
+/// registered, causing a panic ("state() called before manage()"). Mirrors
+/// the HOME-based path that `config.rs::config_path` already uses, so the
+/// `recent_files.json` lands next to `config.json`.
+fn recents_path(_app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(
+        std::path::PathBuf::from(home)
+            .join("Library/Application Support/com.ejfox.dispatch")
+            .join(RECENTS_FILE),
+    )
+}
+
+pub fn read_recents(app: &tauri::AppHandle) -> Vec<String> {
+    let Some(p) = recents_path(app) else {
+        return vec![];
+    };
+    let Ok(bytes) = std::fs::read(&p) else {
+        return vec![];
+    };
+    serde_json::from_slice(&bytes).unwrap_or_default()
+}
+
+fn write_recents(app: &tauri::AppHandle, paths: &[String]) {
+    let Some(p) = recents_path(app) else { return };
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_vec_pretty(paths) {
+        let _ = std::fs::write(&p, json);
+    }
+}
+
+pub fn record_recent(app: &tauri::AppHandle, path: String) {
+    let mut recents = read_recents(app);
+    recents.retain(|p| p != &path);
+    recents.insert(0, path);
+    recents.truncate(MAX_RECENTS);
+    write_recents(app, &recents);
+    rebuild_menu(app);
+}
+
+pub fn clear_recents(app: &tauri::AppHandle) {
+    write_recents(app, &[]);
+    rebuild_menu(app);
+}
+
+fn rebuild_menu(app: &tauri::AppHandle) {
+    if let Ok(menu) = build_app_menu(app) {
+        let _ = app.set_menu(menu);
     }
 }
 

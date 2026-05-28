@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { useOverflowMenu } from '../composables/useOverflowMenu'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useLocalStorage } from '@vueuse/core'
@@ -75,6 +76,62 @@ const filteredFiles = computed(() => {
 
   return result
 })
+
+// NSToolbar-style overflow for the .filters row. When the sidebar gets too
+// narrow, filter buttons that don't fit are hidden and a `»` chevron pops a
+// native Tauri menu containing them.
+const filtersRef = ref<HTMLElement | null>(null)
+const filterItemRefs = ref<(HTMLElement | null)[]>([])
+const { hiddenIndices: hiddenFilterIndices, remeasure: remeasureFilters } =
+  useOverflowMenu(filtersRef, filterItemRefs)
+
+// The set of filter items is static today (all/published/drafts) plus an
+// optional week-toggle that appears once any week-notes exist — re-measure
+// when that toggle's existence flips.
+watch(
+  () => filterItemRefs.value.filter(Boolean).length,
+  () => remeasureFilters(),
+)
+
+interface FilterDef {
+  key: 'all' | 'published' | 'drafts' | 'week'
+  label: string
+  active: boolean
+  onPick: () => void
+}
+
+const filterDefs = computed<FilterDef[]>(() => {
+  const defs: FilterDef[] = [
+    { key: 'all', label: `All ${counts.value.all}`, active: filter.value === 'all', onPick: () => (filter.value = 'all') },
+    { key: 'published', label: `Live ${counts.value.published}`, active: filter.value === 'published', onPick: () => (filter.value = 'published') },
+    { key: 'drafts', label: `Drafts ${counts.value.drafts}`, active: filter.value === 'drafts', onPick: () => (filter.value = 'drafts') },
+  ]
+  if (counts.value.weeknotes > 0) {
+    defs.push({
+      key: 'week',
+      label: `WEEK ${counts.value.weeknotes}${showWeeknotes.value ? '' : ' (hidden)'}`,
+      active: showWeeknotes.value,
+      onPick: () => (showWeeknotes.value = !showWeeknotes.value),
+    })
+  }
+  return defs
+})
+
+// Pop a native menu listing the items that didn't fit on the bar.
+async function showOverflowMenu() {
+  const items = await Promise.all(
+    hiddenFilterIndices.value.map(async (i) => {
+      const def = filterDefs.value[i]
+      return await MenuItem.new({
+        text: def.label + (def.active ? '  ✓' : ''),
+        action: def.onPick,
+      })
+    }),
+  )
+  if (!items.length) return
+  const menu = await Menu.new({ items })
+  await menu.popup()
+}
 
 const counts = computed(() => {
   // "All / Live / Drafts" counts respect the weeknote toggle, so the numbers
@@ -262,21 +319,27 @@ function getAgeColor(ts: number): string {
          function comment for why CSS-region drag is broken under
          `titleBarStyle: "Overlay"`. -->
     <div class="control-bar" data-tauri-drag-region @mousedown="startWindowDrag">
-      <div class="filters">
-        <button :class="{ active: filter === 'all' }" @click="filter = 'all'">All {{ counts.all }}</button>
-        <button :class="{ active: filter === 'published' }" @click="filter = 'published'">
-          Live {{ counts.published }}
-        </button>
-        <button :class="{ active: filter === 'drafts' }" @click="filter = 'drafts'">Drafts {{ counts.drafts }}</button>
+      <div ref="filtersRef" class="filters">
         <button
-          v-if="counts.weeknotes > 0"
-          class="week-toggle"
-          :class="{ off: !showWeeknotes }"
-          :data-tip="showWeeknotes ? 'Hide week notes' : 'Show week notes'"
-          @click="showWeeknotes = !showWeeknotes"
+          v-for="(def, i) in filterDefs"
+          :key="def.key"
+          :ref="(el) => (filterItemRefs[i] = el as HTMLElement | null)"
+          :class="{
+            active: def.active,
+            'week-toggle': def.key === 'week',
+            off: def.key === 'week' && !showWeeknotes,
+            overflowed: hiddenFilterIndices.includes(i),
+          }"
+          @click="def.onPick"
         >
-          WEEK {{ counts.weeknotes }}
+          {{ def.label }}
         </button>
+        <button
+          v-if="hiddenFilterIndices.length"
+          class="filter-overflow"
+          data-tip="More filters"
+          @click="showOverflowMenu"
+        >»</button>
       </div>
       <div class="sort-row">
         <button :class="{ active: sort === 'recent' }" @click="sort = 'recent'" data-tip="Recent">
@@ -459,9 +522,16 @@ function getAgeColor(ts: number): string {
 .filters {
   display: flex;
   flex: 1;
+  /* `overflow: hidden` keeps overflowing items from painting past the bar
+     while useOverflowMenu re-measures. Items get `flex-shrink: 0` so they
+     keep their natural width instead of silently shrinking — the composable
+     hides ones that don't fit and surfaces them via the » chevron. */
+  overflow: hidden;
+  min-width: 0;
 }
 
 .filters button {
+  flex-shrink: 0;
   padding: 5px 8px;
   font-size: 9px;
   font-weight: 500;
@@ -475,6 +545,22 @@ function getAgeColor(ts: number): string {
   gap: 3px;
   font-variant-numeric: tabular-nums;
   -webkit-app-region: no-drag;
+}
+
+.filters button.overflowed {
+  display: none;
+}
+
+/* NSToolbar-style overflow chevron — pops a native menu of hidden filters. */
+.filters .filter-overflow {
+  margin-left: auto;
+  padding: 5px 6px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1;
+}
+.filters .filter-overflow:hover {
+  color: var(--text-primary);
 }
 
 .filters button:hover {

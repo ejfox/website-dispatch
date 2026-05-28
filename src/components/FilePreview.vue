@@ -13,6 +13,8 @@ import MetadataPanel from './MetadataPanel.vue'
 import ActionToolbar from './ActionToolbar.vue'
 import PublishConfirmModal from './PublishConfirmModal.vue'
 import WebmentionStatus from './WebmentionStatus.vue'
+import ResizeHandle from './ResizeHandle.vue'
+import { useResizable } from '../composables/useResizable'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
@@ -38,6 +40,25 @@ const emit = defineEmits<{ published: []; 'jump-to-path': [path: string] }>()
 const { appConfig, enabledEditors, publishTargets, hasMultipleTargets } = useAppConfig()
 const selectedTargetId = useLocalStorage<string | null>('dispatch-target', null)
 const altTextCollapsed = useLocalStorage('dispatch-alttext-collapsed', true)
+
+// Drag the seam between the metadata stack (status banner / header / lint /
+// alt-text / OG / action toolbar) and the rendered content below. Default of
+// 0 means "natural sizing" — the stack flows to its content height. Once the
+// user drags, we record a pixel height which becomes the cap; metadata
+// scrolls within that. Double-click the divider to return to natural sizing.
+const metaStackRef = ref<HTMLDivElement | null>(null)
+const {
+  size: metaHeight,
+  dragging: metaDragging,
+  start: startMetaResize,
+  reset: resetMetaHeight,
+} = useResizable('dispatch-preview-meta-height', {
+  default: 0,
+  min: 80,
+  max: () => window.innerHeight - 220,
+  axis: 'y',
+  getStartSize: () => metaStackRef.value?.offsetHeight,
+})
 
 function getActiveTargetId(): string | undefined {
   if (!hasMultipleTargets.value) return undefined
@@ -873,6 +894,15 @@ async function openPreview() {
       </div>
     </Transition>
 
+    <!-- Resizable metadata stack. Default height is 0 (natural sizing — flows
+         to content); once the user drags the divider it becomes a fixed cap
+         with internal scroll. Double-click the divider to reset to natural. -->
+    <div
+      ref="metaStackRef"
+      class="metadata-stack"
+      :class="{ sized: metaHeight > 0, resizing: metaDragging }"
+      :style="metaHeight > 0 ? { height: metaHeight + 'px' } : {}"
+    >
     <!-- Status Banner -->
     <StatusBanner
       :is-live="isLive"
@@ -1138,6 +1168,18 @@ async function openPreview() {
       <button @click="schedulePublish" :disabled="!scheduleDate" class="btn accent">Confirm Schedule</button>
       <button @click="showSchedulePicker = false" class="btn">Cancel</button>
     </div>
+    </div>
+    <!-- /metadata-stack -->
+
+    <!-- Drag this to give the rendered preview more (or less) room. Double-
+         click to return the metadata stack to natural (content-fit) height. -->
+    <ResizeHandle
+      axis="y"
+      :active="metaDragging"
+      data-tip="drag to resize · double-click to reset"
+      @down="startMetaResize"
+      @reset="resetMetaHeight"
+    />
 
     <!-- Syndication Wizard Modal -->
     <SyndicationWizard
@@ -1275,6 +1317,25 @@ async function openPreview() {
   min-height: 0;
   overflow: hidden;
   background: var(--bg-primary);
+}
+
+/* Wrapper around the status banner / header / lint / alt-text / OG /
+   action toolbar. Default behavior is "no cap" — flows to content. When
+   the user drags the ResizeHandle below, `.sized` is added and the wrapper
+   becomes a fixed-height scroll region so the rendered content gets more
+   room. Double-click the divider clears the cap. */
+.metadata-stack {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.metadata-stack.sized {
+  overflow-y: auto;
+}
+.metadata-stack.resizing {
+  /* Disable any internal transitions mid-drag so the panes track 1:1. */
+  transition: none;
   /* No backdrop-filter on the scroll container — the parent window is
      opaque, so the blur was decorative only and cost a GPU pass per frame
      while scrolling long posts. */
