@@ -204,6 +204,33 @@ watch(
   },
 )
 
+// --- macOS proxy icon + dirty dot ---
+//
+// `set_proxy_icon`     → puts the file's icon in the titlebar (Cmd-click the
+//                        title to see the path stack — proper Finder/Mail/
+//                        TextEdit behavior).
+// `set_document_dirty` → puts the black dot in the red close button when
+//                        the selected post diverges from its published copy
+//                        (i.e. the "Republish" state). Mac convention is
+//                        "this document has unsaved changes."
+//
+// Both no-op on non-macOS via the Rust side. Catching errors silently
+// because the only failure mode here is the window not being ready yet.
+watch(
+  () => selectedFile.value?.path ?? '',
+  (path) => {
+    invoke('set_proxy_icon', { path }).catch(() => {})
+  },
+  { immediate: true },
+)
+watch(
+  () => !!selectedFile.value?.warnings?.includes('Modified since publish'),
+  (dirty) => {
+    invoke('set_document_dirty', { dirty }).catch(() => {})
+  },
+  { immediate: true },
+)
+
 // Right panel tab state. Persists the user's last/preferred home tab so
 // Dispatch opens where they want to be — Preview by default for most folks,
 // but switchable to Journal or Gear for routines that don't start with the post list.

@@ -22,6 +22,7 @@ mod companion; // Companion web UI server for mobile access
 pub mod config; // App configuration (vault path, publish targets, editors)
 mod gear;
 mod journal; // Publishing journal, streaks, milestones
+mod mac_native; // NSWindow proxy icon + dirty-dot via objc2 (macOS-only)
 mod media; // Multi-destination upload orchestrator (Cloudinary / R2 / both)
 mod menu; // Application menu bar builder
 mod obsidian; // Talks to Obsidian's Local REST API for backlinks
@@ -169,9 +170,13 @@ fn append_to_file(path: String, content: String) -> Result<(), String> {
     Ok(())
 }
 
-// Publish a markdown file to the website (copy + git commit + push)
+// Publish a markdown file to the website (copy + git commit + push).
+// Takes the AppHandle so we can fire a native macOS notification post-success
+// — when Dispatch is in the background, the user gets a system banner with
+// the post title and a "View" interaction.
 #[tauri::command]
 fn publish_file(
+    app: tauri::AppHandle,
     source_path: String,
     slug: String,
     target_id: Option<String>,
@@ -184,9 +189,12 @@ fn publish_file(
 
     let url = publish::publish_file(&source_path, &slug, target_id.as_deref())?;
 
-    // Record in journal — read source file metadata
+    // Record in journal — read source file metadata, capture the title for
+    // the notification body so we don't re-read the file later.
+    let mut notif_title: Option<String> = None;
     if let Ok(files) = vault::get_recent_files(9999) {
         if let Some(file) = files.iter().find(|f| f.path == source_path) {
+            notif_title = file.title.clone().or_else(|| Some(file.filename.clone()));
             let event = if is_republish { "republish" } else { "publish" };
             let visibility = if file.password.is_some() {
                 "protected"
@@ -207,6 +215,24 @@ fn publish_file(
                 visibility,
             });
         }
+    }
+
+    // Native macOS Notification Center banner. Stays in the user's
+    // notification history; the body URL is logged but the notification
+    // click action returns focus to Dispatch (the only "app" target).
+    {
+        use tauri_plugin_notification::NotificationExt;
+        let verb = if is_republish { "Republished" } else { "Published" };
+        let title_str = notif_title
+            .as_deref()
+            .map(|t| t.trim().trim_start_matches('#').trim().to_string())
+            .unwrap_or_else(|| slug.clone());
+        let _ = app
+            .notification()
+            .builder()
+            .title(verb)
+            .body(format!("\u{2018}{}\u{2019} is live at {}", title_str, url))
+            .show();
     }
 
     // Refresh the ambient cache so sketchybar reflects the new state on its
@@ -936,6 +962,24 @@ fn clear_recent_files(app: tauri::AppHandle) {
     menu::clear_recents(&app);
 }
 
+/// Set the titlebar proxy icon to the given file path (macOS).
+/// Empty path clears it. No-op on non-macOS.
+#[tauri::command]
+fn set_proxy_icon(window: tauri::Window, path: String) {
+    if let Ok(ns) = window.ns_window() {
+        mac_native::set_represented_filename(ns, &path);
+    }
+}
+
+/// Set the close-button "document edited" dot (macOS).
+/// We map it to "selected post has been modified since publish."
+#[tauri::command]
+fn set_document_dirty(window: tauri::Window, dirty: bool) {
+    if let Ok(ns) = window.ns_window() {
+        mac_native::set_document_edited(ns, dirty);
+    }
+}
+
 pub fn run() {
     // --- STDIO PANIC GUARD ---
     // When Dispatch runs from a .app bundle, stdout/stderr inherit from the
@@ -1130,6 +1174,8 @@ pub fn run() {
             play_system_sound,
             record_recent_file,
             clear_recent_files,
+            set_proxy_icon,
+            set_document_dirty,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
