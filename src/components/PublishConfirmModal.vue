@@ -146,16 +146,20 @@ function handleConfirm() {
 </template>
 
 <style scoped>
+/* Top-anchored sheet-style overlay — mirrors SettingsModal. The publish
+ * confirm is heavier in tone (destructive-ish), so we keep it tight and
+ * close to the titlebar like a real Mac sheet. */
 .pub-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   z-index: 200;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  padding-top: 48px;
 }
 
 .pub-modal {
@@ -501,37 +505,24 @@ function handleConfirm() {
   padding: 8px 24px;
 }
 
-/* Modal transition */
+/* Sheet-style transition: scrim fades, modal slides down from above the
+ * titlebar with a soft settle. */
 .pub-modal-enter-active,
 .pub-modal-leave-active {
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.18s ease-out;
 }
-
-.pub-modal-enter-active .pub-modal,
-.pub-modal-leave-active .pub-modal {
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.pub-modal-leave-active {
-  transition: all 0.15s ease;
-}
-
-.pub-modal-leave-active .pub-modal {
-  transition: all 0.15s ease;
-}
-
 .pub-modal-enter-from,
 .pub-modal-leave-to {
   opacity: 0;
 }
-
-.pub-modal-enter-from .pub-modal {
-  transform: scale(0.95) translateY(8px);
-  opacity: 0;
+.pub-modal-enter-active .pub-modal,
+.pub-modal-leave-active .pub-modal {
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 0.18s ease-out;
 }
-
+.pub-modal-enter-from .pub-modal,
 .pub-modal-leave-to .pub-modal {
-  transform: scale(0.98) translateY(4px);
+  transform: translateY(calc(-100% - 64px));
   opacity: 0;
 }
 </style>

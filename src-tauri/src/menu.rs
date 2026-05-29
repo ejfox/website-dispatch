@@ -233,13 +233,18 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         ],
     )?;
 
-    // Window menu
+    // Window menu — standard macOS Minimize / Zoom / Close bundle.
+    // Tauri 2.10 doesn't surface muda's `bring_all_to_front`, but
+    // tagging this submenu as the system Windows menu (below, via
+    // `set_as_windows_menu_for_nsapp`) makes AppKit append the open-
+    // window list automatically — so the menu still feels right.
     let window_menu = Submenu::with_items(
         handle,
         "Window",
         true,
         &[
             &PredefinedMenuItem::minimize(handle, None)?,
+            &PredefinedMenuItem::maximize(handle, Some("Zoom"))?,
             &PredefinedMenuItem::separator(handle)?,
             &PredefinedMenuItem::close_window(handle, None)?,
         ],
@@ -257,6 +262,16 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
             &help_menu,
         ],
     )?;
+
+    // Tell AppKit which submenus are the standard "Window" and "Help"
+    // menus. NSApplication then appends the open-windows list to Window
+    // and routes the "Help > Search" field through Help (matches every
+    // first-party Mac app).
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window_menu.set_as_windows_menu_for_nsapp();
+        let _ = help_menu.set_as_help_menu_for_nsapp();
+    }
 
     Ok(menu)
 }

@@ -20,6 +20,7 @@ mod bin_paths; // Login-shell-resolved paths to node/git
 mod cloudinary; // Uploads images/videos to Cloudinary CDN
 mod companion; // Companion web UI server for mobile access
 pub mod config; // App configuration (vault path, publish targets, editors)
+mod dock_menu; // Dock right-click menu (macOS, via objc_sys class_addMethod)
 mod gear;
 mod journal; // Publishing journal, streaks, milestones
 mod mac_native; // NSWindow proxy icon + dirty-dot via objc2 (macOS-only)
@@ -1073,6 +1074,10 @@ pub fn run() {
 
             // Build tray icon with menu
             menu::build_tray(app)?;
+
+            // Install the Dock right-click menu (macOS-only). This injects
+            // applicationDockMenu: into NSApp's delegate at runtime.
+            dock_menu::install(&app.handle());
 
             // --- VAULT FILE WATCHER ---
             // Auto-emits `vault-changed` to the frontend on .md file

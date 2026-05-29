@@ -597,31 +597,38 @@ async function save() {
 </template>
 
 <style scoped>
+/* Mac sheets attach to the titlebar and slide down. Anchor the overlay
+ * to the top, drop the modal in from -100% with a small overshoot at
+ * settle — matches NSWindowSheet's feel without needing NSWindow's
+ * sheet API (which Tauri doesn't expose). */
 .settings-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   z-index: 200;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  padding-top: 48px; /* clear the overlay titlebar */
 }
 
 .settings-modal {
   width: 580px;
   max-width: 95vw;
-  max-height: 85vh;
+  max-height: calc(100vh - 96px);
   background: var(--modal-bg);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid var(--border-light);
-  border-radius: 12px;
+  /* Sheets have a flat top edge against the titlebar (visually). The
+   * non-zero top radius is a soft compromise since we're floating, not
+   * actually attached to the chrome. */
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
   box-shadow: var(--shadow-lg);
-  animation: scaleIn 0.2s var(--ease-out-expo);
 }
 
 .settings-header {
@@ -1122,21 +1129,25 @@ async function save() {
   cursor: not-allowed;
 }
 
-/* Transitions */
+/* Sheet-style entrance/exit. The modal slides down from above the
+ * titlebar; the overlay scrim fades independently and a hair faster so
+ * the modal feels like it's pulling the scrim down with it. */
 .modal-enter-active,
 .modal-leave-active {
-  transition: all 0.2s var(--ease-out-expo);
+  transition: opacity 0.18s ease-out;
 }
 .modal-enter-from,
 .modal-leave-to {
   opacity: 0;
 }
-.modal-enter-from .settings-modal {
-  transform: scale(0.96);
-  opacity: 0;
+.modal-enter-active .settings-modal,
+.modal-leave-active .settings-modal {
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 0.18s ease-out;
 }
+.modal-enter-from .settings-modal,
 .modal-leave-to .settings-modal {
-  transform: scale(0.98);
+  transform: translateY(calc(-100% - 64px));
   opacity: 0;
 }
 </style>
