@@ -1150,43 +1150,50 @@ async function openPreview() {
       @open-alt-text="onOpenAltTextFromFixer"
     />
 
-    <!-- Toolbar -->
-    <ActionToolbar
-      :enabled-editors="enabledEditors"
-      :publish-targets="publishTargets"
-      :has-multiple-targets="hasMultipleTargets"
-      :selected-target-id="selectedTargetId"
-      :is-live="isLive"
-      :live-url="liveUrl"
-      :is-crowned="isCrowned"
-      :crowning="crowning"
-      :unpublishing="unpublishing"
-      :publishing="publishing"
-      :is-safe="file.is_safe"
-      :is-scheduled="isScheduled"
-      :is-unlisted="isUnlisted"
-      @open-obsidian="openInObsidian"
-      @open-editor="openInEditor"
-      @open-preview="openPreview"
-      @select-target="selectTarget"
-      @show-syndication="showSyndicationWizard = true"
-      @crown-post="crownPost"
-      @unpublish="unpublish"
-      @open-publish-confirm="openPublishConfirm"
-      @publish-unlisted="publishUnlisted"
-      @toggle-schedule="showSchedulePicker = !showSchedulePicker"
-    />
-
-    <!-- Schedule Picker -->
-    <div v-if="showSchedulePicker" class="schedule-picker">
-      <input
-        type="datetime-local"
-        v-model="scheduleDate"
-        class="schedule-input"
-        :min="new Date().toISOString().slice(0, 16)"
+    <!-- Toolbar dock — sticks to the bottom of the metadata-stack scroll
+         region so the publish CTA is always visible, even when the user
+         has sized the meta area tighter than its natural content. Without
+         this, ActionToolbar was the last child of an overflow:auto column
+         and got pushed below the scroll viewport, clipping the publish
+         button. -->
+    <div class="toolbar-dock">
+      <ActionToolbar
+        :enabled-editors="enabledEditors"
+        :publish-targets="publishTargets"
+        :has-multiple-targets="hasMultipleTargets"
+        :selected-target-id="selectedTargetId"
+        :is-live="isLive"
+        :live-url="liveUrl"
+        :is-crowned="isCrowned"
+        :crowning="crowning"
+        :unpublishing="unpublishing"
+        :publishing="publishing"
+        :is-safe="file.is_safe"
+        :is-scheduled="isScheduled"
+        :is-unlisted="isUnlisted"
+        @open-obsidian="openInObsidian"
+        @open-editor="openInEditor"
+        @open-preview="openPreview"
+        @select-target="selectTarget"
+        @show-syndication="showSyndicationWizard = true"
+        @crown-post="crownPost"
+        @unpublish="unpublish"
+        @open-publish-confirm="openPublishConfirm"
+        @publish-unlisted="publishUnlisted"
+        @toggle-schedule="showSchedulePicker = !showSchedulePicker"
       />
-      <button @click="schedulePublish" :disabled="!scheduleDate" class="btn accent">Confirm Schedule</button>
-      <button @click="showSchedulePicker = false" class="btn">Cancel</button>
+
+      <!-- Schedule Picker -->
+      <div v-if="showSchedulePicker" class="schedule-picker">
+        <input
+          type="datetime-local"
+          v-model="scheduleDate"
+          class="schedule-input"
+          :min="new Date().toISOString().slice(0, 16)"
+        />
+        <button @click="schedulePublish" :disabled="!scheduleDate" class="btn accent">Confirm Schedule</button>
+        <button @click="showSchedulePicker = false" class="btn">Cancel</button>
+      </div>
     </div>
     </div>
     <!-- /metadata-stack -->
@@ -1350,6 +1357,20 @@ async function openPreview() {
 }
 .metadata-stack.sized {
   overflow-y: auto;
+}
+
+/* Pin the publish CTA + schedule picker to the bottom of the visible
+ * meta-stack viewport. With `.sized` (user-dragged height), the stack
+ * scrolls vertically; without `.toolbar-dock` sticky, the toolbar
+ * would scroll off the bottom and the publish button could disappear
+ * behind the meta-stack resize edge. */
+.toolbar-dock {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg-solid);
+  /* Soft fade-up so content scrolling under doesn't look chopped. */
+  box-shadow: 0 -8px 12px -8px var(--bg-solid);
+  z-index: 2;
 }
 .metadata-stack.resizing {
   /* Disable any internal transitions mid-drag so the panes track 1:1. */
