@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed, nextTick, markRaw } from 'vue'
+import { ref, watch, computed, nextTick, markRaw, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhTrophy, PhCaretDown } from '@phosphor-icons/vue'
 import LintReceipt from './LintReceipt.vue'
@@ -555,14 +555,14 @@ watch(activeTargetDomain, async () => {
   }
 })
 
-watch(
-  () => props.file,
-  async (file) => {
-    // Hard breadcrumb: prove the watcher fires on mount + on file change.
-    // Without this, a blank preview pane is ambiguous between "watcher
-    // never fired" (mount/HMR bug) and "watcher fired but rendered empty"
-    // (pipeline bug). Now every file switch logs its trigger.
-    console.log('[render] watcher fired for', file?.path ?? '<no file>')
+// Pulled out of `watch` into an explicit function so we can call it from
+// both onMounted and the prop watcher. Vue's `watch(...,{immediate:true})`
+// has been unreliable here — on certain HMR + mount-order combinations
+// the immediate callback wouldn't fire and the pane would stay blank
+// with the watcher silently never running. Belt-and-suspenders: fire it
+// explicitly on mount AND on every props.file change.
+async function loadFileContent(file: MarkdownFile | null) {
+    console.log('[render] loadFileContent for', file?.path ?? '<no file>')
     if (!file) return
 
     // ── Perf instrumentation ──────────────────────────────────────────
@@ -766,9 +766,15 @@ watch(
           if (file.path === props.file.path) pageviewSeries.value = []
         })
     }
-  },
-  { immediate: true },
-)
+}
+
+// Two triggers — both call the same loader so we can't miss the initial
+// render no matter the mount/HMR sequence:
+//   - watch fires on every subsequent props.file change
+//   - onMounted guarantees the first load happens after mount even if
+//     the watch's immediate behavior misbehaved (which it has been doing)
+watch(() => props.file, (file) => loadFileContent(file))
+onMounted(() => loadFileContent(props.file))
 
 // Check Obsidian API status on mount
 invoke('check_obsidian_api').then((connected: unknown) => {
