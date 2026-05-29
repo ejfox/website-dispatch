@@ -80,6 +80,17 @@ const activeTargetDomain = computed(() => {
 // is a big graph of plugin closures, AST schemas, and trie tables). Without
 // `markRaw`, every file switch pays for re-tracking thousands of nested
 // objects — measurable on long posts.
+// Tiny HTML-escape used by the render-fallback fallback below. Kept inline
+// so the file is self-contained for this hot path.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 const markdownProcessor = computed(() =>
   markRaw(
     unified()
@@ -264,6 +275,10 @@ function selectTarget(id: string) {
 
 const content = ref('')
 const renderedContent = ref('')
+// Surface render failures distinctly from the silent-empty state. When set,
+// the preview pane shows a tight error card with the message and the file
+// path — beats "looks broken, no idea why" by a mile.
+const renderError = ref<{ stage: string; message: string } | null>(null)
 const backlinks = ref<Backlink[]>([])
 const loadingBacklinks = ref(false)
 const obsidianConnected = ref(false)
@@ -570,6 +585,7 @@ watch(
     webmentionReport.value = null
     content.value = ''
     renderedContent.value = ''
+    renderError.value = null
     loadingBacklinks.value = true
     loadingLocalMedia.value = true
     loadingStats.value = !!file.published_url
@@ -591,7 +607,11 @@ watch(
     // feels instant.
     const cacheKey = renderCacheKey(file)
     const cached = renderCache.get(cacheKey)
-    if (cached) {
+    // Treat empty cached renders as a miss — these are the "frequently
+    // broken" symptom: once an empty render got cached, every subsequent
+    // visit hit the cache and silently showed nothing. Re-renders are
+    // cheap relative to permanently-broken UX.
+    if (cached && cached.rendered && cached.rendered.trim()) {
       content.value = cached.stripped
       renderedContent.value = cached.rendered
       perf('cache-hit TOTAL')
@@ -621,6 +641,18 @@ watch(
           perf('content-ipc done')
           const stripped = (raw as string).replace(/^---\n[\s\S]*?\n---\n*/, '')
           content.value = stripped
+          // Real-world guard: a fully empty file (or one that's only
+          // frontmatter) used to render blank with no signal. Surface it.
+          if (!stripped.trim()) {
+            renderedContent.value = ''
+            renderError.value = {
+              stage: 'empty',
+              message:
+                'File has no body content — only frontmatter (or empty).',
+            }
+            endPreviewLoad()
+            return
+          }
           await nextTick()
           if (file.path !== props.file.path) return
           try {
@@ -628,6 +660,26 @@ watch(
             const result = await markdownProcessor.value.process(stripped)
             if (file.path !== props.file.path) return
             const rendered = String(result)
+            // Guard: never cache an empty render — that's how the pane
+            // started returning empty on every subsequent visit. Show the
+            // raw content as a fallback so the user gets *something*
+            // instead of a blank pane.
+            if (!rendered.trim()) {
+              console.warn(
+                '[render] markdown processor produced empty output for',
+                file.path,
+                '(', stripped.length, 'chars in)',
+              )
+              renderedContent.value =
+                `<pre class="render-fallback">${escapeHtml(stripped)}</pre>`
+              renderError.value = {
+                stage: 'empty-render',
+                message:
+                  'Markdown processor produced no output — showing raw text. Check console for plugin errors.',
+              }
+              endPreviewLoad()
+              return
+            }
             renderedContent.value = rendered
             console.log(
               `[perf] file-switch markdown-only ${(performance.now() - markdownT0).toFixed(1)}ms · ${switchName}`,
@@ -638,9 +690,17 @@ watch(
             cacheSkeleton(file.path, skeleton)
             endPreviewLoad()
             nextTick(() => renderMermaidIn(document))
-          } catch {
+          } catch (err) {
             if (file.path !== props.file.path) return
-            renderedContent.value = ''
+            console.error('[render] markdown processor threw', err, 'on', file.path)
+            // Show the raw content with the error so the user can still
+            // see what they wrote AND know what went wrong.
+            renderedContent.value =
+              `<pre class="render-fallback">${escapeHtml(stripped)}</pre>`
+            renderError.value = {
+              stage: 'process',
+              message: err instanceof Error ? err.message : String(err),
+            }
             endPreviewLoad()
           }
           await fetchAvailableTags()
@@ -649,8 +709,13 @@ watch(
         })
         .catch((e) => {
           if (file.path !== props.file.path) return
+          console.error('[render] get_file_content failed', e, 'on', file.path)
           content.value = `Error: ${e}`
           renderedContent.value = ''
+          renderError.value = {
+            stage: 'read',
+            message: e instanceof Error ? e.message : String(e),
+          }
           endPreviewLoad()
         })
     }
@@ -1249,6 +1314,15 @@ async function openPreview() {
            never flash it. -->
       <div v-if="showLoadingIndicator" class="preview-progress" aria-hidden="true">
         <div class="preview-progress-track"></div>
+      </div>
+
+      <!-- Render error card — surfaces what would otherwise be a silent
+           blank pane. Sits above the rendered content so the user sees
+           the cause and, when applicable, the raw text fallback below. -->
+      <div v-if="renderError" class="render-error-card">
+        <div class="render-error-stage">{{ renderError.stage }} failed</div>
+        <div class="render-error-msg">{{ renderError.message }}</div>
+        <div class="render-error-path">{{ file.path }}</div>
       </div>
 
       <Transition name="preview-fade" mode="out-in">
@@ -2070,6 +2144,38 @@ async function openPreview() {
 .analytics-strip .muted {
   color: var(--text-tertiary, #666);
   font-size: 10px;
+}
+
+/* Render-error card — never silent again. Soft warning wash, monospace
+ * stage label, full file path so the user can locate the offending file
+ * outside the app if needed. */
+.render-error-card {
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border-left: 3px solid var(--warning);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary, #aaa);
+}
+.render-error-stage {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--warning);
+  margin-bottom: 2px;
+}
+.render-error-msg {
+  color: var(--text-primary, #fff);
+}
+.render-error-path {
+  margin-top: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--text-tertiary, #666);
+  word-break: break-all;
 }
 </style>
 
