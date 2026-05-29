@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed, nextTick, markRaw, onMounted } from 'vue'
+import { ref, watch, computed, nextTick, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhTrophy, PhCaretDown } from '@phosphor-icons/vue'
 import LintReceipt from './LintReceipt.vue'
@@ -15,14 +15,10 @@ import PublishConfirmModal from './PublishConfirmModal.vue'
 import WebmentionStatus from './WebmentionStatus.vue'
 import ResizeHandle from './ResizeHandle.vue'
 import { useResizable } from '../composables/useResizable'
-import { unified } from 'unified'
-import remarkParse from 'remark-parse'
-import remarkGfm from 'remark-gfm'
-import remarkRehype from 'remark-rehype'
-import rehypeRaw from 'rehype-raw'
-import rehypeStringify from 'rehype-stringify'
-import { remarkMermaid } from '../utils/remarkMermaid'
-import { remarkObsidianWikilinks } from '../utils/remarkObsidianWikilinks'
+// Markdown processing now lives in src/workers/markdownWorker.ts — see
+// `renderWorker` / `renderMarkdownInWorker` below. The pipeline imports
+// (unified / remark-* / rehype-*) used to live here and run on the main
+// thread, which was the single biggest cause of file-switch jank.
 import { renderMermaidIn } from '../utils/mermaidRenderer'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { useLocalStorage } from '@vueuse/core'
@@ -76,10 +72,6 @@ const activeTargetDomain = computed(() => {
   return picked?.domain || ''
 })
 
-// Wrapped in `markRaw` so Vue doesn't deep-proxy the unified pipeline (which
-// is a big graph of plugin closures, AST schemas, and trie tables). Without
-// `markRaw`, every file switch pays for re-tracking thousands of nested
-// objects — measurable on long posts.
 // Tiny HTML-escape used by the render-fallback fallback below. Kept inline
 // so the file is self-contained for this hot path.
 function escapeHtml(s: string): string {
@@ -91,18 +83,44 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;')
 }
 
-const markdownProcessor = computed(() =>
-  markRaw(
-    unified()
-      .use(remarkParse)
-      .use(remarkGfm)
-      .use(remarkObsidianWikilinks, { baseUrl: activeTargetDomain.value })
-      .use(remarkMermaid)
-      .use(remarkRehype, { allowDangerousHtml: true })
-      .use(rehypeRaw)
-      .use(rehypeStringify, { allowDangerousHtml: true }),
-  ),
+// Dedicated Web Worker for markdown processing. The whole unified pipeline
+// runs off the main thread so file switching never blocks the UI — even
+// during a heavy rehypeRaw pass on a long post the click/scroll/keyboard
+// stays responsive. One worker for the lifetime of the component;
+// requests are tagged with a monotonic id and the main thread throws away
+// any response whose id doesn't match the currently-active request.
+const renderWorker = new Worker(
+  new URL('../workers/markdownWorker.ts', import.meta.url),
+  { type: 'module' },
 )
+let nextRenderId = 0
+let activeRenderId = -1
+const pendingRenders = new Map<
+  number,
+  { resolve: (html: string) => void; reject: (e: Error) => void }
+>()
+
+renderWorker.addEventListener('message', (e: MessageEvent) => {
+  const { id, html, error } = e.data as { id: number; html?: string; error?: string }
+  const pending = pendingRenders.get(id)
+  if (!pending) return
+  pendingRenders.delete(id)
+  if (error) pending.reject(new Error(error))
+  else pending.resolve(html ?? '')
+})
+
+function renderMarkdownInWorker(content: string, baseUrl: string): {
+  id: number
+  promise: Promise<string>
+} {
+  const id = ++nextRenderId
+  activeRenderId = id
+  const promise = new Promise<string>((resolve, reject) => {
+    pendingRenders.set(id, { resolve, reject })
+  })
+  renderWorker.postMessage({ id, content, baseUrl })
+  return { id, promise }
+}
 
 // LRU-ish cache of rendered HTML keyed on `path|modified`. Flipping between
 // two posts (or any post you've recently viewed) becomes instant — no
@@ -543,12 +561,15 @@ async function showBacklinkMenu(link: Backlink, e: MouseEvent) {
   await menu.popup()
 }
 
-// Re-render markdown if the active publish target (and thus base URL) changes
-watch(activeTargetDomain, async () => {
+// Re-render markdown if the active publish target (and thus base URL) changes.
+// Same worker path as the file-switch flow.
+watch(activeTargetDomain, async (domain) => {
   if (!content.value) return
   try {
-    const result = await markdownProcessor.value.process(content.value)
-    renderedContent.value = String(result)
+    const { id: renderId, promise } = renderMarkdownInWorker(content.value, domain)
+    const html = await promise
+    if (renderId !== activeRenderId) return
+    renderedContent.value = html
     nextTick(() => renderMermaidIn(document))
   } catch {
     /* leave stale render */
@@ -578,9 +599,13 @@ async function loadFileContent(file: MarkdownFile | null) {
       console.log(`[perf] file-switch ${phase} ${ms}ms · ${switchName}`)
     }
 
-    // Reset refs synchronously so the next paint shows a clean slate
-    // before any IPC round-trips return. Without this you briefly see
-    // the OLD post's analytics / backlinks under the NEW post's metadata.
+    // Reset *metadata* refs synchronously so the next paint shows a clean
+    // slate (without this you briefly see OLD analytics / backlinks under
+    // NEW metadata). BUT: leave `renderedContent` and `content` alone —
+    // we want the previous post's body visible until the new one is
+    // actually ready, like Mail / Notes do. Blanking on click made every
+    // switch feel like a multi-second load even when the underlying work
+    // was sub-100ms.
     justPublished.value = null
     backlinks.value = []
     localMedia.value = []
@@ -588,8 +613,6 @@ async function loadFileContent(file: MarkdownFile | null) {
     pageviewSeries.value = []
     showMediaFixer.value = false
     webmentionReport.value = null
-    content.value = ''
-    renderedContent.value = ''
     renderError.value = null
     loadingBacklinks.value = true
     loadingLocalMedia.value = true
@@ -662,9 +685,15 @@ async function loadFileContent(file: MarkdownFile | null) {
           if (file.path !== props.file.path) return
           try {
             const markdownT0 = performance.now()
-            const result = await markdownProcessor.value.process(stripped)
-            if (file.path !== props.file.path) return
-            const rendered = String(result)
+            const { id: renderId, promise } = renderMarkdownInWorker(
+              stripped,
+              activeTargetDomain.value,
+            )
+            const rendered = await promise
+            // Stale-render guard: if the user clicked another file mid-
+            // worker, throw away this response. activeRenderId tracks
+            // the latest request — earlier ones are dead by definition.
+            if (file.path !== props.file.path || renderId !== activeRenderId) return
             // Guard: never cache an empty render — that's how the pane
             // started returning empty on every subsequent visit. Show the
             // raw content as a fallback so the user gets *something*
