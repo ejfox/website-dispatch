@@ -558,6 +558,11 @@ watch(activeTargetDomain, async () => {
 watch(
   () => props.file,
   async (file) => {
+    // Hard breadcrumb: prove the watcher fires on mount + on file change.
+    // Without this, a blank preview pane is ambiguous between "watcher
+    // never fired" (mount/HMR bug) and "watcher fired but rendered empty"
+    // (pipeline bug). Now every file switch logs its trigger.
+    console.log('[render] watcher fired for', file?.path ?? '<no file>')
     if (!file) return
 
     // ── Perf instrumentation ──────────────────────────────────────────
