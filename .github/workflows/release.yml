@@ -29,6 +29,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fail fast with a clear message if any required secret is missing —
+      # previous releases (v0.5.3, v0.6.0, v0.7.0 first try) all died
+      # inside tauri-action with a vague "failed to import keychain
+      # certificate" message that hid the real issue.
+      - name: Verify required secrets are set
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          [ -z "$TAURI_SIGNING_PRIVATE_KEY" ] && missing+=("TAURI_SIGNING_PRIVATE_KEY")
+          [ -z "$APPLE_SIGNING_IDENTITY" ]    && missing+=("APPLE_SIGNING_IDENTITY")
+          [ -z "$APPLE_CERTIFICATE" ]         && missing+=("APPLE_CERTIFICATE")
+          [ -z "$APPLE_CERTIFICATE_PASSWORD" ] && missing+=("APPLE_CERTIFICATE_PASSWORD")
+          [ -z "$APPLE_ID" ]                  && missing+=("APPLE_ID")
+          [ -z "$APPLE_PASSWORD" ]            && missing+=("APPLE_PASSWORD")
+          [ -z "$APPLE_TEAM_ID" ]             && missing+=("APPLE_TEAM_ID")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required secrets: ${missing[*]}"
+            echo "Set them in: Settings → Secrets and variables → Actions"
+            echo "Setup guide: docs/RELEASE_SETUP.md"
+            exit 1
+          fi
+          # Quick sanity-check that the cert is valid base64 (catches
+          # paste-copy mistakes before we burn 5+ minutes on a build).
+          if ! echo "$APPLE_CERTIFICATE" | base64 -d > /dev/null 2>&1; then
+            echo "::error::APPLE_CERTIFICATE is not valid base64."
+            echo "Re-export the .p12 and run: base64 -i cert.p12 | pbcopy"
+            exit 1
+          fi
+          echo "All secrets present and APPLE_CERTIFICATE decodes cleanly."
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -43,6 +80,17 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Apple's canonical cert-import action — creates + unlocks a
+      # temporary keychain, imports the .p12, sets it as the default.
+      # Replaces tauri-action's built-in cert import which was the source
+      # of the cryptic "failed to import keychain certificate" errors
+      # across the last three release attempts.
+      - name: Import Apple Developer ID certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
       - run: npm ci
 
       - name: Build, sign, notarize, and upload
@@ -52,10 +100,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-          # Apple code signing + notarization
+          # Code signing — cert is already in the keychain at this point.
+          # We only need to tell tauri WHICH identity to use.
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+          # Notarization (post-build Apple-server check)
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
