@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.7.0 — 2026-05-28
+
+Native macOS polish pass + the long-overdue fix for the blank-preview bug.
+
+### Added — Native macOS feel
+- **Dock right-click menu.** Real native NSMenu with New Post, Open Search,
+  Show Dispatch, and the 8 most-recent files. Implemented by injecting
+  `applicationDockMenu:` into NSApp's existing delegate at runtime via
+  `objc_sys::class_addMethod` (Tauri 2.10 / muda / tao don't expose it).
+- **Proxy icon + dirty dot.** Selected file's icon now sits next to the
+  titlebar — Cmd-click the title for the path stack like Finder/Mail.
+  Black dot in the close button when the selected post is modified since
+  publish (mapped to the Republish state). Wired via `objc2` directly
+  against `NSWindow.setRepresentedFilename:` and `setDocumentEdited:`.
+- **Publish notification.** Native Notification Center banner on every
+  publish/republish — works while Dispatch is in the background.
+- **Sheet-style modal animation.** Settings and Publish Confirm modals
+  slide down from the titlebar instead of fading in the center, mirroring
+  NSWindowSheet feel.
+- **Window menu** properly tagged via `set_as_windows_menu_for_nsapp` so
+  AppKit auto-appends the open-window list. Added Zoom. Help menu wired
+  via `set_as_help_menu_for_nsapp` for the system Help search.
+
+### Changed
+- **"Crowned" renamed to "Convert to Vue Page".** Same feature (scaffold
+  a custom Vue page at `pages/blog/{slug}.vue` to take over the standard
+  blog template), but now described in plain language with `PhFileCode`
+  instead of the trophy.
+
+### Fixed
+- **Preview pane no longer silently blanks.** Root cause was
+  `watch(..., {immediate: true})` failing to fire on certain mount/HMR
+  sequences. Now explicit `onMounted` + `watch` belt-and-suspenders.
+  Both error paths surface a soft warning card with the stage + message
+  + path; the render cache no longer poisons itself with empty results;
+  raw-text fallback shown when the pipeline produces nothing.
+- **Publish CTA no longer clips.** `ActionToolbar` now sticks to the
+  bottom of the meta-stack scroll viewport, so the publish button is
+  always visible regardless of how tight you've sized the meta area.
+- **Standalone Preview window resolves vault images.** Added a
+  `/vault-image/*` route to the preview server that searches the vault
+  (same-dir → `attachments`/`_attachments`/`assets` → recursive walk)
+  and serves any image referenced by bare filename. `<base>` tag in the
+  HTML routes relative `<img src>`s through it.
+
+### Performance — file switching feels instant
+- **Markdown processing moved into a Web Worker.** The entire `unified`
+  pipeline runs off the main thread; clicks/scroll/keyboard stay
+  responsive even during heavy `rehypeRaw` passes on long posts. Each
+  request is tagged with a monotonic id so stale responses are dropped
+  when you click rapidly.
+- **Stop blanking content on switch.** Previous post's body stays
+  visible until the new render lands, like Mail and Notes. Eliminates
+  the blank → skeleton → fade-in cascade that made every switch feel
+  multi-second even with sub-100ms work underneath.
+- **Vue `<Transition mode="out-in">` dropped** + duration cut from
+  160ms to 100ms. Saved ~440ms of mandatory visual delay per switch.
+- **4-second Umami timeout.** `reqwest::Client::new()` had no default
+  timeout, so a slow analytics endpoint could wedge a tokio worker for
+  many seconds per published-post switch. Capped at 4s.
+- **Secondary IPCs deferred** behind `requestIdleCallback` — backlinks,
+  local-media detection, analytics, and pageview series no longer
+  compete with the main content render.
+
 ## 0.6.0 — 2026-05-19
 
 Three magical features riffing on Quartz / MarsEdit, plus polish.
