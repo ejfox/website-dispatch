@@ -401,10 +401,13 @@ fn create_new_post(title: String) -> Result<String, String> {
     Ok(file_path)
 }
 
-// --- CROWN POST COMMANDS ---
+// --- VUE PAGE CONVERSION COMMANDS ---
+// "Crown" was the old, opaque name for this. Convert a post into a custom
+// Vue page that takes over the standard blog template — useful for posts
+// that need page-specific JS / typography / dataviz beyond markdown.
 
 #[tauri::command]
-fn is_post_crowned(slug: String) -> Result<bool, String> {
+fn is_vue_page(slug: String) -> Result<bool, String> {
     let app_config = config::get()?;
     let target = app_config
         .publish_targets
@@ -415,7 +418,7 @@ fn is_post_crowned(slug: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn crown_post(slug: String, hue: u32) -> Result<String, String> {
+fn convert_to_vue_page(slug: String, hue: u32) -> Result<String, String> {
     let app_config = config::get()?;
     let target = app_config
         .publish_targets
@@ -425,7 +428,7 @@ fn crown_post(slug: String, hue: u32) -> Result<String, String> {
     let vue_path = format!("{}/pages/blog/{}.vue", target.repo_path, slug);
 
     if std::path::Path::new(&vue_path).exists() {
-        return Err(format!("Already crowned: {}", vue_path));
+        return Err(format!("Already a Vue page: {}", vue_path));
     }
 
     // Derive names from slug
@@ -1154,8 +1157,8 @@ pub fn run() {
             validate_vault_path,
             validate_repo_path,
             create_new_post,
-            crown_post,
-            is_post_crowned,
+            convert_to_vue_page,
+            is_vue_page,
             generate_alt_text,
             apply_alt_text,
             syndicate_post,

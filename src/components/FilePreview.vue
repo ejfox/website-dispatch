@@ -851,14 +851,14 @@ const visibilityLabel = computed(() => {
   return null
 })
 
-// Post actions composable (crown, webmentions, unpublish)
+// Post actions composable (Vue-page conversion, webmentions, unpublish)
 const {
   sendingWebmentions,
   webmentionReport,
-  isCrowned,
-  crowning,
+  isVuePage,
+  converting,
   unpublishing,
-  crownPost,
+  convertToVuePage,
   triggerWebmentions,
   autoTriggerOnPublish,
   unpublish,
@@ -1240,8 +1240,8 @@ async function openPreview() {
         :selected-target-id="selectedTargetId"
         :is-live="isLive"
         :live-url="liveUrl"
-        :is-crowned="isCrowned"
-        :crowning="crowning"
+        :is-vue-page="isVuePage"
+        :converting="converting"
         :unpublishing="unpublishing"
         :publishing="publishing"
         :is-safe="file.is_safe"
@@ -1252,7 +1252,7 @@ async function openPreview() {
         @open-preview="openPreview"
         @select-target="selectTarget"
         @show-syndication="showSyndicationWizard = true"
-        @crown-post="crownPost"
+        @convert-to-vue-page="convertToVuePage"
         @unpublish="unpublish"
         @open-publish-confirm="openPublishConfirm"
         @publish-unlisted="publishUnlisted"

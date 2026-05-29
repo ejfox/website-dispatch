@@ -7,7 +7,7 @@ import {
   PhArrowsClockwise,
   PhArrowSquareUpRight,
   PhTrash,
-  PhTrophy,
+  PhFileCode,
   PhClock,
   PhEyeSlash,
 } from '@phosphor-icons/vue'
@@ -20,8 +20,8 @@ defineProps<{
   selectedTargetId: string | null
   isLive: boolean
   liveUrl: string | null
-  isCrowned: boolean
-  crowning: boolean
+  isVuePage: boolean
+  converting: boolean
   unpublishing: boolean
   publishing: boolean
   isSafe: boolean
@@ -36,7 +36,7 @@ defineEmits<{
   'select-target': [id: string]
   'view-live': []
   'show-syndication': []
-  'crown-post': []
+  'convert-to-vue-page': []
   unpublish: []
   'open-publish-confirm': [isRepublish: boolean]
   'publish-unlisted': []
@@ -83,18 +83,18 @@ defineEmits<{
           Syndicate
         </button>
         <button
-          v-if="!isCrowned"
-          @click="$emit('crown-post')"
-          :disabled="crowning"
-          class="btn crown-btn"
-          data-tip="Create interactive Vue page takeover"
+          v-if="!isVuePage"
+          @click="$emit('convert-to-vue-page')"
+          :disabled="converting"
+          class="btn vue-page-btn"
+          data-tip="Convert this post to a custom Vue page (takes over the standard blog template)"
         >
-          <PhTrophy :size="12" weight="bold" />
-          {{ crowning ? 'Crowning...' : 'Crown' }}
+          <PhFileCode :size="12" weight="bold" />
+          {{ converting ? 'Converting...' : 'Convert to Vue Page' }}
         </button>
-        <span v-else class="crowned-badge" data-tip="This post has a Vue page takeover">
-          <PhTrophy :size="10" weight="fill" />
-          Crowned
+        <span v-else class="vue-page-badge" data-tip="This post is a custom Vue page">
+          <PhFileCode :size="10" weight="fill" />
+          Vue Page
         </span>
         <button @click="$emit('unpublish')" :disabled="unpublishing" class="btn">
           <PhTrash :size="12" weight="bold" />
@@ -288,17 +288,17 @@ defineEmits<{
   opacity: 0.8;
 }
 
-/* Crown button */
-.crown-btn {
+/* Vue Page conversion button */
+.vue-page-btn {
   background: rgba(245, 158, 11, 0.15) !important;
   color: var(--warning) !important;
   border: 1px solid rgba(245, 158, 11, 0.2) !important;
 }
-.crown-btn:hover:not(:disabled) {
+.vue-page-btn:hover:not(:disabled) {
   background: rgba(245, 158, 11, 0.25) !important;
 }
 
-.crowned-badge {
+.vue-page-badge {
   display: inline-flex;
   align-items: center;
   gap: 3px;

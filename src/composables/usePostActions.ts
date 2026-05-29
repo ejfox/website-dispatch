@@ -12,39 +12,45 @@ export function usePostActions(options: {
 }) {
   const sendingWebmentions = ref(false)
   const webmentionReport = ref<WebmentionReport | null>(null)
-  const isCrowned = ref(false)
-  const crowning = ref(false)
-  const crownHue = ref(220)
+  const isVuePage = ref(false)
+  const converting = ref(false)
+  const vuePageHue = ref(220)
   const unpublishing = ref(false)
 
-  // Check crown status when slug changes
+  // Check Vue-page status when slug changes
   watch(
     options.slug,
     async (s) => {
       if (!s) {
-        isCrowned.value = false
+        isVuePage.value = false
         return
       }
       try {
-        isCrowned.value = await invoke<boolean>('is_post_crowned', { slug: s })
+        isVuePage.value = await invoke<boolean>('is_vue_page', { slug: s })
       } catch {
-        isCrowned.value = false
+        isVuePage.value = false
       }
     },
     { immediate: true },
   )
 
-  async function crownPost() {
-    if (!options.slug.value || crowning.value) return
-    crowning.value = true
+  async function convertToVuePage() {
+    if (!options.slug.value || converting.value) return
+    converting.value = true
     try {
-      const path = await invoke<string>('crown_post', { slug: options.slug.value, hue: crownHue.value })
-      isCrowned.value = true
-      options.showSuccessToast(`Crowned! Edit ${path.split('/').slice(-3).join('/')}`, 5000)
+      const path = await invoke<string>('convert_to_vue_page', {
+        slug: options.slug.value,
+        hue: vuePageHue.value,
+      })
+      isVuePage.value = true
+      options.showSuccessToast(
+        `Converted to Vue page — edit ${path.split('/').slice(-3).join('/')}`,
+        5000,
+      )
     } catch (e) {
-      alert(`Crown failed: ${e}`)
+      alert(`Convert to Vue page failed: ${e}`)
     }
-    crowning.value = false
+    converting.value = false
   }
 
   /** URL keyed cache so we don't auto-send twice for the same publish.
@@ -113,11 +119,11 @@ export function usePostActions(options: {
   return {
     sendingWebmentions,
     webmentionReport,
-    isCrowned,
-    crowning,
-    crownHue,
+    isVuePage,
+    converting,
+    vuePageHue,
     unpublishing,
-    crownPost,
+    convertToVuePage,
     triggerWebmentions,
     autoTriggerOnPublish,
     unpublish,
