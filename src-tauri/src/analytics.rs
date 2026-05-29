@@ -61,7 +61,7 @@ async fn get_auth_token(config: &UmamiConfig) -> Result<String, String> {
     }
 
     // Fetch new token
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(4)).build().map_err(|e| e.to_string())?;
     let response = client
         .post(format!("{}/api/auth/login", config.url))
         .json(&serde_json::json!({
@@ -130,7 +130,7 @@ pub async fn get_post_stats(published_url: &str, days: u32) -> Result<PostStats,
         Err(e) => return Err(e),
     };
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(4)).build().map_err(|e| e.to_string())?;
     let url = format!(
         "{}/api/websites/{}/stats?startAt={}&endAt={}&url={}",
         config.url,
@@ -184,7 +184,7 @@ pub async fn get_post_pageview_series(
 
     let token = get_auth_token(&config).await?;
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(4)).build().map_err(|e| e.to_string())?;
     let url = format!(
         "{}/api/websites/{}/pageviews?startAt={}&endAt={}&unit=day&timezone=UTC&url={}",
         config.url,
@@ -239,7 +239,7 @@ pub async fn get_site_stats(days: u32) -> Result<PostStats, String> {
 
     let token = get_auth_token(&config).await?;
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(4)).build().map_err(|e| e.to_string())?;
     let url = format!(
         "{}/api/websites/{}/stats?startAt={}&endAt={}",
         config.url, config.website_id, start_ms, end_ms
@@ -277,7 +277,7 @@ pub async fn get_top_posts(days: u32, limit: usize) -> Result<Vec<TopPost>, Stri
 
     let token = get_auth_token(&config).await?;
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(4)).build().map_err(|e| e.to_string())?;
     let url = format!(
         "{}/api/websites/{}/metrics?startAt={}&endAt={}&type=url",
         config.url, config.website_id, start_ms, end_ms

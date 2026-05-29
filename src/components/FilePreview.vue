@@ -725,46 +725,64 @@ async function loadFileContent(file: MarkdownFile | null) {
         })
     }
 
-    invoke('get_backlinks', { filename: file.filename })
-      .then((res) => {
-        if (file.path !== props.file.path) return
-        backlinks.value = res as Backlink[]
-      })
-      .catch((e) => console.log('Backlinks unavailable:', e))
-      .finally(() => {
-        if (file.path === props.file.path) loadingBacklinks.value = false
-      })
-
-    invoke('get_local_media', { path: file.path })
-      .then((res) => {
-        if (file.path !== props.file.path) return
-        localMedia.value = res as LocalMediaRef[]
-      })
-      .catch((e) => console.log('Local media detection unavailable:', e))
-      .finally(() => {
-        if (file.path === props.file.path) loadingLocalMedia.value = false
-      })
-
-    if (file.published_url) {
-      invoke('get_post_analytics', { url: file.published_url, days: 30 })
+    // Non-critical IPCs (backlinks, local-media detection, analytics,
+    // pageview series) used to fire in parallel with the content load.
+    // Even though they ran async, they competed for the IPC channel and —
+    // when Umami was slow or unreachable — held tokio workers for many
+    // seconds. Defer them behind a microtask + requestIdleCallback so the
+    // content render lands first and the user sees the post immediately.
+    // Each one still bails early via the stale-file guard if the user
+    // clicked away.
+    const fireSecondary = () => {
+      invoke('get_backlinks', { filename: file.filename })
         .then((res) => {
           if (file.path !== props.file.path) return
-          postStats.value = res as PostAnalytics
+          backlinks.value = res as Backlink[]
         })
-        .catch(() => {
-          if (file.path === props.file.path) postStats.value = null
-        })
+        .catch((e) => console.log('Backlinks unavailable:', e))
         .finally(() => {
-          if (file.path === props.file.path) loadingStats.value = false
+          if (file.path === props.file.path) loadingBacklinks.value = false
         })
-      invoke('get_post_pageview_series', { url: file.published_url, days: 30 })
+
+      invoke('get_local_media', { path: file.path })
         .then((res) => {
           if (file.path !== props.file.path) return
-          pageviewSeries.value = (res as number[]) || []
+          localMedia.value = res as LocalMediaRef[]
         })
-        .catch(() => {
-          if (file.path === props.file.path) pageviewSeries.value = []
+        .catch((e) => console.log('Local media detection unavailable:', e))
+        .finally(() => {
+          if (file.path === props.file.path) loadingLocalMedia.value = false
         })
+
+      if (file.published_url) {
+        invoke('get_post_analytics', { url: file.published_url, days: 30 })
+          .then((res) => {
+            if (file.path !== props.file.path) return
+            postStats.value = res as PostAnalytics
+          })
+          .catch(() => {
+            if (file.path === props.file.path) postStats.value = null
+          })
+          .finally(() => {
+            if (file.path === props.file.path) loadingStats.value = false
+          })
+        invoke('get_post_pageview_series', { url: file.published_url, days: 30 })
+          .then((res) => {
+            if (file.path !== props.file.path) return
+            pageviewSeries.value = (res as number[]) || []
+          })
+          .catch(() => {
+            if (file.path === props.file.path) pageviewSeries.value = []
+          })
+      }
+    }
+    // requestIdleCallback isn't available on all webviews — fall back to
+    // setTimeout with a short delay if missing. Either way: content
+    // renders FIRST, secondaries kick in once the main thread breathes.
+    if (typeof (window as any).requestIdleCallback === 'function') {
+      ;(window as any).requestIdleCallback(fireSecondary, { timeout: 500 })
+    } else {
+      setTimeout(fireSecondary, 50)
     }
 }
 
@@ -1336,7 +1354,7 @@ async function openPreview() {
         <div class="render-error-path">{{ file.path }}</div>
       </div>
 
-      <Transition name="preview-fade" mode="out-in">
+      <Transition name="preview-fade">
         <div
           v-if="renderedContent"
           key="content"
@@ -2047,12 +2065,14 @@ async function openPreview() {
   }
 }
 
-/* Vue cross-fade between skeleton and rendered content. `mode="out-in"`
-   means the leaving element finishes before the entering one starts —
-   no visual overlap. */
+/* Concurrent cross-fade (no mode="out-in" — the leaving element fading
+ * before the entering element could even start was costing ~320ms of
+ * mandatory delay on every file switch, even with sub-50ms content
+ * processing. Now they overlap. Shorter duration too — 100ms feels
+ * snappier without losing the visual cue. */
 .preview-fade-enter-active,
 .preview-fade-leave-active {
-  transition: opacity 0.16s ease;
+  transition: opacity 0.10s ease;
 }
 .preview-fade-enter-from,
 .preview-fade-leave-to {
