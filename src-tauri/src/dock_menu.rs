@@ -197,13 +197,17 @@ mod imp {
                 *const objc_selector,
                 *mut AnyObject,
             ) -> *mut AnyObject = application_dock_menu;
+            // `objc_sys::BOOL` is `bool` on aarch64-apple-darwin but `i8` on
+            // x86_64-apple-darwin — the universal build needs both arches to
+            // compile. Compare against the platform-correct truth constant
+            // (`objc_sys::YES`) so we don't lock to either type.
             let added = class_addMethod(
                 class_ptr,
                 sel!(applicationDockMenu:).as_ptr(),
                 Some(std::mem::transmute::<_, unsafe extern "C" fn()>(imp_dock)),
                 b"@@:@\0".as_ptr() as *const c_char,
             );
-            if !added {
+            if added != objc_sys::YES {
                 eprintln!(
                     "[dock_menu] applicationDockMenu: already present on delegate \
                     (later Tauri may add it). Skipping override."
