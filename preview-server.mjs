@@ -18,6 +18,90 @@ let currentFile = ''
 let fileWatcher = null
 let lastMtime = 0
 
+// MIME map for the vault-image route. Just the formats Obsidian writes into
+// the vault — we don't need full /etc/mime.types here.
+const IMAGE_MIME = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.avif': 'image/avif',
+  '.heic': 'image/heic',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+}
+
+// Walk up from the currently-previewed file to find the vault root.
+// "Vault root" = the highest ancestor whose path still contains "Obsidian"
+// or is the user-typed vault dir. Falls back to the immediate directory.
+function vaultRootFor(filePath) {
+  if (!filePath) return null
+  let dir = path.dirname(filePath)
+  let root = dir
+  // Walk up until we hit "Obsidian" boundary or repo-root markers.
+  while (dir !== '/' && dir !== path.dirname(dir)) {
+    const parent = path.dirname(dir)
+    if (
+      parent.includes('iCloud~md~obsidian') ||
+      parent.endsWith('Documents') ||
+      parent === '/'
+    ) {
+      root = dir
+      break
+    }
+    dir = parent
+    root = dir
+  }
+  return root
+}
+
+// Best-effort vault image lookup. Tries:
+//   1. Same directory as the current markdown file
+//   2. Same directory's `attachments/` / `_attachments/` / `assets/`
+//   3. Vault-root recursive find (capped depth so we don't blow the loop
+//      on giant vaults)
+async function findVaultImage(filename) {
+  if (!currentFile) return null
+  const sameDir = path.join(path.dirname(currentFile), filename)
+  try {
+    await fs.access(sameDir)
+    return sameDir
+  } catch {}
+  for (const sub of ['attachments', '_attachments', 'assets']) {
+    const p = path.join(path.dirname(currentFile), sub, filename)
+    try {
+      await fs.access(p)
+      return p
+    } catch {}
+  }
+  // Recursive (depth-limited) search from vault root
+  const root = vaultRootFor(currentFile)
+  if (!root) return null
+  async function walk(dir, depth) {
+    if (depth <= 0) return null
+    let entries
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true })
+    } catch {
+      return null
+    }
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue
+      const full = path.join(dir, e.name)
+      if (e.isFile() && e.name === filename) return full
+      if (e.isDirectory()) {
+        const hit = await walk(full, depth - 1)
+        if (hit) return hit
+      }
+    }
+    return null
+  }
+  return walk(root, 5)
+}
+
 // Spawn a child process in website2 using the lightweight converter
 async function processWithWebsite2(filePath) {
   return new Promise((resolve, reject) => {
@@ -66,6 +150,8 @@ const HTML = `<!DOCTYPE html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dispatch Preview</title>
+  <!-- Route bare-filename img/video srcs through the vault-image lookup. -->
+  <base href="/vault-image/">
   <script src="https://cdn.tailwindcss.com"></script>
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'
@@ -408,6 +494,37 @@ const server = createServer(async (req, res) => {
         res.end(JSON.stringify({ error: e.message }))
       }
     })
+    return
+  }
+
+  // Vault image route. Serves any image/video referenced by bare filename
+  // (the typical Obsidian pattern). 404 on miss so the broken-image icon
+  // is honest rather than confusing.
+  if (url.pathname.startsWith('/vault-image/') && req.method === 'GET') {
+    const filename = decodeURIComponent(url.pathname.slice('/vault-image/'.length))
+    if (!filename || filename.includes('..')) {
+      res.writeHead(400)
+      res.end('bad path')
+      return
+    }
+    try {
+      const resolved = await findVaultImage(filename)
+      if (!resolved) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' })
+        res.end(`Not found in vault: ${filename}`)
+        return
+      }
+      const buf = await fs.readFile(resolved)
+      const ext = path.extname(resolved).toLowerCase()
+      res.writeHead(200, {
+        'Content-Type': IMAGE_MIME[ext] || 'application/octet-stream',
+        'Cache-Control': 'public, max-age=300',
+      })
+      res.end(buf)
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' })
+      res.end(`Error reading vault image: ${e.message}`)
+    }
     return
   }
 
