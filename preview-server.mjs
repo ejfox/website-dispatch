@@ -102,11 +102,38 @@ async function findVaultImage(filename) {
   return walk(root, 5)
 }
 
+// Locate the preview-convert wrapper. The website2 repo has reorganized its
+// scripts/ dir over time (e.g. the chore/scripts-cleanup branch moved it into
+// scripts/author/), so probe the known locations instead of hardcoding one.
+// A wrong path means every preview spawn dies with MODULE_NOT_FOUND and the
+// UI spins on skeleton loaders forever.
+const CONVERT_SCRIPT_CANDIDATES = [
+  'scripts/author/preview-convert.mjs',
+  'scripts/preview-convert.mjs'
+]
+let cachedConvertScript = null
+async function resolveConvertScript() {
+  if (cachedConvertScript) return cachedConvertScript
+  for (const rel of CONVERT_SCRIPT_CANDIDATES) {
+    try {
+      await fs.access(path.join(WEBSITE2_PATH, rel))
+      cachedConvertScript = rel
+      return rel
+    } catch {
+      // try next candidate
+    }
+  }
+  throw new Error(
+    `preview-convert.mjs not found in ${WEBSITE2_PATH} (looked in: ${CONVERT_SCRIPT_CANDIDATES.join(', ')})`
+  )
+}
+
 // Spawn a child process in website2 using the lightweight converter
 async function processWithWebsite2(filePath) {
+  const convertScript = await resolveConvertScript()
   return new Promise((resolve, reject) => {
     // Use the preview-convert.mjs wrapper script
-    const child = spawn('node', ['scripts/preview-convert.mjs', filePath], {
+    const child = spawn('node', [convertScript, filePath], {
       cwd: WEBSITE2_PATH,
       env: { ...process.env, NODE_NO_WARNINGS: '1' }
     })

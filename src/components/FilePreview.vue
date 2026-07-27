@@ -109,6 +109,32 @@ renderWorker.addEventListener('message', (e: MessageEvent) => {
   else pending.resolve(html ?? '')
 })
 
+// If the worker itself fails — a module-load error (a bad import, an
+// unsupported feature in the webview) or a serialization failure — it emits
+// an `error`/`messageerror` event, NOT a per-request message. Without these
+// handlers the render promise never settles: the preview pane spins on its
+// skeleton forever and the shimmer animation quietly burns CPU. Reject every
+// in-flight render so the caller falls back to raw content and surfaces the
+// real reason instead of hanging.
+function failAllPending(reason: string) {
+  const err = new Error(reason)
+  for (const [, pending] of pendingRenders) pending.reject(err)
+  pendingRenders.clear()
+}
+renderWorker.addEventListener('error', (e: ErrorEvent) => {
+  console.error('[render] markdown worker crashed', e.message || e)
+  failAllPending(`markdown worker error: ${e.message || 'worker failed to load'}`)
+})
+renderWorker.addEventListener('messageerror', () => {
+  console.error('[render] markdown worker messageerror (uncloneable payload)')
+  failAllPending('markdown worker messageerror')
+})
+
+// Hard ceiling on a single render. The pipeline processes a long post in
+// well under a second, so anything past this means the worker is wedged or
+// its response was lost — reject rather than leave the skeleton up forever.
+const RENDER_TIMEOUT_MS = 10000
+
 function renderMarkdownInWorker(content: string, baseUrl: string): {
   id: number
   promise: Promise<string>
@@ -116,10 +142,64 @@ function renderMarkdownInWorker(content: string, baseUrl: string): {
   const id = ++nextRenderId
   activeRenderId = id
   const promise = new Promise<string>((resolve, reject) => {
-    pendingRenders.set(id, { resolve, reject })
+    const timer = window.setTimeout(() => {
+      if (pendingRenders.delete(id)) {
+        reject(
+          new Error(
+            `markdown render timed out after ${RENDER_TIMEOUT_MS}ms — worker unresponsive`,
+          ),
+        )
+      }
+    }, RENDER_TIMEOUT_MS)
+    pendingRenders.set(id, {
+      resolve: (html) => {
+        window.clearTimeout(timer)
+        resolve(html)
+      },
+      reject: (e) => {
+        window.clearTimeout(timer)
+        reject(e)
+      },
+    })
   })
   renderWorker.postMessage({ id, content, baseUrl })
   return { id, promise }
+}
+
+// Fallback renderer. The client-side worker can fail outright in the desktop
+// webview — a module worker has no `document`, and some pipeline deps touch
+// it, so the worker throws `Can't find variable: document` and renders
+// nothing. The preview server renders the SAME file through website2's real
+// pipeline and is already primed by the /set-file POST in loadFileContent,
+// so poll its /content until this file's render lands. Returns null on
+// timeout so the caller can fall back to raw text.
+async function fetchServerRenderedHtml(
+  filePath: string,
+  timeoutMs = 8000,
+): Promise<string | null> {
+  const deadline = performance.now() + timeoutMs
+  const wantBase = filePath.split('/').pop() || ''
+  while (performance.now() < deadline) {
+    try {
+      const res = await fetch('http://127.0.0.1:6419/content')
+      const data = (await res.json()) as {
+        html?: string
+        filename?: string
+        processing?: boolean
+      }
+      if (
+        data.html &&
+        data.html.trim() &&
+        (!data.filename || data.filename === wantBase)
+      ) {
+        return data.html
+      }
+    } catch {
+      // server not up yet / transient — keep polling
+    }
+    await new Promise((r) => setTimeout(r, 150))
+  }
+  return null
 }
 
 // LRU-ish cache of rendered HTML keyed on `path|modified`. Flipping between
@@ -727,15 +807,31 @@ async function loadFileContent(file: MarkdownFile | null) {
           } catch (err) {
             if (file.path !== props.file.path) return
             console.error('[render] markdown processor threw', err, 'on', file.path)
-            // Show the raw content with the error so the user can still
-            // see what they wrote AND know what went wrong.
-            renderedContent.value =
-              `<pre class="render-fallback">${escapeHtml(stripped)}</pre>`
-            renderError.value = {
-              stage: 'process',
-              message: err instanceof Error ? err.message : String(err),
+            // The client-side worker failed. Before giving up to raw text,
+            // try the preview server (website2's real pipeline) which was
+            // already primed via /set-file above. This is the reliable path
+            // when the webview worker can't run (missing `document`, etc.).
+            const serverHtml = await fetchServerRenderedHtml(file.path)
+            if (file.path !== props.file.path) return
+            if (serverHtml && serverHtml.trim()) {
+              renderedContent.value = serverHtml
+              const skeleton = parseSkeleton(stripped)
+              cacheRender(cacheKey, { stripped, rendered: serverHtml, skeleton })
+              cacheSkeleton(file.path, skeleton)
+              renderError.value = null
+              endPreviewLoad()
+              nextTick(() => renderMermaidIn(document))
+            } else {
+              // Last resort: show the raw content plus the error so the user
+              // can still see what they wrote AND know what went wrong.
+              renderedContent.value =
+                `<pre class="render-fallback">${escapeHtml(stripped)}</pre>`
+              renderError.value = {
+                stage: 'process',
+                message: err instanceof Error ? err.message : String(err),
+              }
+              endPreviewLoad()
             }
-            endPreviewLoad()
           }
           await fetchAvailableTags()
           if (file.path !== props.file.path) return
