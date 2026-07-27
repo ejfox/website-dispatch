@@ -121,9 +121,15 @@ function failAllPending(reason: string) {
   for (const [, pending] of pendingRenders) pending.reject(err)
   pendingRenders.clear()
 }
+let workerDead = false
 renderWorker.addEventListener('error', (e: ErrorEvent) => {
-  console.error('[render] markdown worker crashed', e.message || e)
-  failAllPending(`markdown worker error: ${e.message || 'worker failed to load'}`)
+  workerDead = true
+  // Include WHERE it died — a module-load ReferenceError in a bundled dep
+  // (e.g. a `browser` build touching `document` in a worker) is otherwise a
+  // needle in a haystack. filename:line points straight at the culprit chunk.
+  const where = e.filename ? ` @ ${e.filename}:${e.lineno}:${e.colno}` : ''
+  console.error(`[render] markdown worker crashed: ${e.message || 'failed to load'}${where}`)
+  failAllPending(`markdown worker error: ${e.message || 'worker failed to load'}${where}`)
 })
 renderWorker.addEventListener('messageerror', () => {
   console.error('[render] markdown worker messageerror (uncloneable payload)')
@@ -141,6 +147,12 @@ function renderMarkdownInWorker(content: string, baseUrl: string): {
 } {
   const id = ++nextRenderId
   activeRenderId = id
+  // A module-load crash kills the worker permanently — every later postMessage
+  // just goes nowhere and times out after 10s. Once we know it's dead, fail
+  // fast so we hit the server fallback immediately instead of stalling.
+  if (workerDead) {
+    return { id, promise: Promise.reject(new Error('markdown worker is dead (earlier crash)')) }
+  }
   const promise = new Promise<string>((resolve, reject) => {
     const timer = window.setTimeout(() => {
       if (pendingRenders.delete(id)) {
