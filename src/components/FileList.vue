@@ -702,6 +702,12 @@ function getAgeColor(ts: number): string {
   flex: 1;
   overflow-y: auto;
   scroll-behavior: smooth;
+  /* Column flex so rows stretch to full width — the .item buttons size to
+     content otherwise, leaving short-title rows (and their selection rect)
+     narrower than the sidebar. */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .group-header {
