@@ -14,7 +14,7 @@ import ActionToolbar from './ActionToolbar.vue'
 import PublishConfirmModal from './PublishConfirmModal.vue'
 import WebmentionStatus from './WebmentionStatus.vue'
 import ResizeHandle from './ResizeHandle.vue'
-import { useResizable } from '../composables/useResizable'
+import { useResizable } from '../composables/useUiState'
 // Markdown processing now lives in src/workers/markdownWorker.ts — see
 // `renderWorker` / `renderMarkdownInWorker` below. The pipeline imports
 // (unified / remark-* / rehype-*) used to live here and run on the main
@@ -39,10 +39,8 @@ import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { useLocalStorage } from '@vueuse/core'
 import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics } from '../types'
 import { useTagSuggestions } from '../composables/useTagSuggestions'
-import { usePublishing } from '../composables/usePublishing'
-import { usePostActions } from '../composables/usePostActions'
-import { useAppConfig } from '../composables/useAppConfig'
-import { useGitStatus } from '../composables/useGitStatus'
+import { usePublishing, usePostActions } from '../composables/usePublishFlow'
+import { useAppConfig, useGitStatus } from '../composables/useVaultData'
 
 const props = defineProps<{ file: MarkdownFile }>()
 const emit = defineEmits<{ published: []; 'jump-to-path': [path: string] }>()

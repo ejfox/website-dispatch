@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { useAppConfig } from './useAppConfig'
+import { useAppConfig } from './useVaultData'
 
 export function useTagSuggestions(options: {
   getFilePath: () => string

@@ -1,7 +1,7 @@
 import { ref, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { MarkdownFile } from '../types'
-import { useAppConfig } from './useAppConfig'
+import { useAppConfig } from './useVaultData'
 
 export function useKeyboardShortcuts(options: {
   files: Ref<MarkdownFile[]>

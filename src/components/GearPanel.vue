@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useLocalStorage } from '@vueuse/core'
 import { Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tauri-apps/api/menu'
 import ResizeHandle from './ResizeHandle.vue'
-import { useResizable } from '../composables/useResizable'
+import { useResizable } from '../composables/useUiState'
 import {
   PhBackpack,
   PhMapPin,

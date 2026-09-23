@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useToasts } from '../composables/useToasts'
+import { useToasts } from '../composables/useUiState'
 import { PhCheckCircle, PhInfo, PhWarning, PhWarningOctagon, PhX } from '@phosphor-icons/vue'
 
 const { toasts, dismiss } = useToasts()

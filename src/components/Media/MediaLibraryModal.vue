@@ -5,7 +5,7 @@ import MediaLibrarySidebar from './MediaLibrarySidebar.vue'
 import MediaLibraryGrid from './MediaLibraryGrid.vue'
 import MediaLibraryDetail from './MediaLibraryDetail.vue'
 import ResizeHandle from '../ResizeHandle.vue'
-import { useResizable } from '../../composables/useResizable'
+import { useResizable } from '../../composables/useUiState'
 
 // Resizable splits for the three panes. Widths flow to children via CSS vars
 // on the .inline-panel / .modal root (see <style>).

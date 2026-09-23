@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { useToasts } from '../composables/useToasts'
+import { useToasts } from '../composables/useUiState'
 
 const toasts = useToasts()
 import { convertFileSrc } from '@tauri-apps/api/core'

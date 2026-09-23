@@ -19,7 +19,7 @@ import {
   PhClockCounterClockwise,
 } from '@phosphor-icons/vue'
 import type { MarkdownFile } from '../types'
-import { usePaletteHistory } from '../composables/usePaletteHistory'
+import { usePaletteHistory } from '../composables/useUiState'
 
 interface Action {
   id: string
