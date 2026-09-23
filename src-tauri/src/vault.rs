@@ -66,6 +66,25 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
             let content = fs::read_to_string(path).unwrap_or_default();
             let (frontmatter, body) = parse_frontmatter(&content);
 
+            // Refine the path-derived content_type: a post with frontmatter
+            // `type: photos` (or `photo`) becomes a "photos" post so the UI can
+            // give it gallery treatment. Weeknotes keep their path-based type —
+            // the checks below depend on it and photos never live in week-notes/.
+            let content_type = if content_type == "weeknote" {
+                "weeknote"
+            } else if frontmatter
+                .get("type")
+                .map(|t| t.starts_with("photo"))
+                .unwrap_or(false)
+            {
+                "photos"
+            } else {
+                "post"
+            };
+
+            // Count body images and grab the first http one as a thumbnail.
+            let (image_count, thumbnail) = extract_images(&body);
+
             // Prefer frontmatter dates over filesystem dates
             // For week notes, derive date from filename (e.g. "2025-37.md" = week 37 of 2025)
             let filename_date = if content_type == "weeknote" {
@@ -154,6 +173,8 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 password,
                 publish_at,
                 content_type: content_type.into(),
+                image_count,
+                thumbnail,
             });
         }
     }
@@ -168,6 +189,36 @@ fn get_timestamp(time: std::io::Result<SystemTime>) -> u64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Count markdown images in a body and return the first http(s) one as a
+/// thumbnail (Cloudinary-hosted images display directly; local/embed paths are
+/// skipped for the thumbnail since they aren't resolvable in the webview).
+fn extract_images(body: &str) -> (usize, Option<String>) {
+    let mut count = 0;
+    let mut thumbnail: Option<String> = None;
+    let mut consider = |url: &str| {
+        count += 1;
+        if thumbnail.is_none() {
+            let u = url.trim();
+            if u.starts_with("http") {
+                thumbnail = Some(u.to_string());
+            }
+        }
+    };
+    // Markdown images: ![alt](url) — capture group 2 is the URL.
+    for caps in crate::patterns::MD_IMAGE_SRC.captures_iter(body) {
+        if let Some(url) = caps.get(2) {
+            consider(url.as_str());
+        }
+    }
+    // Raw HTML images: <img src="url"> — photo posts lean on these.
+    for caps in crate::patterns::HTML_IMG_SRC.captures_iter(body) {
+        if let Some(url) = caps.get(1) {
+            consider(url.as_str());
+        }
+    }
+    (count, thumbnail)
 }
 
 /// Parse a week note filename like "2025-37.md" or "2025-52-raw.md" into a timestamp

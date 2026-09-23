@@ -93,8 +93,18 @@ pub struct MarkdownFile {
     // Scheduling
     pub publish_at: Option<String>, // ISO 8601 datetime for scheduled publishing
 
-    // Content type: "post" or "weeknote"
+    // Content type: "post", "weeknote", or "photos"
     pub content_type: String,
+
+    // Photo-post extras (populated for any post, cheap to compute): how many
+    // images the body references, and the first displayable (http) one for a
+    // list thumbnail / gallery hint. Photo posts (frontmatter `type: photos`)
+    // lean on these; other posts just carry the counts. serde defaults keep any
+    // round-trip that omits them (older cached payloads) deserializable.
+    #[serde(default)]
+    pub image_count: usize,
+    #[serde(default)]
+    pub thumbnail: Option<String>,
 }
 
 // Configuration for where to find things on this computer

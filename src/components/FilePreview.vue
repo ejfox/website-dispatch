@@ -737,6 +737,30 @@ const missingAltTextCount = computed(() => {
   return match ? parseInt(match[1]) : 0
 })
 
+// ── Photo-post treatment ─────────────────────────────────────────────────
+// A post the vault marks `type: photos` (content_type set in vault.rs). These
+// get a contact-sheet gallery up top + a media/alt-text-first summary banner.
+const isPhotoPost = computed(() => props.file.content_type === 'photos')
+
+// Every image URL in the rendered body, pulled straight from the HTML we're
+// about to show — the gallery and the inline render stay in sync by construction.
+const galleryImages = computed<string[]>(() => {
+  if (!isPhotoPost.value || !renderedContent.value) return []
+  const urls: string[] = []
+  const re = /<img[^>]+src="([^"]+)"/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(renderedContent.value))) urls.push(m[1])
+  return urls
+})
+
+// Small cropped Cloudinary variant for gallery cells (keeps the grid light).
+function galleryThumb(url: string): string {
+  if (url.includes('res.cloudinary.com') && url.includes('/upload/')) {
+    return url.replace('/upload/', '/upload/w_320,h_320,c_fill,q_auto,f_auto/')
+  }
+  return url
+}
+
 // Visibility states
 const isUnlisted = computed(() => props.file.unlisted || !!props.file.password)
 const isPasswordProtected = computed(() => !!props.file.password)
@@ -934,6 +958,20 @@ async function openPreview() {
         <p v-if="titleIsDerived" class="title-hint">Title derived from filename</p>
         <p v-if="file.dek" class="dek">{{ file.dek }}</p>
       </template>
+    </div>
+
+    <!-- Photo-post summary: media + alt-text state up top, since for a photo
+         post those ARE the work. Buttons jump straight into the workflows. -->
+    <div v-if="isPhotoPost" class="photo-summary">
+      <span class="ps-count">{{ file.image_count }} photo{{ file.image_count === 1 ? '' : 's' }}</span>
+      <span v-if="missingAltTextCount > 0" class="ps-item warn">
+        {{ missingAltTextCount }} missing alt
+      </span>
+      <span v-else-if="file.image_count > 0" class="ps-item ok">alt text complete</span>
+      <span v-if="localImageCount > 0" class="ps-item local">{{ localImageCount }} to host</span>
+      <span class="ps-spacer" />
+      <button v-if="localImageCount > 0" class="ps-btn primary" @click="showMediaFixer = true">Upload</button>
+      <button v-if="missingAltTextCount > 0" class="ps-btn" @click="showAltTextReviewer = true">Describe</button>
     </div>
 
     <!-- Analytics strip — visible up top whenever the post is live. Shows
@@ -1229,6 +1267,23 @@ async function openPreview() {
         <div class="render-error-stage">{{ renderError.stage }} failed</div>
         <div class="render-error-msg">{{ renderError.message }}</div>
         <div class="render-error-path">{{ file.path }}</div>
+      </div>
+
+      <!-- Contact-sheet gallery for photo posts — the images ARE the post, so
+           lead with a grid. The full inline render stays below for captions and
+           any prose between shots. -->
+      <div v-if="isPhotoPost && galleryImages.length" class="photo-gallery">
+        <a
+          v-for="(src, gi) in galleryImages"
+          :key="gi"
+          class="gallery-cell"
+          :href="src"
+          target="_blank"
+          rel="noopener"
+          :title="`Open image ${gi + 1} of ${galleryImages.length}`"
+        >
+          <img :src="galleryThumb(src)" loading="lazy" alt="" />
+        </a>
       </div>
 
       <Transition name="preview-fade">
@@ -1622,6 +1677,79 @@ async function openPreview() {
 
 /* Media health sections (Local Media + Alt Text) — shared shell so both
    feel like steps of the same flow. */
+/* Photo-post summary banner */
+.photo-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.photo-summary .ps-count {
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.3px;
+}
+.photo-summary .ps-item {
+  padding: 1px 6px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+.photo-summary .ps-item.warn {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+.photo-summary .ps-item.ok {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.photo-summary .ps-spacer {
+  flex: 1;
+}
+.photo-summary .ps-btn {
+  padding: 2px 8px;
+  font-size: 10.5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.photo-summary .ps-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.photo-summary .ps-btn:hover {
+  filter: brightness(1.1);
+}
+
+/* Contact-sheet gallery */
+.photo-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 4px;
+  padding: 8px 16px 12px;
+}
+.photo-gallery .gallery-cell {
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+.photo-gallery .gallery-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.15s ease;
+}
+.photo-gallery .gallery-cell:hover img {
+  transform: scale(1.05);
+}
+
 .media-section {
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);

@@ -41,7 +41,17 @@ function onRowClick(file: MarkdownFile) {
   emit('select', file)
 }
 
-const filter = ref<'all' | 'published' | 'drafts' | 'scheduled'>('all')
+// Request a small, cropped variant for list thumbnails. For Cloudinary URLs we
+// inject a transform after `/upload/` so we fetch an ~80px square instead of the
+// full-resolution image; anything else is returned untouched.
+function thumbSrc(url: string): string {
+  if (url.includes('res.cloudinary.com') && url.includes('/upload/')) {
+    return url.replace('/upload/', '/upload/w_80,h_80,c_fill,q_auto,f_auto/')
+  }
+  return url
+}
+
+const filter = ref<'all' | 'published' | 'drafts' | 'scheduled' | 'photos'>('all')
 const sort = ref<'recent' | 'created' | 'title' | 'words'>('recent')
 const showWeeknotes = useLocalStorage('dispatch-show-weeknotes', true)
 
@@ -55,6 +65,8 @@ const filteredFiles = computed(() => {
     result = result.filter((f) => !f.published_url)
   } else if (filter.value === 'scheduled') {
     result = result.filter((f) => f.publish_at && !f.published_url)
+  } else if (filter.value === 'photos') {
+    result = result.filter((f) => f.content_type === 'photos')
   }
 
   // Hide weeknotes if toggled off
@@ -103,7 +115,7 @@ watch(
 )
 
 interface FilterDef {
-  key: 'all' | 'published' | 'drafts' | 'week'
+  key: 'all' | 'published' | 'drafts' | 'week' | 'photos'
   label: string
   active: boolean
   onPick: () => void
@@ -115,6 +127,15 @@ const filterDefs = computed<FilterDef[]>(() => {
     { key: 'published', label: `Live ${counts.value.published}`, active: filter.value === 'published', onPick: () => (filter.value = 'published') },
     { key: 'drafts', label: `Drafts ${counts.value.drafts}`, active: filter.value === 'drafts', onPick: () => (filter.value = 'drafts') },
   ]
+  if (counts.value.photos > 0) {
+    defs.push({
+      key: 'photos',
+      label: `PHOTO ${counts.value.photos}`,
+      active: filter.value === 'photos',
+      // Toggle: clicking the active PHOTO pill clears back to All.
+      onPick: () => (filter.value = filter.value === 'photos' ? 'all' : 'photos'),
+    })
+  }
   if (counts.value.weeknotes > 0) {
     defs.push({
       key: 'week',
@@ -156,6 +177,7 @@ const counts = computed(() => {
     drafts: base.filter((f) => !f.published_url).length,
     scheduled: base.filter((f) => f.publish_at && !f.published_url).length,
     weeknotes: props.files.filter((f) => f.content_type === 'weeknote').length,
+    photos: props.files.filter((f) => f.content_type === 'photos').length,
   }
 })
 
@@ -425,12 +447,20 @@ function getAgeColor(ts: number): string {
             selected: selected?.path === file.path,
             published: !!file.published_url,
             weeknote: file.content_type === 'weeknote',
+            photos: file.content_type === 'photos',
           }"
           :style="{ '--age': getAgeColor(file.created) }"
           @click="onRowClick(file)"
           @contextmenu="showContextMenu(file, $event)"
         >
           <div class="age-bar"></div>
+          <img
+            v-if="file.content_type === 'photos' && file.thumbnail"
+            class="row-thumb"
+            :src="thumbSrc(file.thumbnail)"
+            loading="lazy"
+            alt=""
+          />
           <div class="content">
             <div class="row">
               <!-- Leading status dot — Mail's "blue unread dot" idiom, but
@@ -444,6 +474,7 @@ function getAgeColor(ts: number): string {
                 aria-hidden="true"
               ></span>
               <span v-if="file.content_type === 'weeknote'" class="weeknote-badge">WEEK</span>
+              <span v-if="file.content_type === 'photos'" class="photo-badge">PHOTO</span>
               <span
                 v-if="file.password && !file.published_url"
                 class="protected-badge-draft"
@@ -933,6 +964,29 @@ function getAgeColor(ts: number): string {
   border-radius: 8px;
   flex-shrink: 0;
   letter-spacing: 0.5px;
+}
+
+.photo-badge {
+  font-size: 7.5px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  padding: 1px 5px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  letter-spacing: 0.5px;
+}
+
+/* List thumbnail for photo posts — small cropped square between the age-bar
+   and the text content, so photo posts are scannable in the sidebar. */
+.row-thumb {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  object-fit: cover;
+  border-radius: 4px;
+  margin: 4px 0 4px 4px;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
 }
 
 .item.weeknote .age-bar {

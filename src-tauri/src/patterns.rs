@@ -39,6 +39,18 @@ pub static MD_IMAGE: LazyLock<Regex> =
 pub static MD_IMAGE_ALT_CHECK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"!\[([^\]]*)\]\([^)]+\)").expect("valid regex"));
 
+/// Matches a markdown image and captures its URL — allows empty alt (`![](url)`),
+/// unlike MD_LINK. Group 1 = alt, Group 2 = URL (up to `)`, a space, or a title).
+/// Used to count images and pick a thumbnail for photo posts.
+pub static MD_IMAGE_SRC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"!\[([^\]]*)\]\(([^)\s]+)").expect("valid regex"));
+
+/// Matches a raw HTML `<img src="...">` and captures the URL (group 1). Photo
+/// posts often use HTML img tags (18–46 per post) rather than markdown syntax.
+pub static HTML_IMG_SRC: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<img[^>]+src=["']([^"']+)["']"#).expect("valid regex")
+});
+
 /// Matches markdown links (and images): (!)?\[text\](url)
 /// Group 1 = "!" if image, Group 2 = link text, Group 3 = URL
 pub static MD_LINK: LazyLock<Regex> =
