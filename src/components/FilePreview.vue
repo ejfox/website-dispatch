@@ -20,6 +20,7 @@ import { useResizable } from '../composables/useResizable'
 // (unified / remark-* / rehype-*) used to live here and run on the main
 // thread, which was the single biggest cause of file-switch jank.
 import { renderMermaidIn } from '../utils/mermaidRenderer'
+import { perfTrace } from '../utils/perfTrace'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { useLocalStorage } from '@vueuse/core'
 import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics } from '../types'
@@ -690,6 +691,11 @@ async function loadFileContent(file: MarkdownFile | null) {
       const ms = (performance.now() - fromT0).toFixed(1)
       console.log(`[perf] file-switch ${phase} ${ms}ms · ${switchName}`)
     }
+    // Cross into the shared click→paint tracer. The delta from the click (set
+    // in FileList.onRowClick) to here is everything between the mousedown and
+    // this function running: emit, App.vue @select, the selectedFile watchers,
+    // and Vue re-rendering the sidebar. Often the surprising part of the lag.
+    perfTrace.mark('loadContent start')
 
     // Reset *metadata* refs synchronously so the next paint shows a clean
     // slate (without this you briefly see OLD analytics / backlinks under
@@ -735,6 +741,8 @@ async function loadFileContent(file: MarkdownFile | null) {
       content.value = cached.stripped
       renderedContent.value = cached.rendered
       perf('cache-hit TOTAL')
+      perfTrace.mark('cache hit · ref set')
+      perfTrace.paintAfter('painted')
       // Cache hit is synchronous → no skeleton flash should appear.
       endPreviewLoad()
       // Mermaid blocks in cached HTML may not have been re-processed if
@@ -759,6 +767,7 @@ async function loadFileContent(file: MarkdownFile | null) {
         .then(async (raw) => {
           if (file.path !== props.file.path) return
           perf('content-ipc done')
+          perfTrace.mark('content IPC done')
           const stripped = (raw as string).replace(/^---\n[\s\S]*?\n---\n*/, '')
           content.value = stripped
           // Real-world guard: a fully empty file (or one that's only
@@ -806,11 +815,15 @@ async function loadFileContent(file: MarkdownFile | null) {
               endPreviewLoad()
               return
             }
+            perfTrace.mark('markdown worker done')
             renderedContent.value = rendered
             console.log(
               `[perf] file-switch markdown-only ${(performance.now() - markdownT0).toFixed(1)}ms · ${switchName}`,
             )
             perf('TOTAL (rendered)')
+            perfTrace.mark('rendered · ref set')
+            // Flush after the browser actually paints the new post.
+            perfTrace.paintAfter('painted')
             const skeleton = parseSkeleton(stripped)
             cacheRender(cacheKey, { stripped, rendered, skeleton })
             cacheSkeleton(file.path, skeleton)
@@ -827,6 +840,8 @@ async function loadFileContent(file: MarkdownFile | null) {
             if (file.path !== props.file.path) return
             if (serverHtml && serverHtml.trim()) {
               renderedContent.value = serverHtml
+              perfTrace.mark('server fallback · ref set')
+              perfTrace.paintAfter('painted (server)')
               const skeleton = parseSkeleton(stripped)
               cacheRender(cacheKey, { stripped, rendered: serverHtml, skeleton })
               cacheSkeleton(file.path, skeleton)
