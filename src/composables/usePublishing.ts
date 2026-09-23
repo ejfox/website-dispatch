@@ -67,6 +67,11 @@ export function usePublishing(options: {
   }
 
   async function publish(isRepublish = false) {
+    // In-flight guard: publishing commits + pushes, so a second call while the
+    // first is still running would publish (and git-commit) the post twice.
+    // The confirm button/Enter can both fire in the same burst before the modal
+    // unmounts, so guard here — the load-bearing spot — not just in the UI.
+    if (publishing.value) return
     if (!isRepublish && !options.getFileIsSafe()) return
     publishing.value = true
     try {

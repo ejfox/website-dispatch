@@ -97,9 +97,22 @@ onMounted(loadActivity)
 
 // Hot-reload when the vault changes — same signal the file list uses, no
 // extra plumbing required. Stops listening on unmount.
+//
+// `listen()` is async: if the component unmounts before it resolves, the naive
+// `onUnmounted(() => unlistenVault?.())` runs while unlistenVault is still null,
+// then the promise resolves and subscribes forever — firing loadActivity() on a
+// dead component. Track disposal and unsubscribe immediately if we're already
+// gone by the time it resolves.
 let unlistenVault: UnlistenFn | null = null
-listen('vault-changed', () => loadActivity()).then((u) => (unlistenVault = u))
-onUnmounted(() => unlistenVault?.())
+let disposed = false
+listen('vault-changed', () => loadActivity()).then((u) => {
+  if (disposed) u()
+  else unlistenVault = u
+})
+onUnmounted(() => {
+  disposed = true
+  unlistenVault?.()
+})
 
 const merged = computed<ActivityEvent[]>(() => {
   const events: ActivityEvent[] = []
