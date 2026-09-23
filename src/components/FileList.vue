@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { perfTrace } from '../utils/perfTrace'
 import { useOverflowMenu } from '../composables/useOverflowMenu'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -31,6 +32,14 @@ const emit = defineEmits<{
   select: [file: MarkdownFile]
   'request-unpublish': [file: MarkdownFile]
 }>()
+
+// Start the click→paint timer at the true origin — the moment the row is
+// clicked, before emit/select/watchers/re-render run. FilePreview's
+// loadFileContent adds the downstream marks and flushes on paint.
+function onRowClick(file: MarkdownFile) {
+  perfTrace.begin(file.filename || file.path)
+  emit('select', file)
+}
 
 const filter = ref<'all' | 'published' | 'drafts' | 'scheduled'>('all')
 const sort = ref<'recent' | 'created' | 'title' | 'words'>('recent')
@@ -418,7 +427,7 @@ function getAgeColor(ts: number): string {
             weeknote: file.content_type === 'weeknote',
           }"
           :style="{ '--age': getAgeColor(file.created) }"
-          @click="emit('select', file)"
+          @click="onRowClick(file)"
           @contextmenu="showContextMenu(file, $event)"
         >
           <div class="age-bar"></div>
@@ -739,6 +748,12 @@ function getAgeColor(ts: number): string {
 .item {
   width: auto;
   display: flex;
+  /* Don't shrink on the column's main axis. .item has overflow:hidden, which
+     gives it an automatic min-height:0 — so inside the flex-column .list it
+     would otherwise collapse to near-zero height when many rows compete for
+     space. flex:none keeps each row at its content height; align-items:stretch
+     on .list still gives us the full-width rows this branch was after. */
+  flex: none;
   gap: 0;
   padding: 0;
   /* Inset the rounded source-list selection from the sidebar edges. The
