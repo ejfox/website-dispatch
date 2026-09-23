@@ -113,20 +113,31 @@ async function showVariantMenu(i: number, e: MouseEvent) {
   await menu.popup()
 }
 
-// Re-generate whenever the slug prop changes — Vue keeps the picker instance
-// alive across post selections so we can't rely on mount-time effects.
-// `immediate: true` covers the first render too.
+// Reset when the slug changes — Vue keeps the picker instance alive across post
+// selections so we can't rely on mount-time effects. `immediate: true` covers
+// the first render too.
+//
+// LAZY generation: the picker is collapsed by default, and `generate()` fires a
+// heavy Rust image-render + IPC round-trip. Generating on every file click for
+// a panel nobody opened was the single biggest remaining source of click lag —
+// so only (re)generate when the picker is actually expanded.
 watch(
   () => props.slug,
   () => {
     variants.value = null
     selectedIdx.value = null
     uploadedUrl.value = null
+    error.value = null
     batch.value = 0
-    generate()
+    if (!collapsed.value) generate()
   },
   { immediate: true },
 )
+
+// First expand for the current slug kicks off generation.
+watch(collapsed, (isCollapsed) => {
+  if (!isCollapsed && !variants.value && !generating.value) generate()
+})
 </script>
 
 <template>

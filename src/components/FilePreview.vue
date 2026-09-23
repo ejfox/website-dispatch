@@ -21,6 +21,20 @@ import { useResizable } from '../composables/useResizable'
 // thread, which was the single biggest cause of file-switch jank.
 import { renderMermaidIn } from '../utils/mermaidRenderer'
 import { perfTrace } from '../utils/perfTrace'
+// Worker + render/skeleton caches now live at module scope (survive tab
+// switches) — see utils/markdownRender.ts.
+import {
+  renderMarkdownInWorker,
+  fetchServerRenderedHtml,
+  isActiveRender,
+  renderCache,
+  skeletonCache,
+  cacheRender,
+  parseSkeleton,
+  scheduleSkeletonCache,
+  CHARS_PER_LINE,
+  type SkeletonBlock,
+} from '../utils/markdownRender'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { useLocalStorage } from '@vueuse/core'
 import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics } from '../types'
@@ -84,302 +98,12 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;')
 }
 
-// Dedicated Web Worker for markdown processing. The whole unified pipeline
-// runs off the main thread so file switching never blocks the UI — even
-// during a heavy rehypeRaw pass on a long post the click/scroll/keyboard
-// stays responsive. One worker for the lifetime of the component;
-// requests are tagged with a monotonic id and the main thread throws away
-// any response whose id doesn't match the currently-active request.
-const renderWorker = new Worker(
-  new URL('../workers/markdownWorker.ts', import.meta.url),
-  { type: 'module' },
-)
-let nextRenderId = 0
-let activeRenderId = -1
-const pendingRenders = new Map<
-  number,
-  { resolve: (html: string) => void; reject: (e: Error) => void }
->()
-
-renderWorker.addEventListener('message', (e: MessageEvent) => {
-  const { id, html, error } = e.data as { id: number; html?: string; error?: string }
-  const pending = pendingRenders.get(id)
-  if (!pending) return
-  pendingRenders.delete(id)
-  if (error) pending.reject(new Error(error))
-  else pending.resolve(html ?? '')
-})
-
-// If the worker itself fails — a module-load error (a bad import, an
-// unsupported feature in the webview) or a serialization failure — it emits
-// an `error`/`messageerror` event, NOT a per-request message. Without these
-// handlers the render promise never settles: the preview pane spins on its
-// skeleton forever and the shimmer animation quietly burns CPU. Reject every
-// in-flight render so the caller falls back to raw content and surfaces the
-// real reason instead of hanging.
-function failAllPending(reason: string) {
-  const err = new Error(reason)
-  for (const [, pending] of pendingRenders) pending.reject(err)
-  pendingRenders.clear()
-}
-let workerDead = false
-renderWorker.addEventListener('error', (e: ErrorEvent) => {
-  workerDead = true
-  // Include WHERE it died — a module-load ReferenceError in a bundled dep
-  // (e.g. a `browser` build touching `document` in a worker) is otherwise a
-  // needle in a haystack. filename:line points straight at the culprit chunk.
-  const where = e.filename ? ` @ ${e.filename}:${e.lineno}:${e.colno}` : ''
-  console.error(`[render] markdown worker crashed: ${e.message || 'failed to load'}${where}`)
-  failAllPending(`markdown worker error: ${e.message || 'worker failed to load'}${where}`)
-})
-renderWorker.addEventListener('messageerror', () => {
-  console.error('[render] markdown worker messageerror (uncloneable payload)')
-  failAllPending('markdown worker messageerror')
-})
-
-// Hard ceiling on a single render. The pipeline processes a long post in
-// well under a second, so anything past this means the worker is wedged or
-// its response was lost — reject rather than leave the skeleton up forever.
-const RENDER_TIMEOUT_MS = 10000
-
-function renderMarkdownInWorker(content: string, baseUrl: string): {
-  id: number
-  promise: Promise<string>
-} {
-  const id = ++nextRenderId
-  activeRenderId = id
-  // A module-load crash kills the worker permanently — every later postMessage
-  // just goes nowhere and times out after 10s. Once we know it's dead, fail
-  // fast so we hit the server fallback immediately instead of stalling.
-  if (workerDead) {
-    return { id, promise: Promise.reject(new Error('markdown worker is dead (earlier crash)')) }
-  }
-  const promise = new Promise<string>((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      if (pendingRenders.delete(id)) {
-        reject(
-          new Error(
-            `markdown render timed out after ${RENDER_TIMEOUT_MS}ms — worker unresponsive`,
-          ),
-        )
-      }
-    }, RENDER_TIMEOUT_MS)
-    pendingRenders.set(id, {
-      resolve: (html) => {
-        window.clearTimeout(timer)
-        resolve(html)
-      },
-      reject: (e) => {
-        window.clearTimeout(timer)
-        reject(e)
-      },
-    })
-  })
-  renderWorker.postMessage({ id, content, baseUrl })
-  return { id, promise }
-}
-
-// Fallback renderer. The client-side worker can fail outright in the desktop
-// webview — a module worker has no `document`, and some pipeline deps touch
-// it, so the worker throws `Can't find variable: document` and renders
-// nothing. The preview server renders the SAME file through website2's real
-// pipeline and is already primed by the /set-file POST in loadFileContent,
-// so poll its /content until this file's render lands. Returns null on
-// timeout so the caller can fall back to raw text.
-async function fetchServerRenderedHtml(
-  filePath: string,
-  timeoutMs = 8000,
-): Promise<string | null> {
-  const deadline = performance.now() + timeoutMs
-  const wantBase = filePath.split('/').pop() || ''
-  while (performance.now() < deadline) {
-    try {
-      const res = await fetch('http://127.0.0.1:6419/content')
-      const data = (await res.json()) as {
-        html?: string
-        filename?: string
-        processing?: boolean
-      }
-      if (
-        data.html &&
-        data.html.trim() &&
-        (!data.filename || data.filename === wantBase)
-      ) {
-        return data.html
-      }
-    } catch {
-      // server not up yet / transient — keep polling
-    }
-    await new Promise((r) => setTimeout(r, 150))
-  }
-  return null
-}
-
-// LRU-ish cache of rendered HTML keyed on `path|modified`. Flipping between
-// two posts (or any post you've recently viewed) becomes instant — no
-// re-running the unified pipeline. ~80-150ms savings per cache hit on
-// long posts. Invalidates automatically when the file is edited because
-// the `modified` mtime changes.
-//
-// We also cache the parsed skeleton blocks here so the next load doesn't
-// need to re-parse — useful on cold cache-key misses where the layout is
-// still likely close to the cached version.
-type SkeletonBlock = {
-  type: 'heading' | 'paragraph' | 'code' | 'list' | 'quote' | 'image' | 'hr'
-  level?: number // for headings: 1..6
-  lines: number // how many wrapped lines to render
-  shortLast?: boolean // last line ~50% (true for prose paragraphs)
-}
-type CacheEntry = { stripped: string; rendered: string; skeleton: SkeletonBlock[] }
-const renderCache = new Map<string, CacheEntry>()
-const RENDER_CACHE_MAX = 30
 function renderCacheKey(file: { path: string; modified: number }) {
   // Include the active publish-target domain because remarkObsidianWikilinks
   // bakes it into the rendered HTML — same file rendered against a
   // different target should not share cache.
   return `${file.path}|${file.modified}|${activeTargetDomain.value}`
 }
-/**
- * Cheap block-level parser of markdown body text. Returns a structural
- * outline used to render an accurate loading skeleton — not a full
- * markdown parser. We only need to know "what KIND of block is here, and
- * how many lines does it roughly take." We deliberately don't use the
- * unified pipeline here because the whole point is to have something
- * before unified finishes processing.
- *
- * Wraps long paragraphs at ~70 chars/line for skeleton purposes, which
- * roughly matches the rendered prose column at default zoom.
- */
-const CHARS_PER_LINE = 70
-function parseSkeleton(markdown: string): SkeletonBlock[] {
-  if (!markdown) return []
-  const blocks: SkeletonBlock[] = []
-  const lines = markdown.split('\n')
-  let i = 0
-  while (i < lines.length) {
-    const line = lines[i]
-    const trimmed = line.trim()
-
-    if (!trimmed) {
-      i++
-      continue
-    }
-
-    // Heading
-    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/)
-    if (heading) {
-      blocks.push({
-        type: 'heading',
-        level: heading[1].length,
-        lines: 1,
-      })
-      i++
-      continue
-    }
-
-    // Horizontal rule
-    if (/^([-*_])\1\1+\s*$/.test(trimmed)) {
-      blocks.push({ type: 'hr', lines: 1 })
-      i++
-      continue
-    }
-
-    // Fenced code block
-    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
-      const fence = trimmed.slice(0, 3)
-      let codeLines = 0
-      i++
-      while (i < lines.length && !lines[i].trimStart().startsWith(fence)) {
-        codeLines++
-        i++
-      }
-      i++ // skip closing fence
-      blocks.push({ type: 'code', lines: Math.max(1, codeLines) })
-      continue
-    }
-
-    // Blockquote — collapse contiguous `>` lines into one block
-    if (trimmed.startsWith('>')) {
-      let quoteText = ''
-      while (i < lines.length && lines[i].trim().startsWith('>')) {
-        quoteText += ' ' + lines[i].replace(/^\s*>\s?/, '')
-        i++
-      }
-      const wrapped = Math.max(1, Math.ceil(quoteText.trim().length / CHARS_PER_LINE))
-      blocks.push({ type: 'quote', lines: wrapped, shortLast: true })
-      continue
-    }
-
-    // List — collapse contiguous list items into one block
-    if (/^([-*+]|\d+\.)\s+/.test(trimmed)) {
-      let listItems = 0
-      while (i < lines.length) {
-        const t = lines[i].trim()
-        if (!t) break
-        if (!/^([-*+]|\d+\.)\s+/.test(t)) break
-        listItems++
-        i++
-      }
-      blocks.push({ type: 'list', lines: listItems })
-      continue
-    }
-
-    // Standalone image (line that's only `![…](…)`)
-    if (/^!\[[^\]]*\]\([^)]+\)\s*$/.test(trimmed)) {
-      blocks.push({ type: 'image', lines: 1 })
-      i++
-      continue
-    }
-
-    // Paragraph — accumulate until blank line or block-starting line.
-    let para = trimmed
-    let j = i + 1
-    while (j < lines.length) {
-      const next = lines[j].trim()
-      if (!next) break
-      if (/^#{1,6}\s/.test(next) || /^([-*_])\1\1+\s*$/.test(next)) break
-      if (next.startsWith('```') || next.startsWith('~~~')) break
-      if (next.startsWith('>')) break
-      if (/^([-*+]|\d+\.)\s+/.test(next)) break
-      para += ' ' + next
-      j++
-    }
-    const wrappedLines = Math.max(1, Math.ceil(para.length / CHARS_PER_LINE))
-    blocks.push({ type: 'paragraph', lines: wrappedLines, shortLast: true })
-    i = j
-  }
-  return blocks
-}
-
-function cacheRender(key: string, entry: CacheEntry) {
-  // Evict oldest if over the cap. Map preserves insertion order, so the
-  // first key is the oldest. Re-set to bump recency on hits.
-  if (renderCache.size >= RENDER_CACHE_MAX && !renderCache.has(key)) {
-    const first = renderCache.keys().next().value
-    if (first !== undefined) renderCache.delete(first)
-  }
-  renderCache.delete(key) // re-insert to mark as most-recent
-  renderCache.set(key, entry)
-}
-
-/**
- * Secondary cache keyed by file path ONLY (no mtime). The full render
- * cache invalidates on every edit, but the structural outline is usually
- * still close to the previous version — close enough for a skeleton.
- * This lets the second-visit-after-edit show an accurate-shaped skeleton
- * instead of falling back to generic random widths.
- */
-const skeletonCache = new Map<string, SkeletonBlock[]>()
-const SKELETON_CACHE_MAX = 50
-function cacheSkeleton(path: string, blocks: SkeletonBlock[]) {
-  if (skeletonCache.size >= SKELETON_CACHE_MAX && !skeletonCache.has(path)) {
-    const first = skeletonCache.keys().next().value
-    if (first !== undefined) skeletonCache.delete(first)
-  }
-  skeletonCache.delete(path)
-  skeletonCache.set(path, blocks)
-}
-
 function selectTarget(id: string) {
   selectedTargetId.value = id
 }
@@ -465,9 +189,10 @@ function endPreviewLoad() {
  * forever for that path.
  */
 const skeletonBlocks = computed<SkeletonBlock[]>(() => {
-  // Tier 1: exact cache hit
+  // Tier 1: exact cache hit (skeleton may still be pending its deferred
+  // computation — fall through to the cheaper tiers if so)
   const exact = renderCache.get(renderCacheKey(props.file))
-  if (exact) return exact.skeleton
+  if (exact && exact.skeleton) return exact.skeleton
 
   // Tier 2: path-only skeleton cache (any prior visit, mtime irrelevant)
   const recent = skeletonCache.get(props.file.path)
@@ -661,7 +386,7 @@ watch(activeTargetDomain, async (domain) => {
   try {
     const { id: renderId, promise } = renderMarkdownInWorker(content.value, domain)
     const html = await promise
-    if (renderId !== activeRenderId) return
+    if (!isActiveRender(renderId)) return
     renderedContent.value = html
     nextTick(() => renderMermaidIn(document))
   } catch {
@@ -794,7 +519,7 @@ async function loadFileContent(file: MarkdownFile | null) {
             // Stale-render guard: if the user clicked another file mid-
             // worker, throw away this response. activeRenderId tracks
             // the latest request — earlier ones are dead by definition.
-            if (file.path !== props.file.path || renderId !== activeRenderId) return
+            if (file.path !== props.file.path || !isActiveRender(renderId)) return
             // Guard: never cache an empty render — that's how the pane
             // started returning empty on every subsequent visit. Show the
             // raw content as a fallback so the user gets *something*
@@ -824,11 +549,12 @@ async function loadFileContent(file: MarkdownFile | null) {
             perfTrace.mark('rendered · ref set')
             // Flush after the browser actually paints the new post.
             perfTrace.paintAfter('painted')
-            const skeleton = parseSkeleton(stripped)
-            cacheRender(cacheKey, { stripped, rendered, skeleton })
-            cacheSkeleton(file.path, skeleton)
+            // Cache the render synchronously (cheap, keeps re-clicks instant);
+            // defer the expensive skeleton parse off the paint path.
+            cacheRender(cacheKey, { stripped, rendered })
             endPreviewLoad()
             nextTick(() => renderMermaidIn(document))
+            scheduleSkeletonCache(cacheKey, file.path, stripped)
           } catch (err) {
             if (file.path !== props.file.path) return
             console.error('[render] markdown processor threw', err, 'on', file.path)
@@ -842,12 +568,11 @@ async function loadFileContent(file: MarkdownFile | null) {
               renderedContent.value = serverHtml
               perfTrace.mark('server fallback · ref set')
               perfTrace.paintAfter('painted (server)')
-              const skeleton = parseSkeleton(stripped)
-              cacheRender(cacheKey, { stripped, rendered: serverHtml, skeleton })
-              cacheSkeleton(file.path, skeleton)
+              cacheRender(cacheKey, { stripped, rendered: serverHtml })
               renderError.value = null
               endPreviewLoad()
               nextTick(() => renderMermaidIn(document))
+              scheduleSkeletonCache(cacheKey, file.path, stripped)
             } else {
               // Last resort: show the raw content plus the error so the user
               // can still see what they wrote AND know what went wrong.
