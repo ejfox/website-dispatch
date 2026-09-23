@@ -18,6 +18,10 @@ export interface MarkdownFile {
   password: string | null
   publish_at: string | null
   content_type: string
+  /** Number of markdown images in the body. */
+  image_count: number
+  /** First http(s) image URL, for a list thumbnail / gallery hint. */
+  thumbnail: string | null
 }
 
 export interface Backlink {

@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useLocalStorage } from '@vueuse/core'
 import { Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tauri-apps/api/menu'
 import ResizeHandle from './ResizeHandle.vue'
-import { useResizable } from '../composables/useResizable'
+import { useResizable } from '../composables/useUiState'
 import {
   PhBackpack,
   PhMapPin,
@@ -163,11 +163,18 @@ const filtered = computed(() => {
 const selected = computed(() => filtered.value[cursor.value] ?? null)
 
 // Cancel any in-progress edit when the selected row changes — otherwise the
-// editor would silently write back to a different item.
-watch(selected, () => {
-  editField.value = null
-  editingLocation.value = false
-})
+// editor would silently write back to a different item. Key on the row's NAME
+// (its logical identity), not the computed's object identity: every `load()`
+// rebuilds `items` and hands back a fresh object for the same row, so watching
+// `selected` directly fired on every save-triggered reload and would nuke an
+// edit the user had just opened on another field mid-flight.
+watch(
+  () => selected.value?.name,
+  () => {
+    editField.value = null
+    editingLocation.value = false
+  },
+)
 
 const today = () => new Date().toISOString().slice(0, 10)
 const isStale = (last: string) => {
@@ -379,10 +386,13 @@ async function saveField() {
   const name = selected.value.name
   const field = editField.value
   const value = editValue.value
+  // Clear the edit BEFORE awaiting. Enter (or switching fields) tears down the
+  // input, which fires its @blur="saveField" — nulling here first makes that
+  // second call hit the `!editField.value` guard instead of saving again.
+  editField.value = null
   try {
     await invoke('update_gear_field', { name, field, value })
     flash(`saved ${field}`)
-    editField.value = null
     await load()
   } catch (e: any) {
     error.value = String(e)

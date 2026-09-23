@@ -1,7 +1,7 @@
 import { ref, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { MarkdownFile } from '../types'
-import { useAppConfig } from './useAppConfig'
+import { useAppConfig } from './useVaultData'
 
 export function useKeyboardShortcuts(options: {
   files: Ref<MarkdownFile[]>
@@ -108,6 +108,22 @@ export function useKeyboardShortcuts(options: {
     }
     if (options.newPostOpen.value) {
       if (e.key === 'Escape') options.closeNewPost()
+      return
+    }
+
+    // Catch-all for the remaining overlays whose open-state doesn't live in
+    // App.vue — the command palette, help, syndication wizard, alt-text
+    // reviewer, publish confirm, OG picker. Each owns its own keys (Escape to
+    // close, arrows to navigate) via a component-level listener, so the global
+    // handler must NOT also run: otherwise Escape closes the modal AND falls
+    // through to the deselect/navigate blocks below, wiping the file selection
+    // underneath it. Every overlay mounts a `*-overlay` element only while
+    // open, and Vue tears it down a tick later than this synchronous handler,
+    // so its presence is a reliable "a modal is open" signal.
+    if (
+      typeof document !== 'undefined' &&
+      document.querySelector('[class$="-overlay"]')
+    ) {
       return
     }
 

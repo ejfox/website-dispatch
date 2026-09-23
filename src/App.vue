@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, shallowRef, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -33,7 +33,7 @@ import {
 } from '@phosphor-icons/vue'
 import FileList from './components/FileList.vue'
 import ResizeHandle from './components/ResizeHandle.vue'
-import { useResizable } from './composables/useResizable'
+import { useResizable, useToasts } from './composables/useUiState'
 import FilePreview from './components/FilePreview.vue'
 import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
 import PublishingJournal from './components/PublishingJournal.vue'
@@ -48,15 +48,19 @@ import ToastStack from './components/ToastStack.vue'
 import { useLocalStorage } from '@vueuse/core'
 import type { MarkdownFile } from './types'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
-import { useAppConfig } from './composables/useAppConfig'
-import { useConnectionStatus } from './composables/useConnectionStatus'
-import { useToasts } from './composables/useToasts'
+import { useAppConfig, useConnectionStatus } from './composables/useVaultData'
 import { checkForUpdate } from './composables/useAutoUpdate'
 
 const toasts = useToasts()
 
-const files = ref<MarkdownFile[]>([])
-const selectedFile = ref<MarkdownFile | null>(null)
+// shallowRef: `files` (up to ~200 items) and `selectedFile` are only ever
+// replaced wholesale (`files.value = await invoke(...)`), never mutated in
+// place, and every consumer compares by `.path`, never by deep identity. Deep
+// reactivity here just added Proxy overhead to every property read across
+// FileList's ~180 memo evaluations, the CommandPalette action map, and several
+// filters — pure cost with no benefit.
+const files = shallowRef<MarkdownFile[]>([])
+const selectedFile = shallowRef<MarkdownFile | null>(null)
 const loading = ref(true)
 
 const appVersion = __APP_VERSION__
@@ -549,6 +553,16 @@ const { handleGlobalKey } = useKeyboardShortcuts({
 
 let unlistenSchedule: (() => void) | null = null
 
+// Collector for the many async Tauri subscriptions registered in onMounted.
+// `listen()` / `onFocusChanged` / `onDragDropEvent` all resolve to an unlisten
+// fn; previously those were discarded, so on every remount (HMR, or a future
+// non-root mount) the handlers stacked into ghosts — a single drop firing N
+// uploads. `track()` stashes each disposer; onUnmounted calls them all.
+const eventDisposers: Array<() => void> = []
+function track(p: Promise<() => void>) {
+  p.then((u) => eventDisposers.push(u)).catch(() => {})
+}
+
 function onSettingsSaved() {
   loadConfig()
   loadFiles()
@@ -574,22 +588,22 @@ onMounted(async () => {
   unlistenSchedule = unlisten
 
   // Track window focus for native dimming behavior
-  getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+  track(getCurrentWindow().onFocusChanged(({ payload: focused }) => {
     windowFocused.value = focused
-  })
+  }))
 
   // Handle menu bar events from Rust
-  listen('menu-new-post', () => openNewPost())
-  listen('menu-refresh', () => loadFiles())
-  listen('menu-toggle-compact', () => {
+  track(listen('menu-new-post', () => openNewPost()))
+  track(listen('menu-refresh', () => loadFiles()))
+  track(listen('menu-toggle-compact', () => {
     compactMode.value = !compactMode.value
-  })
-  listen('menu-search', () => openSearch())
+  }))
+  track(listen('menu-search', () => openSearch()))
 
   // Open Recent: payload is the absolute file path. If the file is in the
   // current scan, select it; otherwise the path is stale (deleted/moved) —
   // surface a toast so the user knows why nothing happened.
-  listen<string>('menu-open-recent', (event) => {
+  track(listen<string>('menu-open-recent', (event) => {
     const path = event.payload
     const match = files.value.find((f) => f.path === path)
     if (match) {
@@ -598,13 +612,13 @@ onMounted(async () => {
     } else {
       toasts.info('That file is no longer in the vault.')
     }
-  })
+  }))
 
   // Auto-refresh on vault file changes (fs::notify watcher in Rust).
   // Debounced 500ms server-side; we still throttle the toast so a flurry
   // of saves doesn't spam the UI.
   let lastVaultToastAt = 0
-  listen('vault-changed', () => {
+  track(listen('vault-changed', () => {
     loadFiles()
     refreshJournalStats()
     const now = Date.now()
@@ -612,7 +626,7 @@ onMounted(async () => {
       lastVaultToastAt = now
       toasts.info('Vault updated')
     }
-  })
+  }))
 
   // Drag-in handler: routes by file type.
   //   .md  → select the post in the list (existing behavior)
@@ -641,7 +655,7 @@ onMounted(async () => {
     return 'mixed'
   }
 
-  getCurrentWindow().onDragDropEvent(async (event) => {
+  track(getCurrentWindow().onDragDropEvent(async (event) => {
     const t = event.payload.type
     if (t === 'enter') {
       // Only classify once per drag — `over` fires continuously and the
@@ -809,12 +823,14 @@ onMounted(async () => {
         `Dispatch accepts .md, images, and video. Got: ${paths.map((p) => '.' + ext(p)).join(', ')}`,
       )
     }
-  })
+  }))
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKey)
   unlistenSchedule?.()
+  eventDisposers.forEach((u) => u())
+  eventDisposers.length = 0
 })
 </script>
 
