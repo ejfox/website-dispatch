@@ -482,6 +482,12 @@ function getAgeColor(ts: number): string {
                 >DISPATCH</span
               >
               <span
+                v-if="file.draft && !file.published_url"
+                class="draft-badge"
+                data-tip="draft: true — publishing asks to clear it first"
+                >DRAFT</span
+              >
+              <span
                 v-if="file.password && !file.published_url"
                 class="protected-badge-draft"
                 data-tip="Will be password-protected"
@@ -989,6 +995,17 @@ function getAgeColor(ts: number): string {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
   color: var(--danger);
   padding: 1px 5px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  letter-spacing: 0.5px;
+}
+
+.draft-badge {
+  font-size: 7.5px;
+  font-weight: 600;
+  border: 1px dashed var(--text-tertiary);
+  color: var(--text-secondary);
+  padding: 0 5px;
   border-radius: 8px;
   flex-shrink: 0;
   letter-spacing: 0.5px;

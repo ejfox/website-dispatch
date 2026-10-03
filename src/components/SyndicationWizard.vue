@@ -30,6 +30,7 @@ interface OmniReport {
   image_alt: string | null
   image_alt_generated: boolean
   warnings: string[]
+  preview: { title: string; description: string; image: string | null; image_alt: string | null }
 }
 
 const props = defineProps<{
@@ -41,9 +42,11 @@ const props = defineProps<{
   tags: string[]
   contentType: string
   visibility: string
+  /** Opened automatically after publishing: jump straight to review. */
+  quick?: boolean
 }>()
 
-const emit = defineEmits<{ close: []; queued: [] }>()
+const emit = defineEmits<{ close: []; queued: []; syndicated: [urls: string[]] }>()
 
 // Esc closes the wizard — consistent with every other modal in the app.
 function onEscape(e: KeyboardEvent) {
@@ -56,7 +59,7 @@ onMounted(() => window.addEventListener('keydown', onEscape))
 onUnmounted(() => window.removeEventListener('keydown', onEscape))
 
 // Wizard state
-const step = ref(1)
+const step = ref(props.quick ? 5 : 1)
 const queuing = ref(false)
 const error = ref<string | null>(null)
 const queuedIds = ref<number[]>([])
@@ -256,12 +259,38 @@ async function postNow(dryRun: boolean) {
       dryRun,
     })
     step.value = 6
-    if (!report.value.dry_run) emit('queued')
+    if (!report.value.dry_run) {
+      const urls = report.value.results
+        .filter((r) => (r.status === 'posted' || r.status === 'skipped') && r.url)
+        .map((r) => r.url as string)
+      emit('syndicated', urls)
+    }
   } catch (e) {
     error.value = `${e}`
   }
   posting.value = false
 }
+
+// Review step: show what the link card / image will look like, from a dry run
+// (no network calls, nothing written).
+const cardPreview = ref<OmniReport['preview'] | null>(null)
+watch(
+  step,
+  async (s) => {
+    if (s !== 5 || !props.sourcePath || cardPreview.value) return
+    try {
+      const r = await invoke<OmniReport>('syndicate_everywhere', {
+        sourcePath: props.sourcePath,
+        networks: OMNI_NETWORKS,
+        dryRun: true,
+      })
+      cardPreview.value = r.preview
+    } catch {
+      /* preview is optional */
+    }
+  },
+  { immediate: true },
+)
 
 const STATUS_LABEL: Record<string, string> = {
   posted: 'posted',
@@ -382,7 +411,22 @@ function openUrl(url: string) {
 
       <!-- Step 5: Review -->
       <div v-if="step === 5" class="step-content">
-        <div class="step-title">Review & queue</div>
+        <div class="step-title">Review & send</div>
+        <div v-if="cardPreview" class="card-preview">
+          <img v-if="cardPreview.image" :src="cardPreview.image" :alt="cardPreview.image_alt || ''" />
+          <div class="card-text">
+            <div class="card-title">{{ cardPreview.title }}</div>
+            <div class="card-desc">{{ cardPreview.description }}</div>
+            <div class="card-url">{{ postUrl.replace(/^https?:\/\//, '') }}</div>
+          </div>
+        </div>
+        <div v-if="cardPreview?.image" class="hint">
+          Alt text: {{ cardPreview.image_alt || '(none yet — generated and saved when you post)' }}
+        </div>
+        <div v-if="selectedPlatforms.length === 0" class="hint warn">
+          No networks selected. Add BLUESKY_HANDLE / BLUESKY_APP_PASSWORD or MASTODON_ACCESS_TOKEN to .env, or go
+          Back and pick one for a dry run.
+        </div>
         <div class="review-list">
           <div v-for="p in selectedPlatforms" :key="p" class="review-card">
             <div class="review-header">
@@ -449,7 +493,7 @@ function openUrl(url: string) {
           <button
             v-if="canPostNow"
             class="btn secondary"
-            :disabled="posting"
+            :disabled="posting || selectedPlatforms.length === 0"
             data-tip="Build every payload without sending anything"
             @click="postNow(true)"
           >
@@ -458,7 +502,12 @@ function openUrl(url: string) {
           <button class="btn secondary" :disabled="queuing || posting" @click="queueAll">
             {{ queuing ? 'Queuing...' : `Queue ${selectedPlatforms.length}` }}
           </button>
-          <button v-if="canPostNow" class="btn primary" :disabled="posting" @click="postNow(false)">
+          <button
+            v-if="canPostNow"
+            class="btn primary"
+            :disabled="posting || selectedPlatforms.length === 0"
+            @click="postNow(false)"
+          >
             {{ posting ? 'Posting...' : 'Post now' }}
           </button>
         </template>
@@ -735,6 +784,53 @@ function openUrl(url: string) {
   line-height: 1.4;
 }
 
+.card-preview {
+  display: flex;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.card-preview img {
+  width: 120px;
+  object-fit: cover;
+  background: #fff;
+  flex-shrink: 0;
+}
+.card-text {
+  padding: 8px 10px 8px 0;
+  min-width: 0;
+}
+.card-preview img + .card-text {
+  padding-left: 0;
+}
+.card-preview .card-text:first-child {
+  padding-left: 10px;
+}
+.card-title {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.card-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-top: 3px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card-url {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+.review-list {
+  margin-top: 10px;
+}
 .hint {
   margin-top: 10px;
   font-size: 10px;

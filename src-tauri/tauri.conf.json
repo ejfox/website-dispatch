@@ -37,7 +37,8 @@
         "enable": true,
         "scope": [
           "$HOME/code/**/og-previews/**",
-          "$HOME/code/**/data/og-previews/**"
+          "$HOME/code/**/data/og-previews/**",
+          "$HOME/code/chart-desk/desks/**"
         ]
       }
     },

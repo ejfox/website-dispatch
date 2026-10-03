@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PhCursor, PhKeyboard, PhEye, PhCheckCircle } from '@phosphor-icons/vue'
+import { PhCursor, PhKeyboard, PhEye, PhCheckCircle, PhNewspaper } from '@phosphor-icons/vue'
 
 defineProps<{
   show: boolean
@@ -118,6 +118,43 @@ const emit = defineEmits<{
             &mdash;
             <kbd>6</kbd>
             <span>switch tab</span>
+          </div>
+        </div>
+      </div>
+      <div class="help-divider"></div>
+      <div class="help-section-title">
+        <PhNewspaper :size="10" weight="duotone" />
+        The Desk
+      </div>
+      <div class="help-grid">
+        <div class="help-section">
+          <div class="help-row">
+            <kbd>d</kbd>
+            <span>back to the Desk (anywhere)</span>
+          </div>
+          <div class="help-row">
+            <kbd>&#8629;</kbd>
+            <span>start piece from today's bench</span>
+          </div>
+          <div class="help-row">
+            <kbd>1</kbd>
+            -
+            <kbd>3</kbd>
+            <span>pick an angle (becomes the title)</span>
+          </div>
+        </div>
+        <div class="help-section">
+          <div class="help-row">
+            <kbd>s</kbd>
+            <span>open the sketch</span>
+          </div>
+          <div class="help-row">
+            <kbd>x</kbd>
+            <span>fact-check my version</span>
+          </div>
+          <div class="help-row">
+            <kbd>f</kbd>
+            <span>open the bench folder</span>
           </div>
         </div>
       </div>

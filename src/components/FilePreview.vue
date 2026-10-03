@@ -14,7 +14,7 @@ import ActionToolbar from './ActionToolbar.vue'
 import PublishConfirmModal from './PublishConfirmModal.vue'
 import WebmentionStatus from './WebmentionStatus.vue'
 import ResizeHandle from './ResizeHandle.vue'
-import { useResizable } from '../composables/useUiState'
+import { useResizable, useToasts } from '../composables/useUiState'
 // Markdown processing now lives in src/workers/markdownWorker.ts — see
 // `renderWorker` / `renderMarkdownInWorker` below. The pipeline imports
 // (unified / remark-* / rehype-*) used to live here and run on the main
@@ -37,7 +37,7 @@ import {
 } from '../utils/markdownRender'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { useLocalStorage } from '@vueuse/core'
-import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics } from '../types'
+import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics, DeskToday } from '../types'
 import { useTagSuggestions } from '../composables/useTagSuggestions'
 import { usePublishing, usePostActions } from '../composables/usePublishFlow'
 import { useAppConfig, useGitStatus } from '../composables/useVaultData'
@@ -337,11 +337,144 @@ const {
   onPublished: () => emit('published'),
   // Auto-fire webmentions after publish/republish. Bridgy Fed forwarding
   // is opt-in via Settings → Connections (default off).
-  onPublishSuccess: () => {
+  onPublishSuccess: (url: string) => {
     const bridgyFed = appConfig.value?.webmentions_bridgy_fed === true
     autoTriggerOnPublish(bridgyFed)
+    afterPublish(url)
   },
 })
+
+// ── Publish = ship ──────────────────────────────────────────────────────────
+// A piece with `bench:` frontmatter came from the chart desk. Publishing it is
+// the day's ship: log `desk shipped <bench> <url> [syndication urls…]`. For a
+// Dispatch piece the syndication wizard opens first (EJ confirms the send),
+// and the ship is logged when it closes, with whatever links it produced.
+const toasts = useToasts()
+const pendingShip = ref<{ bench: string; url: string } | null>(null)
+const syndicatedUrls = ref<string[]>([])
+const autoWizard = ref(false)
+
+function afterPublish(url: string) {
+  const bench = props.file.bench
+  const firstPublish = !props.file.published_url // props not refreshed yet
+  if (props.file.content_type === 'dispatch' && firstPublish) {
+    pendingShip.value = bench ? { bench, url } : null
+    syndicatedUrls.value = []
+    autoWizard.value = true
+    showSyndicationWizard.value = true
+  } else if (bench) {
+    shipToDesk(bench, [url], !firstPublish)
+  }
+}
+
+async function shipToDesk(bench: string, urls: string[], onlyIfUnshipped = false) {
+  try {
+    const today = await invoke<DeskToday>('desk_today')
+    const story = today.stories.find((s) => s.id === bench)
+    if (story?.shipped) return // already logged
+    if (!story && onlyIfUnshipped) return // republish of an older piece
+  } catch {
+    /* desk unreachable — still try to log */
+  }
+  try {
+    const msg = await invoke<string>('desk_shipped', { id: bench, urls })
+    toasts.success('Shipped', msg || undefined)
+  } catch (e) {
+    const id: number = toasts.push({
+      kind: 'error',
+      message: "Published, but the ship didn't get logged on the desk",
+      detail: String(e),
+      action: {
+        label: 'Retry',
+        run: () => {
+          toasts.dismiss(id)
+          shipToDesk(bench, urls)
+        },
+      },
+      ttl: 0,
+    })
+  }
+}
+
+function onWizardSyndicated(urls: string[]) {
+  syndicatedUrls.value = urls
+}
+
+function onWizardClosed() {
+  showSyndicationWizard.value = false
+  autoWizard.value = false
+  const ship = pendingShip.value
+  pendingShip.value = null
+  if (ship) shipToDesk(ship.bench, [ship.url, ...syndicatedUrls.value])
+}
+
+// ── Draft gate + alt-text prep before publishing ───────────────────────────
+const showDraftPrompt = ref(false)
+const draftPromptRepublish = ref(false)
+const clearingDraft = ref(false)
+
+function requestPublish(isRepublish = false) {
+  if (props.file.draft) {
+    draftPromptRepublish.value = isRepublish
+    showDraftPrompt.value = true
+    return
+  }
+  openPublishConfirm(isRepublish)
+}
+
+async function clearDraftAndContinue() {
+  clearingDraft.value = true
+  try {
+    await invoke('remove_draft', { path: props.file.path })
+    showDraftPrompt.value = false
+    emit('published') // refresh the list so the DRAFT badge goes away
+    openPublishConfirm(draftPromptRepublish.value)
+  } catch (e) {
+    toasts.error("Couldn't clear draft", String(e))
+  }
+  clearingDraft.value = false
+}
+
+function onDraftPromptKey(e: KeyboardEvent) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    clearDraftAndContinue()
+  } else if (e.key === 'Escape') {
+    showDraftPrompt.value = false
+  }
+}
+watch(showDraftPrompt, (open) => {
+  if (open) window.addEventListener('keydown', onDraftPromptKey)
+  else window.removeEventListener('keydown', onDraftPromptKey)
+})
+
+// Dispatch pieces need image_alt with image (website contract). Generate and
+// save it before publishing rather than blocking.
+async function publishWithPrep(isRepublish: boolean) {
+  if (props.file.content_type === 'dispatch') {
+    try {
+      const alt = await invoke<string | null>('ensure_image_alt', { path: props.file.path })
+      if (alt) console.log('[publish] image_alt ready:', alt)
+    } catch (e) {
+      closePublishConfirm()
+      const id: number = toasts.push({
+        kind: 'error',
+        message: "Didn't publish: the image needs alt text",
+        detail: String(e),
+        action: {
+          label: 'Retry',
+          run: () => {
+            toasts.dismiss(id)
+            publishWithPrep(isRepublish)
+          },
+        },
+        ttl: 0,
+      })
+      return
+    }
+  }
+  await publish(isRepublish)
+}
 
 // Tag suggestions composable
 const { availableTags, suggestedTags, addingTag, fetchAvailableTags, analyzeTags, addTag } = useTagSuggestions({
@@ -705,6 +838,8 @@ const titleIsDerived = computed(() => !props.file.title)
 // out via `v-if="slug"` instead of triggering ENOENT on a non-blog file.
 const slug = computed(() => {
   const baseName = props.file.filename.replace('.md', '')
+  // Dispatch pieces: bare slug → content/dispatch/<slug>.md (no year).
+  if (props.file.content_type === 'dispatch') return baseName
   const yearMatch = props.file.path.match(/\/blog\/(\d{4})\//)
   if (yearMatch) return `${yearMatch[1]}/${baseName}`
   return props.file.path.includes('/blog/') ? baseName : ''
@@ -878,7 +1013,7 @@ function copyUrlAndPassword() {
 }
 
 // Expose methods for parent component
-defineExpose({ openPublishConfirm })
+defineExpose({ openPublishConfirm: requestPublish })
 
 async function openInObsidian() {
   await invoke('open_in_obsidian', { path: props.file.path })
@@ -1148,7 +1283,7 @@ async function openPreview() {
     <!-- OG Image (only after publish) -->
     <!-- OG picker shows for any post with a usable slug, not just live ones —
          picking an OG before publish is a natural part of the publish flow. -->
-    <OgImagePicker v-if="slug" :slug="slug" @picked="() => {}" />
+    <OgImagePicker v-if="slug && file.content_type !== 'dispatch'" :slug="slug" @picked="() => {}" />
 
     <!-- Local Media Fixer (the modal — surface lives in the Local Media section above) -->
     <LocalMediaFixer
@@ -1175,7 +1310,7 @@ async function openPreview() {
         :selected-target-id="selectedTargetId"
         :is-live="isLive"
         :live-url="liveUrl"
-        :is-vue-page="isVuePage"
+        :is-vue-page="isVuePage || file.content_type === 'dispatch' /* no Vue-page conversion for dispatch */"
         :converting="converting"
         :unpublishing="unpublishing"
         :publishing="publishing"
@@ -1189,7 +1324,7 @@ async function openPreview() {
         @show-syndication="showSyndicationWizard = true"
         @convert-to-vue-page="convertToVuePage"
         @unpublish="unpublish"
-        @open-publish-confirm="openPublishConfirm"
+        @open-publish-confirm="requestPublish"
         @publish-unlisted="publishUnlisted"
         @toggle-schedule="showSchedulePicker = !showSchedulePicker"
       />
@@ -1224,15 +1359,33 @@ async function openPreview() {
       v-if="showSyndicationWizard && liveUrl"
       :post-url="liveUrl"
       :title="title"
-      :slug="slug || file.filename.replace(/\.md$/, '')"
+      :slug="slug"
       :source-path="file.path"
       :dek="file.dek"
       :tags="file.tags"
       :content-type="file.content_type"
       :visibility="isPasswordProtected ? 'protected' : isUnlisted ? 'unlisted' : 'public'"
-      @close="showSyndicationWizard = false"
+      :quick="autoWizard"
+      @close="onWizardClosed"
       @queued="onSyndicationQueued"
+      @syndicated="onWizardSyndicated"
     />
+
+    <!-- Draft gate: a `draft: true` piece asks before publishing. -->
+    <div v-if="showDraftPrompt" class="draft-overlay" @click.self="showDraftPrompt = false">
+      <div class="draft-modal">
+        <div class="draft-title">This piece is still a draft</div>
+        <div class="draft-body">
+          Its frontmatter says <code>draft: true</code>. Remove that and continue to publish?
+        </div>
+        <div class="draft-actions">
+          <button class="btn" @click="showDraftPrompt = false">Not yet <kbd>esc</kbd></button>
+          <button class="btn accent" :disabled="clearingDraft" @click="clearDraftAndContinue">
+            {{ clearingDraft ? 'Clearing…' : 'Remove draft & publish' }} <kbd>⏎</kbd>
+          </button>
+        </div>
+      </div>
+    </div>
 
 
     <!-- Publish Confirmation -->
@@ -1244,7 +1397,7 @@ async function openPreview() {
       :publish-context="publishContext"
       :is-republish="publishConfirmRepublish"
       @close="closePublishConfirm"
-      @confirm="(isRepublish: boolean) => publish(isRepublish)"
+      @confirm="(isRepublish: boolean) => publishWithPrep(isRepublish)"
     />
 
     <!-- Content divider — plain tracked-caps label, no decorative glyph.
@@ -2215,6 +2368,48 @@ async function openPreview() {
   font-size: 10px;
   color: var(--text-tertiary, #666);
   word-break: break-all;
+}
+
+/* Draft gate */
+.draft-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.draft-modal {
+  width: 380px;
+  max-width: 92vw;
+  background: var(--modal-bg);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: var(--shadow-lg);
+}
+.draft-title {
+  font-size: 15px;
+  font-weight: 650;
+  margin-bottom: 6px;
+}
+.draft-body {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.draft-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.draft-actions kbd {
+  font-size: 9px;
+  opacity: 0.75;
+  margin-left: 4px;
 }
 </style>
 

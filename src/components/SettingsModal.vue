@@ -6,9 +6,9 @@ import { useLocalStorage } from '@vueuse/core'
 import { X } from 'lucide-vue-next'
 import type { AppConfig, MediaDestinationKind, MediaStatus } from '../types'
 
-const homeTab = useLocalStorage<'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'>(
+const homeTab = useLocalStorage<'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'>(
   'dispatch-home-tab',
-  'preview',
+  'desk',
 )
 
 const emit = defineEmits<{ close: []; saved: [] }>()
@@ -259,6 +259,7 @@ async function save() {
                 <span class="hint">tab shown when Dispatch launches</span>
               </label>
               <div class="segmented">
+                <button :class="{ active: homeTab === 'desk' }" @click="homeTab = 'desk'">Desk</button>
                 <button :class="{ active: homeTab === 'preview' }" @click="homeTab = 'preview'">Preview</button>
                 <button :class="{ active: homeTab === 'media' }" @click="homeTab = 'media'">Media</button>
                 <button :class="{ active: homeTab === 'activity' }" @click="homeTab = 'activity'">Activity</button>

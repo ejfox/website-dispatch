@@ -30,8 +30,10 @@ import {
   PhArrowSquareDown,
   PhFileText,
   PhWarningCircle,
+  PhNewspaper,
 } from '@phosphor-icons/vue'
 import FileList from './components/FileList.vue'
+import DeskView from './components/DeskView.vue'
 import ResizeHandle from './components/ResizeHandle.vue'
 import { useResizable, useToasts } from './composables/useUiState'
 import FilePreview from './components/FilePreview.vue'
@@ -238,11 +240,28 @@ watch(
 // Right panel tab state. Persists the user's last/preferred home tab so
 // Dispatch opens where they want to be — Preview by default for most folks,
 // but switchable to Journal or Gear for routines that don't start with the post list.
-const defaultHomeTab = useLocalStorage<'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'>(
-  'dispatch-home-tab',
-  'preview',
-)
-const rightTab = ref<'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'>(defaultHomeTab.value)
+type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'
+const defaultHomeTab = useLocalStorage<RightTab>('dispatch-home-tab', 'desk')
+// The Desk is the landing view (`d` returns to it from anywhere). A stored
+// 'preview' is the old default, not a choice — land on the Desk instead.
+const rightTab = ref<RightTab>(defaultHomeTab.value === 'preview' ? 'desk' : defaultHomeTab.value)
+
+// Desk → "Start piece": the desk wrote a draft into vault dispatch/. Refresh,
+// select it, and open it in the default editor.
+async function onPieceStarted(notePath: string) {
+  await loadFiles()
+  const match = files.value.find((f) => f.path === notePath)
+  if (match) {
+    selectedFile.value = match
+    rightTab.value = 'preview'
+  } else {
+    toasts.warn('Piece created', `It isn't in the list yet: ${notePath}`)
+  }
+  const editor = appConfig.value?.default_editor || 'iA Writer'
+  invoke('open_in_app', { path: notePath, app: editor }).catch((e) =>
+    toasts.error(`Couldn't open ${editor}`, String(e)),
+  )
+}
 
 // Connection status (auto-checks on creation)
 const { cloudinaryConnected, obsidianConnected, analyticsConnected, companionUrl, companionPin, gitBranch } =
@@ -381,6 +400,18 @@ async function loadFiles() {
     console.error('Failed to load files:', e)
   }
   loading.value = false
+  // Re-point the selection at the fresh object so state (live/draft) isn't stale.
+  if (selectedFile.value) {
+    const fresh = files.value.find((f) => f.path === selectedFile.value?.path)
+    const cur = selectedFile.value
+    const changed =
+      fresh &&
+      (fresh.modified !== cur.modified ||
+        fresh.published_url !== cur.published_url ||
+        fresh.draft !== cur.draft ||
+        fresh.warnings.join('|') !== cur.warnings.join('|'))
+    if (changed) selectedFile.value = fresh
+  }
   // Restore prior selection on first load if it still exists in the list.
   if (!selectedFile.value && lastFilePath.value) {
     const match = files.value.find((f) => f.path === lastFilePath.value)
@@ -974,6 +1005,10 @@ onUnmounted(() => {
              This is the Apple Mail two-row chrome: titlebar (title + actions)
              on top, tab strip below. -->
         <div class="panel-tabs">
+          <button data-tab="desk" :class="{ active: rightTab === 'desk' }" data-tip="The Desk (d)" @click="rightTab = 'desk'">
+            <PhNewspaper :size="13" />
+            <span>Desk</span>
+          </button>
           <button data-tab="preview" :class="{ active: rightTab === 'preview' }" @click="rightTab = 'preview'">
             <Eye :size="13" />
             <span>Preview</span>
@@ -1002,8 +1037,10 @@ onUnmounted(() => {
         </div>
 
         <div class="panel-content">
+          <DeskView v-if="rightTab === 'desk'" @started="onPieceStarted" />
+
           <FilePreview
-            v-if="rightTab === 'preview' && selectedFile"
+            v-else-if="rightTab === 'preview' && selectedFile"
             ref="filePreviewRef"
             :file="selectedFile"
             @published="loadFiles"

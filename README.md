@@ -58,6 +58,23 @@ Configure which editors appear in the toolbar (Obsidian, iA Writer, VS Code, or 
 ### Connections
 Cloudinary cloud name and analytics URL are configured here. API secrets (Cloudinary keys, Umami credentials) stay in `.env` — see `.env.example`.
 
+## The Desk
+
+Dispatch opens on **the Desk**: the chart-desk feed from `~/.local/bin/desk today` — the streak, the week, the making
+slot, and today's bench (chart, finding, angles, the question for you, fact-check status), plus on-deck stories.
+
+- **Start piece** (`⏎`) runs `desk dispatch <bench> --json`, which writes a `draft: true` piece into the vault's
+  `dispatch/` folder; Dispatch selects it and opens it in your default editor. Pick an angle first (`1`–`3`) and it
+  becomes the title.
+- **Fact-check my version** (`x`) runs `desk check` in the background; the verdict and issues appear inline.
+- **Build** (on-deck stories) runs `desk build` after a confirm.
+- Publishing a `draft: true` piece asks to clear the draft first (one click). Publishing a piece with `bench:` is the
+  ship: after the syndication wizard (prefilled for Bluesky + Mastodon) closes, Dispatch runs
+  `desk shipped <bench> <site-url> [syndication urls…]` and the streak ticks up.
+
+Every `desk` call runs off the UI thread with a fixed PATH. Dev overrides: `DISPATCH_DESK_BIN` (stub desk),
+`CHART_DESK_CONFIG` (passed through to desk), `DISPATCH_CONFIG_DIR` (scratch app config/vault).
+
 ## Dispatch pieces
 
 Standalone journalism lives in the vault folder `dispatch/` (badged **DISPATCH** in the list). Publishing copies
@@ -87,6 +104,9 @@ Credentials (`.env`): `BLUESKY_HANDLE`, `BLUESKY_APP_PASSWORD` (optional `BLUESK
 
 | Key | Action |
 |-----|--------|
+| `d` | The Desk (from anywhere) |
+| `⏎` / `s` / `x` / `f` | Desk: start piece / sketch / fact-check / bench folder |
+| `1`–`3` | Desk: pick an angle (becomes the piece title) |
 | `j` / `k` | Navigate files |
 | `gg` / `G` | Top / bottom |
 | `/` or `Cmd+K` | Search |

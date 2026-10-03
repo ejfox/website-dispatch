@@ -427,6 +427,49 @@ pub fn set_scalar_if_absent(
     Ok(splice(content, span.end, span.end, &new_line))
 }
 
+/// Index range of a top-level single-line scalar `key:` line (refuses block values).
+fn scalar_line(content: &str, span: FmSpan, key: &str) -> Result<Option<(usize, usize)>, String> {
+    let lines = lines_with_offsets(content, span);
+    let Some(i) = lines
+        .iter()
+        .position(|(_, _, l)| top_level_value(l, key).is_some())
+    else {
+        return Ok(None);
+    };
+    let raw = top_level_value(lines[i].2, key).unwrap_or("");
+    let next_is_block = lines
+        .get(i + 1)
+        .map(|(_, _, l)| !l.trim().is_empty() && is_continuation(l))
+        .unwrap_or(false);
+    if next_is_block || matches!(raw, ">" | ">-" | ">+" | "|" | "|-" | "|+") {
+        return Err(format!("{} has a multi-line value; edit it by hand", key));
+    }
+    Ok(Some((lines[i].0, lines[i].1)))
+}
+
+/// Set `key: value`, replacing an existing single-line value in place or
+/// appending at the end of the frontmatter.
+pub fn set_scalar(content: &str, key: &str, value: &str) -> Result<String, String> {
+    let span = locate(content).ok_or("note has no frontmatter block")?;
+    let nl = newline_for(&content[..span.end]);
+    let new_line = format!("{}: {}{nl}", key, yaml_scalar(value));
+    Ok(match scalar_line(content, span, key)? {
+        Some((s, e)) => splice(content, s, e, &new_line),
+        None => splice(content, span.end, span.end, &new_line),
+    })
+}
+
+/// Remove a top-level single-line `key:` (e.g. `draft: true`). No-op if absent.
+pub fn remove_scalar(content: &str, key: &str) -> Result<String, String> {
+    let Some(span) = locate(content) else {
+        return Ok(content.to_string());
+    };
+    Ok(match scalar_line(content, span, key)? {
+        Some((s, e)) => splice(content, s, e, ""),
+        None => content.to_string(),
+    })
+}
+
 fn splice(content: &str, start: usize, end: usize, insert: &str) -> String {
     let mut out = String::with_capacity(content.len() + insert.len());
     out.push_str(&content[..start]);
@@ -551,5 +594,22 @@ mod tests {
             set_scalar_if_absent(&out, "image_alt", "other", None).unwrap(),
             out
         );
+    }
+
+    #[test]
+    fn set_and_remove_scalar_are_minimal() {
+        let note = "---\ntitle: Old\ndraft: true\nbench: 2026-10-03/01-x\ntags:\n  - dispatch\n---\nBody\n";
+        let titled = set_scalar(note, "title", "Army: Palantir's anchor").unwrap();
+        assert_eq!(
+            titled,
+            "---\ntitle: \"Army: Palantir's anchor\"\ndraft: true\nbench: 2026-10-03/01-x\ntags:\n  - dispatch\n---\nBody\n"
+        );
+        let undrafted = remove_scalar(&titled, "draft").unwrap();
+        assert_eq!(
+            undrafted,
+            "---\ntitle: \"Army: Palantir's anchor\"\nbench: 2026-10-03/01-x\ntags:\n  - dispatch\n---\nBody\n"
+        );
+        assert_eq!(remove_scalar(&undrafted, "draft").unwrap(), undrafted);
+        assert!(remove_scalar(note, "tags").is_err(), "refuses block values");
     }
 }

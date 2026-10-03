@@ -174,6 +174,14 @@ impl Default for AppConfig {
 }
 
 fn config_path() -> PathBuf {
+    // Dev/test override: point a dev build at a scratch config (e.g. a scratch
+    // vault) without touching the real app's settings.
+    if let Some(dir) = std::env::var("DISPATCH_CONFIG_DIR")
+        .ok()
+        .filter(|d| !d.is_empty())
+    {
+        return PathBuf::from(dir).join("config.json");
+    }
     let home = std::env::var("HOME").unwrap_or_default();
     PathBuf::from(home)
         .join("Library/Application Support/com.ejfox.dispatch")

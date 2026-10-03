@@ -21,6 +21,7 @@ mod bluesky; // Bluesky AT Protocol XRPC client + post/facet/embed builders
 mod cloudinary; // Uploads images/videos to Cloudinary CDN
 mod companion; // Companion web UI server for mobile access
 pub mod config; // App configuration (vault path, publish targets, editors)
+mod desk; // The Desk: chart-desk daily feed via the `desk` CLI
 mod dispatch; // Dispatch pieces: vault dispatch/ → content/dispatch/<slug>.md
 mod dock_menu; // Dock right-click menu (macOS, via objc_sys class_addMethod)
 mod frontmatter_edit; // Text-preserving frontmatter reads/edits (syndication write-back)
@@ -109,6 +110,13 @@ pub struct MarkdownFile {
     pub image_count: usize,
     #[serde(default)]
     pub thumbnail: Option<String>,
+
+    // `draft: true` in frontmatter (Dispatch pieces from the desk start as drafts).
+    #[serde(default)]
+    pub draft: bool,
+    // chart-desk bench id (`bench:` frontmatter) — publishing logs `desk shipped`.
+    #[serde(default)]
+    pub bench: Option<String>,
 }
 
 // Configuration for where to find things on this computer
@@ -884,6 +892,18 @@ async fn syndicate_everywhere(
     .await
 }
 
+// Publishing a piece with `image` but no `image_alt`: generate + save alt first.
+#[tauri::command]
+async fn ensure_image_alt(path: String) -> Result<Option<String>, String> {
+    omnipublish::ensure_image_alt(&path).await
+}
+
+// One-click "it's ready": drop `draft: true` from a note's frontmatter.
+#[tauri::command]
+fn remove_draft(path: String) -> Result<(), String> {
+    omnipublish::remove_draft(&path)
+}
+
 // Which syndication networks have credentials in .env (no network calls).
 #[tauri::command]
 fn syndication_network_status() -> serde_json::Value {
@@ -1214,6 +1234,14 @@ pub fn run() {
             verify_mastodon,
             syndicate_everywhere,
             syndication_network_status,
+            ensure_image_alt,
+            remove_draft,
+            desk::desk_today,
+            desk::desk_start_piece,
+            desk::desk_start_job,
+            desk::desk_jobs,
+            desk::desk_shipped,
+            desk::desk_open,
             queue_syndication,
             get_syndication_queue,
             get_post_syndication,

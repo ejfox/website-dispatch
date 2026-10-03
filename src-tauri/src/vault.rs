@@ -197,6 +197,11 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 content_type: content_type.into(),
                 image_count,
                 thumbnail,
+                draft: frontmatter
+                    .get("draft")
+                    .map(|v| v == "true" || v == "yes")
+                    .unwrap_or(false),
+                bench: frontmatter.get("bench").filter(|b| !b.is_empty()).cloned(),
             });
         }
     }
@@ -607,13 +612,8 @@ fn check_warnings(
         warnings.push("Local images".into());
     }
 
-    // Dispatch contract: image_alt is required when image is set.
-    if content_type == "dispatch"
-        && frontmatter.get("image").is_some_and(|v| !v.is_empty())
-        && !frontmatter.get("image_alt").is_some_and(|v| !v.is_empty())
-    {
-        warnings.push("Image without image_alt".into());
-    }
+    // (Dispatch `image` without `image_alt` isn't a warning: publishing
+    // generates and saves the alt text first — see ensure_image_alt.)
 
     // Privacy linter for weeknotes — flag PII before publishing
     if content_type == "weeknote" {

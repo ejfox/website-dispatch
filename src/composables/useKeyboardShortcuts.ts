@@ -10,7 +10,7 @@ export function useKeyboardShortcuts(options: {
   showSettings: Ref<boolean>
   newPostOpen: Ref<boolean>
   showHelp: Ref<boolean>
-  rightTab: Ref<'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'>
+  rightTab: Ref<'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'>
   sidebarCollapsed: Ref<boolean>
   filePreviewRef: Ref<{ openPublishConfirm: (isRepublish: boolean) => void } | null>
   openSearch: () => void
@@ -145,6 +145,13 @@ export function useKeyboardShortcuts(options: {
     if (e.key === '?' && e.shiftKey) {
       e.preventDefault()
       options.showHelp.value = !options.showHelp.value
+      return
+    }
+
+    // d - back to the Desk (universal navigation)
+    if (e.key === 'd' && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault()
+      options.rightTab.value = 'desk'
       return
     }
 

@@ -66,6 +66,16 @@ pub struct OmniReport {
     pub image_alt: Option<String>,
     pub image_alt_generated: bool,
     pub warnings: Vec<String>,
+    /// What the link card / image will show (for the wizard's review step).
+    pub preview: CardPreview,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CardPreview {
+    pub title: String,
+    pub description: String,
+    pub image: Option<String>,
+    pub image_alt: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -759,6 +769,12 @@ pub async fn syndicate_everywhere(req: OmniRequest) -> Result<OmniReport, String
     let texts = req.texts.clone().unwrap_or_default();
     let source_path = req.source_path.clone();
     let image_alt = plan.image_alt.clone();
+    let preview = CardPreview {
+        title: plan.title.clone(),
+        description: plan.description.clone(),
+        image: postable_image(&plan).map(|(i, _)| i.to_string()),
+        image_alt: image_alt.clone(),
+    };
 
     let (results, warnings) = tauri::async_runtime::spawn_blocking(move || {
         let mut warnings = warnings;
@@ -792,7 +808,44 @@ pub async fn syndicate_everywhere(req: OmniRequest) -> Result<OmniReport, String
         image_alt,
         image_alt_generated,
         warnings,
+        preview,
     })
+}
+
+/// Before publishing a note with `image` but no `image_alt`, generate the alt
+/// text and record it in frontmatter (website2 requires image_alt with image).
+/// Returns the alt text now in the note, or None if the note has no image.
+pub async fn ensure_image_alt(path: &str) -> Result<Option<String>, String> {
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Couldn't read the note: {}", e))?;
+    let Some(image) = fm::get_scalar(&content, "image").filter(|u| u.starts_with("http")) else {
+        return Ok(None);
+    };
+    if let Some(alt) = fm::get_scalar(&content, "image_alt") {
+        return Ok(Some(alt));
+    }
+    let alt = crate::alttext::generate_alt_for_url(&image)
+        .await
+        .map_err(|e| {
+            format!(
+            "This piece has an image but no image_alt, and alt text couldn't be generated ({}). \
+             Add image_alt to the note.",
+            e
+        )
+        })?;
+    write_image_alt(path, &alt)?;
+    Ok(Some(alt))
+}
+
+/// Remove `draft: true` from a note (one-click "it's ready").
+pub fn remove_draft(path: &str) -> Result<(), String> {
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Couldn't read the note: {}", e))?;
+    let updated = fm::remove_scalar(&content, "draft")?;
+    if updated != content {
+        std::fs::write(path, updated).map_err(|e| format!("Couldn't save the note: {}", e))?;
+    }
+    Ok(())
 }
 
 /// Which networks have credentials (no network calls).
