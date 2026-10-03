@@ -32,6 +32,7 @@ mod media; // Multi-destination upload orchestrator (Cloudinary / R2 / both)
 mod menu; // Application menu bar builder
 mod obsidian; // Talks to Obsidian's Local REST API for backlinks
 mod omnipublish; // Fan-out syndication to every network with retry, idempotency, write-back
+mod utm; // UTM-tagged share links (Umami attribution)
 mod open; // Open files in Obsidian, editors, terminal
 mod patterns; // Shared compiled regex patterns (LazyLock statics)
 mod preview; // Manages a local Node.js server for previewing posts
@@ -526,6 +527,15 @@ async fn get_post_analytics(
     days: Option<u32>,
 ) -> Result<analytics::PostStats, String> {
     analytics::get_post_stats(&url, days.unwrap_or(30)).await
+}
+
+// Per-post visits by utm_source (read-only Umami query).
+#[tauri::command]
+async fn get_post_sources(
+    url: String,
+    days: Option<u32>,
+) -> Result<Vec<analytics::TopPost>, String> {
+    analytics::get_post_utm_sources(&url, days.unwrap_or(30)).await
 }
 
 #[tauri::command]
@@ -1216,6 +1226,8 @@ pub fn run() {
             get_vault_pulse,
             check_analytics_status,
             get_post_analytics,
+            get_post_sources,
+            utm::share_link,
             get_post_pageview_series,
             get_site_analytics,
             get_top_posts,

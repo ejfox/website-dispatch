@@ -7,9 +7,29 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useLocalStorage } from '@vueuse/core'
-import type { DeskToday, DeskStory } from '../types'
+import type { DeskToday, DeskStory, MarkdownFile } from '../types'
 
+const props = defineProps<{ files: MarkdownFile[] }>()
 const emit = defineEmits<{ started: [notePath: string] }>()
+
+// Today's piece, once it's live: share it with UTM-tagged links.
+const livePiece = computed(() => {
+  const id = desk.value?.bench?.id
+  return id ? props.files.find((f) => f.bench === id && f.published_url) ?? null : null
+})
+const copied = ref<string | null>(null)
+async function copyShare(source: string, medium: string) {
+  const url = livePiece.value?.published_url
+  if (!url) return
+  try {
+    const tagged = await invoke<string>('share_link', { url, source, medium })
+    await navigator.clipboard.writeText(tagged)
+    copied.value = source
+    setTimeout(() => (copied.value = null), 1800)
+  } catch (e) {
+    actionError.value = { message: `Couldn't copy the link: ${e}`, retry: () => copyShare(source, medium) }
+  }
+}
 
 const cached = useLocalStorage<DeskToday | null>('dispatch-desk-today', null, {
   serializer: { read: (v) => (v ? JSON.parse(v) : null), write: (v) => JSON.stringify(v) },
@@ -246,6 +266,22 @@ onUnmounted(() => {
     <div v-if="desk?.shipped_today" class="shipped-banner">
       <span class="shipped-mark">◆</span>
       Shipped today. That’s the day’s work — the streak is {{ desk.streak }}.
+    </div>
+
+    <!-- Today's piece is live: tagged share links -->
+    <div v-if="livePiece" class="live-piece">
+      <div class="live-url">
+        <span class="live-dot"></span>
+        {{ livePiece.published_url?.replace(/^https?:\/\//, '') }}
+      </div>
+      <div class="live-actions">
+        <button class="btn" @click="copyShare('x', 'social')">
+          {{ copied === 'x' ? 'Copied' : 'Copy link for X' }}
+        </button>
+        <button class="btn" @click="copyShare('newsletter', 'email')">
+          {{ copied === 'newsletter' ? 'Copied' : 'Copy link for newsletter' }}
+        </button>
+      </div>
     </div>
 
     <!-- Today's bench -->
@@ -737,6 +773,36 @@ kbd {
   line-height: 1.55;
   color: var(--text-secondary);
   margin-top: 6px;
+}
+
+/* Live piece */
+.live-piece {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
+}
+.live-url {
+  font-size: 12px;
+  color: var(--text-primary);
+  word-break: break-all;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+.live-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* Shipped / empty */

@@ -1037,7 +1037,7 @@ onUnmounted(() => {
         </div>
 
         <div class="panel-content">
-          <DeskView v-if="rightTab === 'desk'" @started="onPieceStarted" />
+          <DeskView v-if="rightTab === 'desk'" :files="files" @started="onPieceStarted" />
 
           <FilePreview
             v-else-if="rightTab === 'preview' && selectedFile"

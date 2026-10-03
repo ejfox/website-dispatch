@@ -344,6 +344,20 @@ const {
   },
 })
 
+// ── Share links (UTM-tagged for Umami) ─────────────────────────────────────
+const postSources = ref<{ x: string; y: number }[]>([])
+async function copyShareLink(source: string, medium: string) {
+  const url = liveUrl.value
+  if (!url) return
+  try {
+    const tagged = await invoke<string>('share_link', { url, source, medium })
+    await navigator.clipboard.writeText(tagged)
+    toasts.success(`Copied link for ${source === 'x' ? 'X' : source}`, tagged)
+  } catch (e) {
+    toasts.error("Couldn't copy the link", String(e))
+  }
+}
+
 // ── Publish = ship ──────────────────────────────────────────────────────────
 // A piece with `bench:` frontmatter came from the chart desk. Publishing it is
 // the day's ship: log `desk shipped <bench> <url> [syndication urls…]`. For a
@@ -774,6 +788,14 @@ async function loadFileContent(file: MarkdownFile | null) {
           .finally(() => {
             if (file.path === props.file.path) loadingStats.value = false
           })
+        postSources.value = []
+        invoke<{ x: string; y: number }[]>('get_post_sources', { url: file.published_url, days: 30 })
+          .then((res) => {
+            if (file.path === props.file.path) postSources.value = res || []
+          })
+          .catch(() => {
+            /* optional: needs Umami */
+          })
         invoke('get_post_pageview_series', { url: file.published_url, days: 30 })
           .then((res) => {
             if (file.path !== props.file.path) return
@@ -1146,6 +1168,25 @@ async function openPreview() {
         </svg>
         <span class="stat-period">last 30d</span>
       </template>
+    </div>
+    <!-- Where the traffic came from (utm_source), and tagged links to share. -->
+    <div v-if="isLive && liveUrl" class="share-strip">
+      <span v-if="postSources.length" class="sources" data-tip="Visits by utm_source, last 30 days">
+        <span v-for="s in postSources.slice(0, 5)" :key="s.x" class="source">
+          {{ s.x }} <strong>{{ fmtCount(s.y) }}</strong>
+        </span>
+      </span>
+      <span class="share-spacer"></span>
+      <button class="share-btn" data-tip="Copies the link tagged utm_source=x" @click="copyShareLink('x', 'social')">
+        Copy link for X
+      </button>
+      <button
+        class="share-btn"
+        data-tip="Copies the link tagged utm_source=newsletter"
+        @click="copyShareLink('newsletter', 'email')"
+      >
+        Copy link for newsletter
+      </button>
     </div>
 
     <!-- Info / Metadata -->
@@ -2368,6 +2409,43 @@ async function openPreview() {
   font-size: 10px;
   color: var(--text-tertiary, #666);
   word-break: break-all;
+}
+
+/* Share strip: utm_source breakdown + tagged copy links */
+.share-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 16px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.share-strip .sources {
+  display: flex;
+  gap: 10px;
+  color: var(--text-tertiary);
+}
+.share-strip .source strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.share-spacer {
+  flex: 1;
+}
+.share-btn {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border-light);
+  background: var(--hover-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.share-btn:hover {
+  color: var(--text-primary);
+  background: var(--active-bg);
 }
 
 /* Draft gate */

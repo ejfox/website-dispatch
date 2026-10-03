@@ -263,9 +263,10 @@ pub fn bluesky_record_json(
     blob: Option<Value>,
     created_at: &str,
 ) -> Value {
+    let tagged = shared_link(plan, "bluesky");
     let embed = if !plan.post_url.is_empty() {
         Some(bluesky::external_embed(
-            &plan.post_url,
+            &tagged,
             &plan.title,
             &plan.description,
             blob,
@@ -276,7 +277,25 @@ pub fn bluesky_record_json(
             _ => None,
         }
     };
-    bluesky::post_record(text, embed, created_at)
+    // The clean URL is what's displayed (and counted against 300 graphemes);
+    // its facet links to the UTM-tagged URL.
+    let clean = plan.post_url.clone();
+    bluesky::post_record_mapped(text, embed, created_at, &move |shown: &str| {
+        if !clean.is_empty() && shown.trim_end_matches('/') == clean.trim_end_matches('/') {
+            tagged.clone()
+        } else {
+            shown.to_string()
+        }
+    })
+}
+
+/// The post URL as shared on `network`: UTM-tagged for the Umami funnel.
+/// The canonical URL (site + frontmatter) stays clean.
+pub fn shared_link(plan: &NotePlan, network: &str) -> String {
+    if plan.post_url.is_empty() {
+        return String::new();
+    }
+    crate::utm::share_url(&plan.post_url, network, "social")
 }
 
 /// The full request sequence for a network, with placeholders for values only
@@ -445,9 +464,11 @@ pub fn fan_out(
             .cloned()
             .unwrap_or_else(|| default_text(&network, plan));
         let text = if network == "bluesky" {
+            // Clean URL shown; the facet + link card carry the tagged URL.
             bluesky::fit_text(&text)
         } else {
-            text
+            // Mastodon has no facets: the shared link itself is tagged.
+            crate::utm::replace_link(&text, &plan.post_url, &shared_link(plan, &network))
         };
         let payload = describe_requests(&network, plan, &text);
 
@@ -1074,7 +1095,14 @@ mod tests {
         assert_eq!(reqs[1]["endpoint"], "/api/v1/statuses");
         assert_eq!(reqs[1]["json"]["visibility"], "public");
         assert_eq!(reqs[1]["json"]["media_ids"].as_array().unwrap().len(), 1);
-        assert!(reqs[1]["json"]["status"].as_str().unwrap().contains(URL));
+        // Mastodon: the shared link is UTM-tagged in the status text.
+        assert!(reqs[1]["json"]["status"]
+            .as_str()
+            .unwrap()
+            .contains(&format!(
+                "{}?utm_source=mastodon&utm_medium=social&utm_campaign=dispatch-who-gets-the-water",
+                URL
+            )));
 
         // Bluesky: session → blob → createRecord with facets + external card.
         let b = results[1].payload.as_ref().unwrap();
@@ -1108,10 +1136,17 @@ mod tests {
             link["index"]["byteStart"].as_u64().unwrap() as usize,
             link["index"]["byteEnd"].as_u64().unwrap() as usize,
         );
+        // Clean URL displayed (offsets index it); facet links the tagged URL.
         assert_eq!(&text[s..e], URL);
+        assert!(!text.contains("utm_"));
+        let bsky_tagged = format!(
+            "{}?utm_source=bluesky&utm_medium=social&utm_campaign=dispatch-who-gets-the-water",
+            URL
+        );
+        assert_eq!(link["features"][0]["uri"], bsky_tagged);
         let ext = &record["embed"]["external"];
         assert_eq!(record["embed"]["$type"], "app.bsky.embed.external");
-        assert_eq!(ext["uri"], URL);
+        assert_eq!(ext["uri"], bsky_tagged);
         assert_eq!(ext["title"], "Who gets the water 🌊");
         assert!(ext["description"]
             .as_str()

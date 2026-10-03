@@ -114,13 +114,22 @@ fn trim_url(u: &str) -> &str {
 
 /// Rich-text facets for links and hashtags. Offsets are UTF-8 BYTE offsets
 /// into `text` (Rust string indices already are), as the lexicon requires.
+#[cfg(test)]
 pub fn build_facets(text: &str) -> Vec<Value> {
+    build_facets_mapped(text, &|u| u.to_string())
+}
+
+/// Like `build_facets`, but the link target can differ from the displayed
+/// text: `link_target(displayed_url)` gives the facet `uri` (e.g. the clean
+/// URL is shown, the UTM-tagged URL is linked). Byte offsets always index the
+/// displayed text.
+pub fn build_facets_mapped(text: &str, link_target: &dyn Fn(&str) -> String) -> Vec<Value> {
     let mut facets = Vec::new();
     for m in URL_RE.find_iter(text) {
-        let uri = trim_url(m.as_str());
+        let shown = trim_url(m.as_str());
         facets.push(json!({
-            "index": { "byteStart": m.start(), "byteEnd": m.start() + uri.len() },
-            "features": [{ "$type": "app.bsky.richtext.facet#link", "uri": uri }]
+            "index": { "byteStart": m.start(), "byteEnd": m.start() + shown.len() },
+            "features": [{ "$type": "app.bsky.richtext.facet#link", "uri": link_target(shown) }]
         }));
     }
     for caps in TAG_RE.captures_iter(text) {
@@ -158,14 +167,19 @@ pub fn images_embed(blob: Value, alt: &str) -> Value {
     })
 }
 
-pub fn post_record(text: &str, embed: Option<Value>, created_at: &str) -> Value {
+pub fn post_record_mapped(
+    text: &str,
+    embed: Option<Value>,
+    created_at: &str,
+    link_target: &dyn Fn(&str) -> String,
+) -> Value {
     let mut record = json!({
         "$type": "app.bsky.feed.post",
         "text": text,
         "createdAt": created_at,
         "langs": ["en"],
     });
-    let facets = build_facets(text);
+    let facets = build_facets_mapped(text, link_target);
     if !facets.is_empty() {
         record["facets"] = Value::Array(facets);
     }
