@@ -476,6 +476,12 @@ function getAgeColor(ts: number): string {
               <span v-if="file.content_type === 'weeknote'" class="weeknote-badge">WEEK</span>
               <span v-if="file.content_type === 'photos'" class="photo-badge">PHOTO</span>
               <span
+                v-if="file.content_type === 'dispatch'"
+                class="dispatch-badge"
+                data-tip="Dispatch piece → ejfox.com/dispatch/"
+                >DISPATCH</span
+              >
+              <span
                 v-if="file.password && !file.published_url"
                 class="protected-badge-draft"
                 data-tip="Will be password-protected"
@@ -971,6 +977,17 @@ function getAgeColor(ts: number): string {
   font-weight: 600;
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
+  padding: 1px 5px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  letter-spacing: 0.5px;
+}
+
+.dispatch-badge {
+  font-size: 7.5px;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
   padding: 1px 5px;
   border-radius: 8px;
   flex-shrink: 0;

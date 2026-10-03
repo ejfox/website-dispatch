@@ -17,16 +17,20 @@ mod alttext; // AI-powered alt text generation for images
 mod analytics; // Umami analytics integration
 mod asset_usage; // Tracks which Cloudinary images are used in which posts
 mod bin_paths; // Login-shell-resolved paths to node/git
+mod bluesky; // Bluesky AT Protocol XRPC client + post/facet/embed builders
 mod cloudinary; // Uploads images/videos to Cloudinary CDN
 mod companion; // Companion web UI server for mobile access
 pub mod config; // App configuration (vault path, publish targets, editors)
+mod dispatch; // Dispatch pieces: vault dispatch/ → content/dispatch/<slug>.md
 mod dock_menu; // Dock right-click menu (macOS, via objc_sys class_addMethod)
+mod frontmatter_edit; // Text-preserving frontmatter reads/edits (syndication write-back)
 mod gear;
 mod journal; // Publishing journal, streaks, milestones
 mod mac_native; // NSWindow proxy icon + dirty-dot via objc2 (macOS-only)
 mod media; // Multi-destination upload orchestrator (Cloudinary / R2 / both)
 mod menu; // Application menu bar builder
 mod obsidian; // Talks to Obsidian's Local REST API for backlinks
+mod omnipublish; // Fan-out syndication to every network with retry, idempotency, write-back
 mod open; // Open files in Obsidian, editors, terminal
 mod patterns; // Shared compiled regex patterns (LazyLock statics)
 mod preview; // Manages a local Node.js server for previewing posts
@@ -194,9 +198,16 @@ fn publish_file(
 ) -> Result<String, String> {
     // Check if this is a republish (file already exists in website repo)
     let target = config::resolve_target(target_id.as_deref())?;
-    let is_republish = vault::find_published_info_for_target(&target, &slug)
-        .0
-        .is_some();
+    let is_dispatch = config::get()
+        .map(|c| dispatch::is_dispatch_note(&c.vault.path, &source_path))
+        .unwrap_or(false);
+    let is_republish = if is_dispatch {
+        dispatch::find_published(&target, &slug).0.is_some()
+    } else {
+        vault::find_published_info_for_target(&target, &slug)
+            .0
+            .is_some()
+    };
 
     let url = publish::publish_file(&source_path, &slug, target_id.as_deref())?;
 
@@ -854,6 +865,34 @@ fn verify_mastodon() -> Result<String, String> {
     syndication::verify_mastodon()
 }
 
+// Omnipublish: post a vault note to every enabled network (Bluesky, Mastodon),
+// skip networks already in its `syndication:` frontmatter, write new links back.
+// `dry_run` (or DISPATCH_SYNDICATE_DRY_RUN=1) builds payloads without sending.
+#[tauri::command]
+async fn syndicate_everywhere(
+    source_path: String,
+    networks: Option<Vec<String>>,
+    texts: Option<std::collections::HashMap<String, String>>,
+    dry_run: Option<bool>,
+) -> Result<omnipublish::OmniReport, String> {
+    omnipublish::syndicate_everywhere(omnipublish::OmniRequest {
+        source_path,
+        networks,
+        texts,
+        dry_run: dry_run.unwrap_or(false),
+    })
+    .await
+}
+
+// Which syndication networks have credentials in .env (no network calls).
+#[tauri::command]
+fn syndication_network_status() -> serde_json::Value {
+    serde_json::json!({
+        "networks": omnipublish::network_status(),
+        "dry_run_env": omnipublish::env_dry_run(),
+    })
+}
+
 // Queue posts for syndication (from the wizard)
 #[tauri::command]
 fn queue_syndication(items: Vec<syndication_queue::NewQueueItem>) -> Result<Vec<i64>, String> {
@@ -1173,6 +1212,8 @@ pub fn run() {
             apply_alt_text,
             syndicate_post,
             verify_mastodon,
+            syndicate_everywhere,
+            syndication_network_status,
             queue_syndication,
             get_syndication_queue,
             get_post_syndication,

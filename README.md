@@ -58,6 +58,31 @@ Configure which editors appear in the toolbar (Obsidian, iA Writer, VS Code, or 
 ### Connections
 Cloudinary cloud name and analytics URL are configured here. API secrets (Cloudinary keys, Umami credentials) stay in `.env` — see `.env.example`.
 
+## Dispatch pieces
+
+Standalone journalism lives in the vault folder `dispatch/` (badged **DISPATCH** in the list). Publishing copies
+`<vault>/dispatch/<slug>.md` to website2 `content/dispatch/<slug>.md` (no year folder) and returns
+`https://ejfox.com/dispatch/<slug>`. Frontmatter: `title, dek, date, image, image_alt` (required with `image`),
+`tags, sources, data, claims, syndication, unlisted, draft`.
+
+## Omnipublish (Bluesky + Mastodon)
+
+The Syndicate wizard's **Post now** fans a published note out to every selected network independently:
+
+- **Bluesky** (AT Protocol): `createSession` → `uploadBlob` (card thumbnail) → `createRecord` with link/hashtag
+  facets (UTF-8 byte offsets) and an `app.bsky.embed.external` link card. Text is kept ≤300 graphemes.
+- **Mastodon**: image uploaded via `/api/v2/media` with alt text as `description`, then attached to the status.
+- Up to 3 attempts per network with backoff on transient errors; one network failing never blocks another.
+- Each resulting URL is written back into the vault note's `syndication: [{network, url}]` (minimal text edit), and a
+  network already listed there is skipped — re-running never double-posts.
+- A note with `image` but no `image_alt` gets alt text generated (alttext.rs) and saved first; images are never
+  posted without alt text. Password-protected and `draft: true` notes are never syndicated; unlisted notes go to
+  Mastodon as unlisted and skip Bluesky.
+- **Dry run** (button, or `DISPATCH_SYNDICATE_DRY_RUN=1`) builds and shows every payload without any network call.
+
+Credentials (`.env`): `BLUESKY_HANDLE`, `BLUESKY_APP_PASSWORD` (optional `BLUESKY_SERVICE`), `MASTODON_INSTANCE`,
+`MASTODON_ACCESS_TOKEN`.
+
 ## Keyboard Shortcuts
 
 | Key | Action |

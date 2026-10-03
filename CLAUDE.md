@@ -16,6 +16,7 @@
 | Folder | Dispatch sees it? | Meaning |
 |--------|-------------------|---------|
 | `blog/` | **Yes** | Intended for publication |
+| `dispatch/` | **Yes** | Standalone journalism → `content/dispatch/<slug>.md`, `/dispatch/<slug>` |
 | `drafts/` | **No** | Private thinking, never publish |
 | `week-notes/` | **No** | Personal reflections |
 | Everything else | **No** | Private vault content |

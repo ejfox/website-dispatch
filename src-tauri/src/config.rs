@@ -130,7 +130,12 @@ impl Default for AppConfig {
                     "attachments".into(),
                     "drafts".into(),
                 ],
-                publishable_dirs: vec!["blog".into(), "drafts".into(), "week-notes".into()],
+                publishable_dirs: vec![
+                    "blog".into(),
+                    "dispatch".into(),
+                    "drafts".into(),
+                    "week-notes".into(),
+                ],
             },
             publish_targets: vec![PublishTarget {
                 name: "Website".into(),

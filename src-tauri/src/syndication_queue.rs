@@ -3,7 +3,7 @@
 //! Stores pending/scheduled posts for each platform, runs a background
 //! scheduler that sends them at the right time, retries failures.
 
-use crate::syndication::{self, PostContent, SyndicationResult};
+use crate::syndication::SyndicationResult;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -281,6 +281,17 @@ fn mark_sent(id: i64, platform_url: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Park an item as pending (not picked up by the scheduler).
+fn mark_pending(id: i64) -> Result<(), String> {
+    let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
+    db.execute(
+        "UPDATE syndication_queue SET status = 'pending', updated_at = ?1 WHERE id = ?2",
+        params![now_iso(), id],
+    )
+    .map_err(|e| format!("Mark pending: {}", e))?;
+    Ok(())
+}
+
 /// Mark an item as failed.
 fn mark_failed(id: i64, error: &str) -> Result<(), String> {
     let db = get_db()?.lock().map_err(|e| format!("DB lock: {}", e))?;
@@ -305,19 +316,18 @@ pub fn send_item(id: i64) -> Result<SyndicationResult, String> {
         .find(|i| i.id == id)
         .ok_or_else(|| format!("Queue item {} not found", id))?;
 
-    let _post = PostContent {
-        title: item.post_title.clone(),
-        url: item.post_url.clone(),
-        slug: item.post_slug.clone(),
-        tags: vec![], // Tags are already baked into platform_text
-        dek: None,
-        content_type: "post".into(),
-        visibility: "public".into(),
-    };
-
-    // Override the composed text with the user-edited platform_text
+    // Mastodon + Bluesky go through omnipublish: idempotency against the
+    // note's `syndication:` frontmatter, media with alt text, bounded retry,
+    // and write-back of the resulting URL into the vault note.
     let result = match item.platform.as_str() {
-        "mastodon" => syndication::post_to_mastodon_with_text(&item.platform_text),
+        "mastodon" | "bluesky" => crate::omnipublish::send_queue_item(
+            &item.platform,
+            &item.post_slug,
+            &item.post_title,
+            &item.post_url,
+            &item.platform_text,
+            item.media_url.as_deref(),
+        ),
         // "linkedin" => syndication::post_to_linkedin_with_text(&item.platform_text, item.media_url.as_deref()),
         // "instagram" => syndication::post_to_instagram_with_text(&item.platform_text, item.media_url.as_deref().unwrap_or("")),
         _ => SyndicationResult {
@@ -330,6 +340,9 @@ pub fn send_item(id: i64) -> Result<SyndicationResult, String> {
 
     if result.success {
         let _ = mark_sent(id, result.url.as_deref().unwrap_or(""));
+    } else if crate::omnipublish::env_dry_run() {
+        // Dry run: park as pending (scheduler ignores it) instead of failing.
+        let _ = mark_pending(id);
     } else {
         let _ = mark_failed(id, result.error.as_deref().unwrap_or("Unknown error"));
     }
@@ -377,7 +390,13 @@ pub async fn run_syndication_scheduler(app_handle: tauri::AppHandle) {
                 item.scheduled_at
             );
 
-            match send_item(item.id) {
+            // Blocking HTTP (reqwest::blocking) must not run on the async
+            // runtime's worker threads — hop to the blocking pool.
+            let id = item.id;
+            let sent = tokio::task::spawn_blocking(move || send_item(id))
+                .await
+                .unwrap_or_else(|e| Err(format!("send task panicked: {}", e)));
+            match sent {
                 Ok(result) => {
                     let _ = app_handle.emit(
                         "syndication-sent",

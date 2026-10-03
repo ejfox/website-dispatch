@@ -21,13 +21,20 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
         let path = entry.path();
         let path_str = path.to_string_lossy();
 
+        // Vault dispatch/ is always publishable (it's the publish intent for
+        // Dispatch pieces), even on configs saved before it existed.
+        let is_dispatch = crate::dispatch::is_dispatch_note(&config.vault_path, &path_str);
+
         // Only include files from publishable directories
-        let in_publishable = publishable_dirs
-            .iter()
-            .any(|dir| path_str.contains(&format!("/{}/", dir)));
+        let in_publishable = is_dispatch
+            || publishable_dirs
+                .iter()
+                .any(|dir| path_str.contains(&format!("/{}/", dir)));
 
         // Determine content type from path
-        let content_type = if path_str.contains("/week-notes/") {
+        let content_type = if is_dispatch {
+            "dispatch"
+        } else if path_str.contains("/week-notes/") {
             "weeknote"
         } else {
             "post"
@@ -70,8 +77,8 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
             // `type: photos` (or `photo`) becomes a "photos" post so the UI can
             // give it gallery treatment. Weeknotes keep their path-based type —
             // the checks below depend on it and photos never live in week-notes/.
-            let content_type = if content_type == "weeknote" {
-                "weeknote"
+            let content_type = if content_type == "weeknote" || content_type == "dispatch" {
+                content_type
             } else if frontmatter
                 .get("type")
                 .map(|t| t.starts_with("photo"))
@@ -115,7 +122,16 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .and_then(|d| parse_iso_date(d))
                 .or(filename_date)
                 .unwrap_or(fs_created);
-            let title = extract_h1_title(&body);
+            // Dispatch pieces carry their title in frontmatter.
+            let title = if content_type == "dispatch" {
+                frontmatter
+                    .get("title")
+                    .filter(|t| !t.is_empty())
+                    .cloned()
+                    .or_else(|| extract_h1_title(&body))
+            } else {
+                extract_h1_title(&body)
+            };
             let filename = path
                 .file_name()
                 .unwrap_or_default()
@@ -123,8 +139,14 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .to_string();
             let slug = filename.trim_end_matches(".md");
 
-            let (published_url, published_date, published_content) =
-                find_published_info(&config.website_repo, slug);
+            let (published_url, published_date, published_content) = if content_type == "dispatch"
+            {
+                config::default_target()
+                    .map(|t| crate::dispatch::find_published(&t, slug))
+                    .unwrap_or((None, None, None))
+            } else {
+                find_published_info(&config.website_repo, slug)
+            };
             let source_dir = path
                 .parent()
                 .and_then(|p| p.strip_prefix(&config.vault_path).ok())
@@ -583,6 +605,14 @@ fn check_warnings(
     }
     if body.contains("](./") || body.contains("](/attachments") {
         warnings.push("Local images".into());
+    }
+
+    // Dispatch contract: image_alt is required when image is set.
+    if content_type == "dispatch"
+        && frontmatter.get("image").is_some_and(|v| !v.is_empty())
+        && !frontmatter.get("image_alt").is_some_and(|v| !v.is_empty())
+    {
+        warnings.push("Image without image_alt".into());
     }
 
     // Privacy linter for weeknotes — flag PII before publishing

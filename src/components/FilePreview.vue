@@ -718,6 +718,10 @@ const targetUrl = computed(() => {
         ?.find((t: any) => t.id === target.id)
         ?.domain?.replace(/^https?:\/\//, '') || 'ejfox.com'
     : 'ejfox.com'
+  // Dispatch pieces live at /dispatch/<slug> (no year folder).
+  if (props.file.content_type === 'dispatch') {
+    return `${domain}/dispatch/${props.file.filename.replace(/\.md$/, '')}`
+  }
   // slug already includes year (e.g. "2013/the-magazine-..."), so just append.
   return `${domain}/blog/${slug.value}`
 })
@@ -1220,7 +1224,8 @@ async function openPreview() {
       v-if="showSyndicationWizard && liveUrl"
       :post-url="liveUrl"
       :title="title"
-      :slug="slug"
+      :slug="slug || file.filename.replace(/\.md$/, '')"
+      :source-path="file.path"
       :dek="file.dek"
       :tags="file.tags"
       :content-type="file.content_type"
