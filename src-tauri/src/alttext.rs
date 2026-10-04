@@ -280,6 +280,21 @@ pub async fn generate_suggestions(file_path: &str) -> Result<AltTextResult, Stri
     })
 }
 
+/// Generate alt text for a single image URL (used for a note's frontmatter
+/// `image` before syndicating). Errors if no vision provider is configured.
+pub async fn generate_alt_for_url(image_url: &str) -> Result<String, String> {
+    if is_video_url(image_url) {
+        return Err("Video/GIF media: alt text must be written by hand".into());
+    }
+    let provider = detect_provider()?;
+    let (alt, _confidence) = call_vision_api(&provider, image_url).await?;
+    let alt = alt.trim().to_string();
+    if alt.is_empty() {
+        return Err("Vision API returned empty alt text".into());
+    }
+    Ok(alt)
+}
+
 /// Apply alt text suggestions to a markdown file, writing the changes.
 /// Handles both empty alt ![](url) and junk alt ![junk](url).
 pub fn apply_suggestions(

@@ -21,13 +21,20 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
         let path = entry.path();
         let path_str = path.to_string_lossy();
 
+        // Vault dispatch/ is always publishable (it's the publish intent for
+        // Dispatch pieces), even on configs saved before it existed.
+        let is_dispatch = crate::dispatch::is_dispatch_note(&config.vault_path, &path_str);
+
         // Only include files from publishable directories
-        let in_publishable = publishable_dirs
-            .iter()
-            .any(|dir| path_str.contains(&format!("/{}/", dir)));
+        let in_publishable = is_dispatch
+            || publishable_dirs
+                .iter()
+                .any(|dir| path_str.contains(&format!("/{}/", dir)));
 
         // Determine content type from path
-        let content_type = if path_str.contains("/week-notes/") {
+        let content_type = if is_dispatch {
+            "dispatch"
+        } else if path_str.contains("/week-notes/") {
             "weeknote"
         } else {
             "post"
@@ -66,6 +73,25 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
             let content = fs::read_to_string(path).unwrap_or_default();
             let (frontmatter, body) = parse_frontmatter(&content);
 
+            // Refine the path-derived content_type: a post with frontmatter
+            // `type: photos` (or `photo`) becomes a "photos" post so the UI can
+            // give it gallery treatment. Weeknotes keep their path-based type —
+            // the checks below depend on it and photos never live in week-notes/.
+            let content_type = if content_type == "weeknote" || content_type == "dispatch" {
+                content_type
+            } else if frontmatter
+                .get("type")
+                .map(|t| t.starts_with("photo"))
+                .unwrap_or(false)
+            {
+                "photos"
+            } else {
+                "post"
+            };
+
+            // Count body images and grab the first http one as a thumbnail.
+            let (image_count, thumbnail) = extract_images(&body);
+
             // Prefer frontmatter dates over filesystem dates
             // For week notes, derive date from filename (e.g. "2025-37.md" = week 37 of 2025)
             let filename_date = if content_type == "weeknote" {
@@ -96,7 +122,16 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .and_then(|d| parse_iso_date(d))
                 .or(filename_date)
                 .unwrap_or(fs_created);
-            let title = extract_h1_title(&body);
+            // Dispatch pieces carry their title in frontmatter.
+            let title = if content_type == "dispatch" {
+                frontmatter
+                    .get("title")
+                    .filter(|t| !t.is_empty())
+                    .cloned()
+                    .or_else(|| extract_h1_title(&body))
+            } else {
+                extract_h1_title(&body)
+            };
             let filename = path
                 .file_name()
                 .unwrap_or_default()
@@ -104,8 +139,14 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .to_string();
             let slug = filename.trim_end_matches(".md");
 
-            let (published_url, published_date, published_content) =
-                find_published_info(&config.website_repo, slug);
+            let (published_url, published_date, published_content) = if content_type == "dispatch"
+            {
+                config::default_target()
+                    .map(|t| crate::dispatch::find_published(&t, slug))
+                    .unwrap_or((None, None, None))
+            } else {
+                find_published_info(&config.website_repo, slug)
+            };
             let source_dir = path
                 .parent()
                 .and_then(|p| p.strip_prefix(&config.vault_path).ok())
@@ -154,6 +195,13 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 password,
                 publish_at,
                 content_type: content_type.into(),
+                image_count,
+                thumbnail,
+                draft: frontmatter
+                    .get("draft")
+                    .map(|v| v == "true" || v == "yes")
+                    .unwrap_or(false),
+                bench: frontmatter.get("bench").filter(|b| !b.is_empty()).cloned(),
             });
         }
     }
@@ -168,6 +216,36 @@ fn get_timestamp(time: std::io::Result<SystemTime>) -> u64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Count markdown images in a body and return the first http(s) one as a
+/// thumbnail (Cloudinary-hosted images display directly; local/embed paths are
+/// skipped for the thumbnail since they aren't resolvable in the webview).
+fn extract_images(body: &str) -> (usize, Option<String>) {
+    let mut count = 0;
+    let mut thumbnail: Option<String> = None;
+    let mut consider = |url: &str| {
+        count += 1;
+        if thumbnail.is_none() {
+            let u = url.trim();
+            if u.starts_with("http") {
+                thumbnail = Some(u.to_string());
+            }
+        }
+    };
+    // Markdown images: ![alt](url) — capture group 2 is the URL.
+    for caps in crate::patterns::MD_IMAGE_SRC.captures_iter(body) {
+        if let Some(url) = caps.get(2) {
+            consider(url.as_str());
+        }
+    }
+    // Raw HTML images: <img src="url"> — photo posts lean on these.
+    for caps in crate::patterns::HTML_IMG_SRC.captures_iter(body) {
+        if let Some(url) = caps.get(1) {
+            consider(url.as_str());
+        }
+    }
+    (count, thumbnail)
 }
 
 /// Parse a week note filename like "2025-37.md" or "2025-52-raw.md" into a timestamp
@@ -533,6 +611,9 @@ fn check_warnings(
     if body.contains("](./") || body.contains("](/attachments") {
         warnings.push("Local images".into());
     }
+
+    // (Dispatch `image` without `image_alt` isn't a warning: publishing
+    // generates and saves the alt text first — see ensure_image_alt.)
 
     // Privacy linter for weeknotes — flag PII before publishing
     if content_type == "weeknote" {

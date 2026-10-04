@@ -18,6 +18,55 @@ export interface MarkdownFile {
   password: string | null
   publish_at: string | null
   content_type: string
+  /** Number of markdown images in the body. */
+  image_count: number
+  /** First http(s) image URL, for a list thumbnail / gallery hint. */
+  thumbnail: string | null
+  /** `draft: true` in frontmatter (desk-started Dispatch pieces begin as drafts). */
+  draft?: boolean
+  /** chart-desk bench id (`bench:` frontmatter); publishing logs `desk shipped`. */
+  bench?: string | null
+}
+
+export interface DeskCheck {
+  status: string
+  confirmed?: number
+  claims?: number
+  summary?: string
+  issues?: string[]
+}
+
+export interface DeskStory {
+  id: string
+  dir: string
+  slug: string
+  status: string
+  star: string
+  coverage: string
+  question: string
+  counter: string
+  finding: string
+  angles: string[]
+  question_for_ej: string
+  caveats: string
+  chart_png: string | null
+  chart_html: string | null
+  review_page: string | null
+  check: DeskCheck | null
+  shipped: unknown | null
+  can_build: boolean
+  can_check: boolean
+}
+
+export interface DeskToday {
+  date: string
+  day_dir: string
+  streak: number
+  week: { date: string; shipped: boolean }[]
+  shipped_today: boolean
+  slot: { start: string; open: boolean }
+  bench: DeskStory | null
+  stories: DeskStory[]
 }
 
 export interface Backlink {

@@ -13,8 +13,7 @@ import remarkGfm from 'remark-gfm'
 import remarkRehype from 'remark-rehype'
 import rehypeRaw from 'rehype-raw'
 import rehypeStringify from 'rehype-stringify'
-import { remarkObsidianWikilinks } from '../utils/remarkObsidianWikilinks'
-import { remarkMermaid } from '../utils/remarkMermaid'
+import { remarkObsidianWikilinks, remarkMermaid } from '../utils/remark'
 
 interface RenderRequest {
   id: number

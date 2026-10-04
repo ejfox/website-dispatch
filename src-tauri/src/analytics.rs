@@ -110,15 +110,25 @@ pub async fn check_connection() -> bool {
     get_auth_token(&config).await.is_ok()
 }
 
+/// Site path for a published URL: https://ejfox.com/blog/2026/slug -> /blog/2026/slug,
+/// https://ejfox.com/dispatch/slug -> /dispatch/slug. Query/fragment dropped.
+pub fn post_path(published_url: &str) -> Option<&str> {
+    let idx = published_url
+        .find("/blog/")
+        .or_else(|| published_url.find("/dispatch/"))?;
+    let path = &published_url[idx..];
+    let end = path.find(['?', '#']).unwrap_or(path.len());
+    Some(&path[..end])
+}
+
+fn is_post_path(p: &str) -> bool {
+    p.starts_with("/blog/") || p.starts_with("/dispatch/")
+}
+
 pub async fn get_post_stats(published_url: &str, days: u32) -> Result<PostStats, String> {
     let config = get_config()?;
 
-    // Extract path from full URL: https://ejfox.com/blog/2026/slug -> /blog/2026/slug
-    let path = if let Some(idx) = published_url.find("/blog/") {
-        &published_url[idx..]
-    } else {
-        return Err("Invalid published URL".to_string());
-    };
+    let path = post_path(published_url).ok_or("Invalid published URL")?;
 
     let now = chrono::Utc::now();
     let start = now - chrono::Duration::days(days as i64);
@@ -171,11 +181,7 @@ pub async fn get_post_pageview_series(
 ) -> Result<Vec<u32>, String> {
     let config = get_config()?;
 
-    let path = if let Some(idx) = published_url.find("/blog/") {
-        &published_url[idx..]
-    } else {
-        return Err("Invalid published URL".to_string());
-    };
+    let path = post_path(published_url).ok_or("Invalid published URL")?;
 
     let now = chrono::Utc::now();
     let start = now - chrono::Duration::days(days as i64);
@@ -304,29 +310,90 @@ pub async fn get_top_posts(days: u32, limit: usize) -> Result<Vec<TopPost>, Stri
         .await
         .map_err(|e| format!("Failed to parse metrics: {}", e))?;
 
-    // Filter to blog posts only and limit
-    posts.retain(|p| p.x.starts_with("/blog/"));
+    // Filter to blog posts + dispatch pieces and limit
+    posts.retain(|p| is_post_path(&p.x));
     posts.truncate(limit);
 
     Ok(posts)
+}
+
+/// Visits to one post broken down by `utm_source` (read-only). Uses Umami's
+/// `type=query` metrics filtered to the post path; untagged traffic is left out.
+pub async fn get_post_utm_sources(
+    published_url: &str,
+    days: u32,
+) -> Result<Vec<TopPost>, String> {
+    let config = get_config()?;
+    let path = post_path(published_url).ok_or("Invalid published URL")?;
+    let now = chrono::Utc::now();
+    let start_ms = (now - chrono::Duration::days(days as i64)).timestamp_millis();
+    let end_ms = now.timestamp_millis();
+    let token = get_auth_token(&config).await?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!(
+        "{}/api/websites/{}/metrics?startAt={}&endAt={}&type=query&url={}",
+        config.url,
+        config.website_id,
+        start_ms,
+        end_ms,
+        urlencoding::encode(path)
+    );
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .map_err(|e| format!("Umami request failed: {}", e))?;
+    if response.status().as_u16() == 401 {
+        clear_token_cache();
+        return Err("Umami auth expired, retry".to_string());
+    }
+    if !response.status().is_success() {
+        return Err(format!("Umami metrics returned {}", response.status()));
+    }
+    let rows: Vec<TopPost> = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse metrics: {}", e))?;
+    Ok(aggregate_utm_sources(&rows))
+}
+
+/// Sum query-string rows by their utm_source value, largest first.
+pub fn aggregate_utm_sources(rows: &[TopPost]) -> Vec<TopPost> {
+    let mut totals: Vec<TopPost> = Vec::new();
+    for row in rows {
+        let Some(source) = crate::utm::query_param(&row.x, "utm_source") else {
+            continue;
+        };
+        let source = source.to_ascii_lowercase();
+        match totals.iter_mut().find(|t| t.x == source) {
+            Some(t) => t.y += row.y,
+            None => totals.push(TopPost { x: source, y: row.y }),
+        }
+    }
+    totals.sort_by_key(|t| std::cmp::Reverse(t.y));
+    totals
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    // One test, not two: these mutate process env vars, and parallel tests
+    // racing on the same vars made the suite flaky.
     #[test]
-    fn test_get_config_missing_vars() {
+    fn test_get_config_env() {
         // Without env vars set, should return error
         std::env::remove_var("UMAMI_USERNAME");
         std::env::remove_var("UMAMI_PASSWORD");
         std::env::remove_var("UMAMI_WEBSITE_ID");
         let result = get_config();
         assert!(result.is_err());
-    }
 
-    #[test]
-    fn test_get_config_with_vars() {
         std::env::set_var("UMAMI_USERNAME", "test_user");
         std::env::set_var("UMAMI_PASSWORD", "test_pass");
         std::env::set_var("UMAMI_WEBSITE_ID", "test_id");
@@ -361,5 +428,34 @@ mod tests {
         assert_eq!(posts.len(), 1);
         assert_eq!(posts[0].x, "/blog/2026/my-post");
         assert_eq!(posts[0].y, 100);
+    }
+
+    #[test]
+    fn test_post_path_blog_and_dispatch() {
+        assert_eq!(
+            post_path("https://ejfox.com/blog/2026/my-post"),
+            Some("/blog/2026/my-post")
+        );
+        assert_eq!(
+            post_path("https://ejfox.com/dispatch/water?utm_source=x#top"),
+            Some("/dispatch/water")
+        );
+        assert_eq!(post_path("https://ejfox.com/about"), None);
+        assert!(is_post_path("/dispatch/water"));
+    }
+
+    #[test]
+    fn test_aggregate_utm_sources() {
+        let rows: Vec<TopPost> = serde_json::from_str(
+            r#"[{"x":"utm_source=bluesky&utm_medium=social","y":7},
+                {"x":"?utm_medium=social&utm_source=Mastodon","y":3},
+                {"x":"utm_source=bluesky&utm_campaign=dispatch-water","y":2},
+                {"x":"ref=hn","y":40}]"#,
+        )
+        .unwrap();
+        let agg = aggregate_utm_sources(&rows);
+        assert_eq!(agg.len(), 2);
+        assert_eq!((agg[0].x.as_str(), agg[0].y), ("bluesky", 9));
+        assert_eq!((agg[1].x.as_str(), agg[1].y), ("mastodon", 3));
     }
 }

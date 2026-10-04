@@ -1,3 +1,12 @@
+// Remark (mdast) plugins for the markdown pipeline — Obsidian wikilinks and
+// mermaid fenced-block conversion. Pure AST transforms (no DOM), so they're
+// safe to run inside the markdown Web Worker.
+
+import { visit, SKIP } from 'unist-util-visit'
+import type { Plugin } from 'unified'
+import type { Root } from 'mdast'
+
+// ── Obsidian wikilinks ──────────────────────────────────────────────────────
 /**
  * Converts Obsidian [[wikilinks]] (with optional |alias and #heading) into
  * standard markdown links pointing to the same URLs website2 would generate.
@@ -9,9 +18,6 @@
  * Pass `baseUrl` to emit absolute URLs (so they open in a real browser when
  * clicked from the Tauri webview). Links get target="_blank" rel="noopener".
  */
-import { visit, SKIP } from 'unist-util-visit'
-import type { Plugin } from 'unified'
-import type { Root } from 'mdast'
 
 export interface ObsidianWikilinksOptions {
   baseUrl?: string
@@ -100,3 +106,23 @@ export const remarkObsidianWikilinks: Plugin<[ObsidianWikilinksOptions?], Root> 
       })
     }
   }
+
+// ── Mermaid fenced blocks ───────────────────────────────────────────────────
+/**
+ * Converts ```mermaid fenced code blocks into raw HTML <pre class="mermaid">
+ * nodes so subsequent passes leave them alone. mermaid.js renders them
+ * client-side after the HTML is mounted.
+ */
+
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+export const remarkMermaid: Plugin<[], Root> = () => (tree) => {
+  visit(tree, 'code', (node: any) => {
+    if (node.lang !== 'mermaid') return
+    node.type = 'html'
+    node.value = `<pre class="mermaid">${escapeHtml(node.value)}</pre>`
+    delete node.lang
+    delete node.meta
+  })
+}

@@ -53,6 +53,10 @@ const currentUpload = ref<string | null>(null)
 const results = ref<MediaFixResult[]>([])
 const error = ref<string | null>(null)
 const showConfirmApply = ref(false)
+/** In-flight guard for applyFixes — a double-click would rewrite the source
+ *  file twice (the second pass's originals are already gone), a wasted commit
+ *  at best and content corruption at worst. */
+const applying = ref(false)
 /** Set true after a successful `applyFixes()` so the modal can pivot to
  *  the "now describe images" handoff instead of just closing. */
 const justApplied = ref(false)
@@ -97,8 +101,9 @@ async function uploadAll() {
 }
 
 async function applyFixes() {
-  if (fixesToApply.value.length === 0) return
+  if (fixesToApply.value.length === 0 || applying.value) return
 
+  applying.value = true
   try {
     await invoke('apply_media_fixes', {
       filePath: props.filePath,
@@ -112,6 +117,8 @@ async function applyFixes() {
     justApplied.value = true
   } catch (e) {
     error.value = `Failed to apply fixes: ${String(e)}`
+  } finally {
+    applying.value = false
   }
 }
 
@@ -225,8 +232,8 @@ function getStatusClass(result: MediaFixResult): string {
         <code>{{ filePath }}</code>
         <p>{{ fixesToApply.length }} reference{{ fixesToApply.length === 1 ? '' : 's' }} will be replaced with Cloudinary URLs.</p>
         <div class="confirm-actions">
-          <button class="btn secondary" @click="showConfirmApply = false">Cancel</button>
-          <button class="btn primary" @click="applyFixes">Apply changes</button>
+          <button class="btn secondary" :disabled="applying" @click="showConfirmApply = false">Cancel</button>
+          <button class="btn primary" :disabled="applying" @click="applyFixes">{{ applying ? 'Applying…' : 'Apply changes' }}</button>
         </div>
       </div>
 

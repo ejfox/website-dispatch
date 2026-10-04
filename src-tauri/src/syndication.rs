@@ -153,72 +153,8 @@ pub fn post_to_mastodon(post: &PostContent) -> SyndicationResult {
     }
 }
 
-/// Post to Mastodon with pre-composed text (from the queue, user-edited).
-pub fn post_to_mastodon_with_text(status_text: &str) -> SyndicationResult {
-    let (instance, token) = match get_mastodon_config() {
-        Ok(c) => c,
-        Err(e) => {
-            return SyndicationResult {
-                platform: "mastodon".into(),
-                success: false,
-                url: None,
-                error: Some(e),
-            }
-        }
-    };
-
-    let url = format!("https://{}/api/v1/statuses", instance);
-    let body = serde_json::json!({
-        "status": status_text,
-        "visibility": "public",
-    });
-
-    let client = reqwest::blocking::Client::new();
-    let mut headers = HeaderMap::new();
-    let auth_value = match HeaderValue::from_str(&format!("Bearer {}", token)) {
-        Ok(v) => v,
-        Err(e) => {
-            return SyndicationResult {
-                platform: "mastodon".into(),
-                success: false,
-                url: None,
-                error: Some(format!("Invalid auth token: {}", e)),
-            }
-        }
-    };
-    headers.insert(AUTHORIZATION, auth_value);
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-    match client.post(&url).headers(headers).json(&body).send() {
-        Ok(resp) => {
-            if resp.status().is_success() {
-                let data: serde_json::Value = resp.json().unwrap_or_default();
-                let toot_url = data["url"].as_str().map(|s| s.to_string());
-                SyndicationResult {
-                    platform: "mastodon".into(),
-                    success: true,
-                    url: toot_url,
-                    error: None,
-                }
-            } else {
-                let status = resp.status();
-                let text = resp.text().unwrap_or_default();
-                SyndicationResult {
-                    platform: "mastodon".into(),
-                    success: false,
-                    url: None,
-                    error: Some(format!("Mastodon {} — {}", status, text)),
-                }
-            }
-        }
-        Err(e) => SyndicationResult {
-            platform: "mastodon".into(),
-            success: false,
-            url: None,
-            error: Some(format!("Request failed: {}", e)),
-        },
-    }
-}
+// (Queue sends with user-edited text now go through omnipublish::send_queue_item,
+// which adds media + alt text, retry, idempotency and frontmatter write-back.)
 
 /// Validate that the Mastodon config works (verifies token).
 pub fn verify_mastodon() -> Result<String, String> {
@@ -430,9 +366,114 @@ pub fn upload_og_image(file_path: &str, slug: &str) -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
+// Mastodon media (images + alt text) — used by omnipublish
+// ---------------------------------------------------------------------------
+
+use crate::bluesky::NetError;
+
+pub fn mastodon_configured() -> bool {
+    std::env::var("MASTODON_ACCESS_TOKEN")
+        .map(|t| !t.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// Mastodon caps media descriptions at 1500 chars.
+pub const MASTODON_ALT_MAX: usize = 1500;
+
+/// Upload an image via POST /api/v2/media with `description` = alt text.
+/// If the server answers 202 (async processing), polls GET /api/v1/media/:id
+/// (bounded) until it's ready. Returns the media id.
+pub fn mastodon_upload_media(
+    client: &reqwest::blocking::Client,
+    bytes: Vec<u8>,
+    mime: &str,
+    alt: &str,
+) -> Result<String, NetError> {
+    let (instance, token) = get_mastodon_config().map_err(NetError::fatal)?;
+    let ext = match mime {
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        _ => "jpg",
+    };
+    let part = reqwest::blocking::multipart::Part::bytes(bytes)
+        .file_name(format!("image.{}", ext))
+        .mime_str(mime)
+        .map_err(|e| NetError::fatal(format!("bad mime {}: {}", mime, e)))?;
+    let description: String = alt.chars().take(MASTODON_ALT_MAX).collect();
+    let form = reqwest::blocking::multipart::Form::new()
+        .part("file", part)
+        .text("description", description);
+
+    let resp = client
+        .post(format!("https://{}/api/v2/media", instance))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .map_err(|e| NetError::transient(format!("Mastodon media upload failed: {}", e)))?;
+    let status = resp.status();
+    let text = resp.text().unwrap_or_default();
+    if !status.is_success() {
+        return Err(NetError::from_status("Mastodon media", status, &text));
+    }
+    let data: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| NetError::fatal(format!("Mastodon media: bad JSON: {}", e)))?;
+    let id = data["id"]
+        .as_str()
+        .map(String::from)
+        .ok_or_else(|| NetError::fatal("Mastodon media: no id"))?;
+
+    if status.as_u16() == 202 || data["url"].is_null() {
+        for _ in 0..15 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let poll = client
+                .get(format!("https://{}/api/v1/media/{}", instance, id))
+                .bearer_auth(&token)
+                .send()
+                .map_err(|e| NetError::transient(format!("Mastodon media poll: {}", e)))?;
+            match poll.status().as_u16() {
+                200 => return Ok(id),
+                206 => continue,
+                _ => {
+                    let s = poll.status();
+                    let t = poll.text().unwrap_or_default();
+                    return Err(NetError::from_status("Mastodon media poll", s, &t));
+                }
+            }
+        }
+        return Err(NetError::transient("Mastodon media still processing after 15s"));
+    }
+    Ok(id)
+}
+
+/// POST /api/v1/statuses with optional media ids. Returns the toot URL.
+pub fn mastodon_post_status(
+    client: &reqwest::blocking::Client,
+    payload: &serde_json::Value,
+) -> Result<String, NetError> {
+    let (instance, token) = get_mastodon_config().map_err(NetError::fatal)?;
+    let resp = client
+        .post(format!("https://{}/api/v1/statuses", instance))
+        .bearer_auth(&token)
+        .json(payload)
+        .send()
+        .map_err(|e| NetError::transient(format!("Mastodon request failed: {}", e)))?;
+    let status = resp.status();
+    let text = resp.text().unwrap_or_default();
+    if !status.is_success() {
+        return Err(NetError::from_status("Mastodon", status, &text));
+    }
+    let data: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+    data["url"]
+        .as_str()
+        .map(String::from)
+        .ok_or_else(|| NetError::fatal("Mastodon: no url in response"))
+}
+
+// ---------------------------------------------------------------------------
 // Future platforms
 // ---------------------------------------------------------------------------
-// pub fn post_to_bluesky(post: &PostContent) -> SyndicationResult { ... }
+// Bluesky lives in bluesky.rs; fan-out to every network in omnipublish.rs.
 // pub fn post_to_linkedin(post: &PostContent) -> SyndicationResult { ... }
 
 // ---------------------------------------------------------------------------

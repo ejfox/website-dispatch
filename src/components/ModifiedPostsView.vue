@@ -11,7 +11,7 @@ import {
 } from '@phosphor-icons/vue'
 import PublishDiffPanel from './PublishDiffPanel.vue'
 import type { MarkdownFile } from '../types'
-import { useToasts } from '../composables/useToasts'
+import { useToasts } from '../composables/useUiState'
 
 /**
  * Triage view for posts where the vault source has diverged from the live

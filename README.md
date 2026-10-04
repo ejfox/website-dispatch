@@ -58,10 +58,55 @@ Configure which editors appear in the toolbar (Obsidian, iA Writer, VS Code, or 
 ### Connections
 Cloudinary cloud name and analytics URL are configured here. API secrets (Cloudinary keys, Umami credentials) stay in `.env` — see `.env.example`.
 
+## The Desk
+
+Dispatch opens on **the Desk**: the chart-desk feed from `~/.local/bin/desk today` — the streak, the week, the making
+slot, and today's bench (chart, finding, angles, the question for you, fact-check status), plus on-deck stories.
+
+- **Start piece** (`⏎`) runs `desk dispatch <bench> --json`, which writes a `draft: true` piece into the vault's
+  `dispatch/` folder; Dispatch selects it and opens it in your default editor. Pick an angle first (`1`–`3`) and it
+  becomes the title.
+- **Fact-check my version** (`x`) runs `desk check` in the background; the verdict and issues appear inline.
+- **Build** (on-deck stories) runs `desk build` after a confirm.
+- Publishing a `draft: true` piece asks to clear the draft first (one click). Publishing a piece with `bench:` is the
+  ship: after the syndication wizard (prefilled for Bluesky + Mastodon) closes, Dispatch runs
+  `desk shipped <bench> <site-url> [syndication urls…]` and the streak ticks up.
+
+Every `desk` call runs off the UI thread with a fixed PATH. Dev overrides: `DISPATCH_DESK_BIN` (stub desk),
+`CHART_DESK_CONFIG` (passed through to desk), `DISPATCH_CONFIG_DIR` (scratch app config/vault).
+
+## Dispatch pieces
+
+Standalone journalism lives in the vault folder `dispatch/` (badged **DISPATCH** in the list). Publishing copies
+`<vault>/dispatch/<slug>.md` to website2 `content/dispatch/<slug>.md` (no year folder) and returns
+`https://ejfox.com/dispatch/<slug>`. Frontmatter: `title, dek, date, image, image_alt` (required with `image`),
+`tags, sources, data, claims, syndication, unlisted, draft`.
+
+## Omnipublish (Bluesky + Mastodon)
+
+The Syndicate wizard's **Post now** fans a published note out to every selected network independently:
+
+- **Bluesky** (AT Protocol): `createSession` → `uploadBlob` (card thumbnail) → `createRecord` with link/hashtag
+  facets (UTF-8 byte offsets) and an `app.bsky.embed.external` link card. Text is kept ≤300 graphemes.
+- **Mastodon**: image uploaded via `/api/v2/media` with alt text as `description`, then attached to the status.
+- Up to 3 attempts per network with backoff on transient errors; one network failing never blocks another.
+- Each resulting URL is written back into the vault note's `syndication: [{network, url}]` (minimal text edit), and a
+  network already listed there is skipped — re-running never double-posts.
+- A note with `image` but no `image_alt` gets alt text generated (alttext.rs) and saved first; images are never
+  posted without alt text. Password-protected and `draft: true` notes are never syndicated; unlisted notes go to
+  Mastodon as unlisted and skip Bluesky.
+- **Dry run** (button, or `DISPATCH_SYNDICATE_DRY_RUN=1`) builds and shows every payload without any network call.
+
+Credentials (`.env`): `BLUESKY_HANDLE`, `BLUESKY_APP_PASSWORD` (optional `BLUESKY_SERVICE`), `MASTODON_INSTANCE`,
+`MASTODON_ACCESS_TOKEN`.
+
 ## Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
+| `d` | The Desk (from anywhere) |
+| `⏎` / `s` / `x` / `f` | Desk: start piece / sketch / fact-check / bench folder |
+| `1`–`3` | Desk: pick an angle (becomes the piece title) |
 | `j` / `k` | Navigate files |
 | `gg` / `G` | Top / bottom |
 | `/` or `Cmd+K` | Search |

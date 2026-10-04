@@ -19,7 +19,7 @@ import {
   PhClockCounterClockwise,
 } from '@phosphor-icons/vue'
 import type { MarkdownFile } from '../types'
-import { usePaletteHistory } from '../composables/usePaletteHistory'
+import { usePaletteHistory } from '../composables/useUiState'
 
 interface Action {
   id: string
@@ -432,15 +432,29 @@ watch(query, () => {
   selectedIdx.value = 0
 })
 
+// Keyboard nav scrolls the list, which slides rows under a stationary cursor
+// and fires @mouseenter — yanking the selection back to wherever the mouse
+// happens to rest. Suppress hover-select immediately after a keyboard move;
+// a real @mousemove re-enables it.
+const hoverSelectSuppressed = ref(false)
+function onListMouseMove() {
+  hoverSelectSuppressed.value = false
+}
+function onItemHover(idx: number) {
+  if (!hoverSelectSuppressed.value) selectedIdx.value = idx
+}
+
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     emit('close')
   } else if (e.key === 'ArrowDown') {
     e.preventDefault()
+    hoverSelectSuppressed.value = true
     selectedIdx.value = Math.min(selectedIdx.value + 1, results.value.length - 1)
     scrollSelectedIntoView()
   } else if (e.key === 'ArrowUp') {
     e.preventDefault()
+    hoverSelectSuppressed.value = true
     selectedIdx.value = Math.max(selectedIdx.value - 1, 0)
     scrollSelectedIntoView()
   } else if (e.key === 'Enter') {
@@ -479,14 +493,17 @@ function flatIdx(sectionIdx: number, itemIdx: number) {
 </script>
 
 <template>
-  <div v-if="show" class="palette-overlay" @click.self="emit('close')" @keydown="onKey">
+  <!-- keydown lives on the input only. The overlay isn't focusable, so a
+       handler here would just re-fire onKey as the input's event bubbles up —
+       that double-count made ArrowDown jump two rows at a time. -->
+  <div v-if="show" class="palette-overlay" @click.self="emit('close')">
     <div class="palette" role="dialog" aria-label="Command Palette">
       <div class="palette-input-row">
         <PhMagnifyingGlass :size="16" class="palette-icon" />
         <input ref="inputRef" v-model="query" class="palette-input" :placeholder="placeholderText" @keydown="onKey" />
         <kbd class="palette-esc">esc</kbd>
       </div>
-      <ul ref="listRef" class="palette-list">
+      <ul ref="listRef" class="palette-list" @mousemove="onListMouseMove">
         <template v-for="(section, sIdx) in grouped" :key="section.name">
           <li class="palette-section-header">{{ section.name }}</li>
           <li
@@ -495,7 +512,7 @@ function flatIdx(sectionIdx: number, itemIdx: number) {
             :data-idx="flatIdx(sIdx, iIdx)"
             class="palette-item"
             :class="{ selected: flatIdx(sIdx, iIdx) === selectedIdx }"
-            @mouseenter="selectedIdx = flatIdx(sIdx, iIdx)"
+            @mouseenter="onItemHover(flatIdx(sIdx, iIdx))"
             @click="runItem(item)"
           >
             <component :is="item.icon" :size="14" class="palette-item-icon" />

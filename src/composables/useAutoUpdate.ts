@@ -1,6 +1,6 @@
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
-import { useToasts } from './useToasts'
+import { useToasts } from './useUiState'
 
 /**
  * Check GitHub Releases for a newer Dispatch build and surface a sticky

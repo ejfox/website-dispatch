@@ -14,20 +14,33 @@ import ActionToolbar from './ActionToolbar.vue'
 import PublishConfirmModal from './PublishConfirmModal.vue'
 import WebmentionStatus from './WebmentionStatus.vue'
 import ResizeHandle from './ResizeHandle.vue'
-import { useResizable } from '../composables/useResizable'
+import { useResizable, useToasts } from '../composables/useUiState'
 // Markdown processing now lives in src/workers/markdownWorker.ts — see
 // `renderWorker` / `renderMarkdownInWorker` below. The pipeline imports
 // (unified / remark-* / rehype-*) used to live here and run on the main
 // thread, which was the single biggest cause of file-switch jank.
 import { renderMermaidIn } from '../utils/mermaidRenderer'
+import { perfTrace } from '../utils/perfTrace'
+// Worker + render/skeleton caches now live at module scope (survive tab
+// switches) — see utils/markdownRender.ts.
+import {
+  renderMarkdownInWorker,
+  fetchServerRenderedHtml,
+  isActiveRender,
+  renderCache,
+  skeletonCache,
+  cacheRender,
+  parseSkeleton,
+  scheduleSkeletonCache,
+  CHARS_PER_LINE,
+  type SkeletonBlock,
+} from '../utils/markdownRender'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { useLocalStorage } from '@vueuse/core'
-import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics } from '../types'
+import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics, DeskToday } from '../types'
 import { useTagSuggestions } from '../composables/useTagSuggestions'
-import { usePublishing } from '../composables/usePublishing'
-import { usePostActions } from '../composables/usePostActions'
-import { useAppConfig } from '../composables/useAppConfig'
-import { useGitStatus } from '../composables/useGitStatus'
+import { usePublishing, usePostActions } from '../composables/usePublishFlow'
+import { useAppConfig, useGitStatus } from '../composables/useVaultData'
 
 const props = defineProps<{ file: MarkdownFile }>()
 const emit = defineEmits<{ published: []; 'jump-to-path': [path: string] }>()
@@ -83,302 +96,12 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;')
 }
 
-// Dedicated Web Worker for markdown processing. The whole unified pipeline
-// runs off the main thread so file switching never blocks the UI — even
-// during a heavy rehypeRaw pass on a long post the click/scroll/keyboard
-// stays responsive. One worker for the lifetime of the component;
-// requests are tagged with a monotonic id and the main thread throws away
-// any response whose id doesn't match the currently-active request.
-const renderWorker = new Worker(
-  new URL('../workers/markdownWorker.ts', import.meta.url),
-  { type: 'module' },
-)
-let nextRenderId = 0
-let activeRenderId = -1
-const pendingRenders = new Map<
-  number,
-  { resolve: (html: string) => void; reject: (e: Error) => void }
->()
-
-renderWorker.addEventListener('message', (e: MessageEvent) => {
-  const { id, html, error } = e.data as { id: number; html?: string; error?: string }
-  const pending = pendingRenders.get(id)
-  if (!pending) return
-  pendingRenders.delete(id)
-  if (error) pending.reject(new Error(error))
-  else pending.resolve(html ?? '')
-})
-
-// If the worker itself fails — a module-load error (a bad import, an
-// unsupported feature in the webview) or a serialization failure — it emits
-// an `error`/`messageerror` event, NOT a per-request message. Without these
-// handlers the render promise never settles: the preview pane spins on its
-// skeleton forever and the shimmer animation quietly burns CPU. Reject every
-// in-flight render so the caller falls back to raw content and surfaces the
-// real reason instead of hanging.
-function failAllPending(reason: string) {
-  const err = new Error(reason)
-  for (const [, pending] of pendingRenders) pending.reject(err)
-  pendingRenders.clear()
-}
-let workerDead = false
-renderWorker.addEventListener('error', (e: ErrorEvent) => {
-  workerDead = true
-  // Include WHERE it died — a module-load ReferenceError in a bundled dep
-  // (e.g. a `browser` build touching `document` in a worker) is otherwise a
-  // needle in a haystack. filename:line points straight at the culprit chunk.
-  const where = e.filename ? ` @ ${e.filename}:${e.lineno}:${e.colno}` : ''
-  console.error(`[render] markdown worker crashed: ${e.message || 'failed to load'}${where}`)
-  failAllPending(`markdown worker error: ${e.message || 'worker failed to load'}${where}`)
-})
-renderWorker.addEventListener('messageerror', () => {
-  console.error('[render] markdown worker messageerror (uncloneable payload)')
-  failAllPending('markdown worker messageerror')
-})
-
-// Hard ceiling on a single render. The pipeline processes a long post in
-// well under a second, so anything past this means the worker is wedged or
-// its response was lost — reject rather than leave the skeleton up forever.
-const RENDER_TIMEOUT_MS = 10000
-
-function renderMarkdownInWorker(content: string, baseUrl: string): {
-  id: number
-  promise: Promise<string>
-} {
-  const id = ++nextRenderId
-  activeRenderId = id
-  // A module-load crash kills the worker permanently — every later postMessage
-  // just goes nowhere and times out after 10s. Once we know it's dead, fail
-  // fast so we hit the server fallback immediately instead of stalling.
-  if (workerDead) {
-    return { id, promise: Promise.reject(new Error('markdown worker is dead (earlier crash)')) }
-  }
-  const promise = new Promise<string>((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      if (pendingRenders.delete(id)) {
-        reject(
-          new Error(
-            `markdown render timed out after ${RENDER_TIMEOUT_MS}ms — worker unresponsive`,
-          ),
-        )
-      }
-    }, RENDER_TIMEOUT_MS)
-    pendingRenders.set(id, {
-      resolve: (html) => {
-        window.clearTimeout(timer)
-        resolve(html)
-      },
-      reject: (e) => {
-        window.clearTimeout(timer)
-        reject(e)
-      },
-    })
-  })
-  renderWorker.postMessage({ id, content, baseUrl })
-  return { id, promise }
-}
-
-// Fallback renderer. The client-side worker can fail outright in the desktop
-// webview — a module worker has no `document`, and some pipeline deps touch
-// it, so the worker throws `Can't find variable: document` and renders
-// nothing. The preview server renders the SAME file through website2's real
-// pipeline and is already primed by the /set-file POST in loadFileContent,
-// so poll its /content until this file's render lands. Returns null on
-// timeout so the caller can fall back to raw text.
-async function fetchServerRenderedHtml(
-  filePath: string,
-  timeoutMs = 8000,
-): Promise<string | null> {
-  const deadline = performance.now() + timeoutMs
-  const wantBase = filePath.split('/').pop() || ''
-  while (performance.now() < deadline) {
-    try {
-      const res = await fetch('http://127.0.0.1:6419/content')
-      const data = (await res.json()) as {
-        html?: string
-        filename?: string
-        processing?: boolean
-      }
-      if (
-        data.html &&
-        data.html.trim() &&
-        (!data.filename || data.filename === wantBase)
-      ) {
-        return data.html
-      }
-    } catch {
-      // server not up yet / transient — keep polling
-    }
-    await new Promise((r) => setTimeout(r, 150))
-  }
-  return null
-}
-
-// LRU-ish cache of rendered HTML keyed on `path|modified`. Flipping between
-// two posts (or any post you've recently viewed) becomes instant — no
-// re-running the unified pipeline. ~80-150ms savings per cache hit on
-// long posts. Invalidates automatically when the file is edited because
-// the `modified` mtime changes.
-//
-// We also cache the parsed skeleton blocks here so the next load doesn't
-// need to re-parse — useful on cold cache-key misses where the layout is
-// still likely close to the cached version.
-type SkeletonBlock = {
-  type: 'heading' | 'paragraph' | 'code' | 'list' | 'quote' | 'image' | 'hr'
-  level?: number // for headings: 1..6
-  lines: number // how many wrapped lines to render
-  shortLast?: boolean // last line ~50% (true for prose paragraphs)
-}
-type CacheEntry = { stripped: string; rendered: string; skeleton: SkeletonBlock[] }
-const renderCache = new Map<string, CacheEntry>()
-const RENDER_CACHE_MAX = 30
 function renderCacheKey(file: { path: string; modified: number }) {
   // Include the active publish-target domain because remarkObsidianWikilinks
   // bakes it into the rendered HTML — same file rendered against a
   // different target should not share cache.
   return `${file.path}|${file.modified}|${activeTargetDomain.value}`
 }
-/**
- * Cheap block-level parser of markdown body text. Returns a structural
- * outline used to render an accurate loading skeleton — not a full
- * markdown parser. We only need to know "what KIND of block is here, and
- * how many lines does it roughly take." We deliberately don't use the
- * unified pipeline here because the whole point is to have something
- * before unified finishes processing.
- *
- * Wraps long paragraphs at ~70 chars/line for skeleton purposes, which
- * roughly matches the rendered prose column at default zoom.
- */
-const CHARS_PER_LINE = 70
-function parseSkeleton(markdown: string): SkeletonBlock[] {
-  if (!markdown) return []
-  const blocks: SkeletonBlock[] = []
-  const lines = markdown.split('\n')
-  let i = 0
-  while (i < lines.length) {
-    const line = lines[i]
-    const trimmed = line.trim()
-
-    if (!trimmed) {
-      i++
-      continue
-    }
-
-    // Heading
-    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/)
-    if (heading) {
-      blocks.push({
-        type: 'heading',
-        level: heading[1].length,
-        lines: 1,
-      })
-      i++
-      continue
-    }
-
-    // Horizontal rule
-    if (/^([-*_])\1\1+\s*$/.test(trimmed)) {
-      blocks.push({ type: 'hr', lines: 1 })
-      i++
-      continue
-    }
-
-    // Fenced code block
-    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
-      const fence = trimmed.slice(0, 3)
-      let codeLines = 0
-      i++
-      while (i < lines.length && !lines[i].trimStart().startsWith(fence)) {
-        codeLines++
-        i++
-      }
-      i++ // skip closing fence
-      blocks.push({ type: 'code', lines: Math.max(1, codeLines) })
-      continue
-    }
-
-    // Blockquote — collapse contiguous `>` lines into one block
-    if (trimmed.startsWith('>')) {
-      let quoteText = ''
-      while (i < lines.length && lines[i].trim().startsWith('>')) {
-        quoteText += ' ' + lines[i].replace(/^\s*>\s?/, '')
-        i++
-      }
-      const wrapped = Math.max(1, Math.ceil(quoteText.trim().length / CHARS_PER_LINE))
-      blocks.push({ type: 'quote', lines: wrapped, shortLast: true })
-      continue
-    }
-
-    // List — collapse contiguous list items into one block
-    if (/^([-*+]|\d+\.)\s+/.test(trimmed)) {
-      let listItems = 0
-      while (i < lines.length) {
-        const t = lines[i].trim()
-        if (!t) break
-        if (!/^([-*+]|\d+\.)\s+/.test(t)) break
-        listItems++
-        i++
-      }
-      blocks.push({ type: 'list', lines: listItems })
-      continue
-    }
-
-    // Standalone image (line that's only `![…](…)`)
-    if (/^!\[[^\]]*\]\([^)]+\)\s*$/.test(trimmed)) {
-      blocks.push({ type: 'image', lines: 1 })
-      i++
-      continue
-    }
-
-    // Paragraph — accumulate until blank line or block-starting line.
-    let para = trimmed
-    let j = i + 1
-    while (j < lines.length) {
-      const next = lines[j].trim()
-      if (!next) break
-      if (/^#{1,6}\s/.test(next) || /^([-*_])\1\1+\s*$/.test(next)) break
-      if (next.startsWith('```') || next.startsWith('~~~')) break
-      if (next.startsWith('>')) break
-      if (/^([-*+]|\d+\.)\s+/.test(next)) break
-      para += ' ' + next
-      j++
-    }
-    const wrappedLines = Math.max(1, Math.ceil(para.length / CHARS_PER_LINE))
-    blocks.push({ type: 'paragraph', lines: wrappedLines, shortLast: true })
-    i = j
-  }
-  return blocks
-}
-
-function cacheRender(key: string, entry: CacheEntry) {
-  // Evict oldest if over the cap. Map preserves insertion order, so the
-  // first key is the oldest. Re-set to bump recency on hits.
-  if (renderCache.size >= RENDER_CACHE_MAX && !renderCache.has(key)) {
-    const first = renderCache.keys().next().value
-    if (first !== undefined) renderCache.delete(first)
-  }
-  renderCache.delete(key) // re-insert to mark as most-recent
-  renderCache.set(key, entry)
-}
-
-/**
- * Secondary cache keyed by file path ONLY (no mtime). The full render
- * cache invalidates on every edit, but the structural outline is usually
- * still close to the previous version — close enough for a skeleton.
- * This lets the second-visit-after-edit show an accurate-shaped skeleton
- * instead of falling back to generic random widths.
- */
-const skeletonCache = new Map<string, SkeletonBlock[]>()
-const SKELETON_CACHE_MAX = 50
-function cacheSkeleton(path: string, blocks: SkeletonBlock[]) {
-  if (skeletonCache.size >= SKELETON_CACHE_MAX && !skeletonCache.has(path)) {
-    const first = skeletonCache.keys().next().value
-    if (first !== undefined) skeletonCache.delete(first)
-  }
-  skeletonCache.delete(path)
-  skeletonCache.set(path, blocks)
-}
-
 function selectTarget(id: string) {
   selectedTargetId.value = id
 }
@@ -464,9 +187,10 @@ function endPreviewLoad() {
  * forever for that path.
  */
 const skeletonBlocks = computed<SkeletonBlock[]>(() => {
-  // Tier 1: exact cache hit
+  // Tier 1: exact cache hit (skeleton may still be pending its deferred
+  // computation — fall through to the cheaper tiers if so)
   const exact = renderCache.get(renderCacheKey(props.file))
-  if (exact) return exact.skeleton
+  if (exact && exact.skeleton) return exact.skeleton
 
   // Tier 2: path-only skeleton cache (any prior visit, mtime irrelevant)
   const recent = skeletonCache.get(props.file.path)
@@ -613,11 +337,158 @@ const {
   onPublished: () => emit('published'),
   // Auto-fire webmentions after publish/republish. Bridgy Fed forwarding
   // is opt-in via Settings → Connections (default off).
-  onPublishSuccess: () => {
+  onPublishSuccess: (url: string) => {
     const bridgyFed = appConfig.value?.webmentions_bridgy_fed === true
     autoTriggerOnPublish(bridgyFed)
+    afterPublish(url)
   },
 })
+
+// ── Share links (UTM-tagged for Umami) ─────────────────────────────────────
+const postSources = ref<{ x: string; y: number }[]>([])
+async function copyShareLink(source: string, medium: string) {
+  const url = liveUrl.value
+  if (!url) return
+  try {
+    const tagged = await invoke<string>('share_link', { url, source, medium })
+    await navigator.clipboard.writeText(tagged)
+    toasts.success(`Copied link for ${source === 'x' ? 'X' : source}`, tagged)
+  } catch (e) {
+    toasts.error("Couldn't copy the link", String(e))
+  }
+}
+
+// ── Publish = ship ──────────────────────────────────────────────────────────
+// A piece with `bench:` frontmatter came from the chart desk. Publishing it is
+// the day's ship: log `desk shipped <bench> <url> [syndication urls…]`. For a
+// Dispatch piece the syndication wizard opens first (EJ confirms the send),
+// and the ship is logged when it closes, with whatever links it produced.
+const toasts = useToasts()
+const pendingShip = ref<{ bench: string; url: string } | null>(null)
+const syndicatedUrls = ref<string[]>([])
+const autoWizard = ref(false)
+
+function afterPublish(url: string) {
+  const bench = props.file.bench
+  const firstPublish = !props.file.published_url // props not refreshed yet
+  if (props.file.content_type === 'dispatch' && firstPublish) {
+    pendingShip.value = bench ? { bench, url } : null
+    syndicatedUrls.value = []
+    autoWizard.value = true
+    showSyndicationWizard.value = true
+  } else if (bench) {
+    shipToDesk(bench, [url], !firstPublish)
+  }
+}
+
+async function shipToDesk(bench: string, urls: string[], onlyIfUnshipped = false) {
+  try {
+    const today = await invoke<DeskToday>('desk_today')
+    const story = today.stories.find((s) => s.id === bench)
+    if (story?.shipped) return // already logged
+    if (!story && onlyIfUnshipped) return // republish of an older piece
+  } catch {
+    /* desk unreachable — still try to log */
+  }
+  try {
+    const msg = await invoke<string>('desk_shipped', { id: bench, urls })
+    toasts.success('Shipped', msg || undefined)
+  } catch (e) {
+    const id: number = toasts.push({
+      kind: 'error',
+      message: "Published, but the ship didn't get logged on the desk",
+      detail: String(e),
+      action: {
+        label: 'Retry',
+        run: () => {
+          toasts.dismiss(id)
+          shipToDesk(bench, urls)
+        },
+      },
+      ttl: 0,
+    })
+  }
+}
+
+function onWizardSyndicated(urls: string[]) {
+  syndicatedUrls.value = urls
+}
+
+function onWizardClosed() {
+  showSyndicationWizard.value = false
+  autoWizard.value = false
+  const ship = pendingShip.value
+  pendingShip.value = null
+  if (ship) shipToDesk(ship.bench, [ship.url, ...syndicatedUrls.value])
+}
+
+// ── Draft gate + alt-text prep before publishing ───────────────────────────
+const showDraftPrompt = ref(false)
+const draftPromptRepublish = ref(false)
+const clearingDraft = ref(false)
+
+function requestPublish(isRepublish = false) {
+  if (props.file.draft) {
+    draftPromptRepublish.value = isRepublish
+    showDraftPrompt.value = true
+    return
+  }
+  openPublishConfirm(isRepublish)
+}
+
+async function clearDraftAndContinue() {
+  clearingDraft.value = true
+  try {
+    await invoke('remove_draft', { path: props.file.path })
+    showDraftPrompt.value = false
+    emit('published') // refresh the list so the DRAFT badge goes away
+    openPublishConfirm(draftPromptRepublish.value)
+  } catch (e) {
+    toasts.error("Couldn't clear draft", String(e))
+  }
+  clearingDraft.value = false
+}
+
+function onDraftPromptKey(e: KeyboardEvent) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    clearDraftAndContinue()
+  } else if (e.key === 'Escape') {
+    showDraftPrompt.value = false
+  }
+}
+watch(showDraftPrompt, (open) => {
+  if (open) window.addEventListener('keydown', onDraftPromptKey)
+  else window.removeEventListener('keydown', onDraftPromptKey)
+})
+
+// Dispatch pieces need image_alt with image (website contract). Generate and
+// save it before publishing rather than blocking.
+async function publishWithPrep(isRepublish: boolean) {
+  if (props.file.content_type === 'dispatch') {
+    try {
+      const alt = await invoke<string | null>('ensure_image_alt', { path: props.file.path })
+      if (alt) console.log('[publish] image_alt ready:', alt)
+    } catch (e) {
+      closePublishConfirm()
+      const id: number = toasts.push({
+        kind: 'error',
+        message: "Didn't publish: the image needs alt text",
+        detail: String(e),
+        action: {
+          label: 'Retry',
+          run: () => {
+            toasts.dismiss(id)
+            publishWithPrep(isRepublish)
+          },
+        },
+        ttl: 0,
+      })
+      return
+    }
+  }
+  await publish(isRepublish)
+}
 
 // Tag suggestions composable
 const { availableTags, suggestedTags, addingTag, fetchAvailableTags, analyzeTags, addTag } = useTagSuggestions({
@@ -660,7 +531,7 @@ watch(activeTargetDomain, async (domain) => {
   try {
     const { id: renderId, promise } = renderMarkdownInWorker(content.value, domain)
     const html = await promise
-    if (renderId !== activeRenderId) return
+    if (!isActiveRender(renderId)) return
     renderedContent.value = html
     nextTick(() => renderMermaidIn(document))
   } catch {
@@ -690,6 +561,11 @@ async function loadFileContent(file: MarkdownFile | null) {
       const ms = (performance.now() - fromT0).toFixed(1)
       console.log(`[perf] file-switch ${phase} ${ms}ms · ${switchName}`)
     }
+    // Cross into the shared click→paint tracer. The delta from the click (set
+    // in FileList.onRowClick) to here is everything between the mousedown and
+    // this function running: emit, App.vue @select, the selectedFile watchers,
+    // and Vue re-rendering the sidebar. Often the surprising part of the lag.
+    perfTrace.mark('loadContent start')
 
     // Reset *metadata* refs synchronously so the next paint shows a clean
     // slate (without this you briefly see OLD analytics / backlinks under
@@ -735,6 +611,8 @@ async function loadFileContent(file: MarkdownFile | null) {
       content.value = cached.stripped
       renderedContent.value = cached.rendered
       perf('cache-hit TOTAL')
+      perfTrace.mark('cache hit · ref set')
+      perfTrace.paintAfter('painted')
       // Cache hit is synchronous → no skeleton flash should appear.
       endPreviewLoad()
       // Mermaid blocks in cached HTML may not have been re-processed if
@@ -759,6 +637,7 @@ async function loadFileContent(file: MarkdownFile | null) {
         .then(async (raw) => {
           if (file.path !== props.file.path) return
           perf('content-ipc done')
+          perfTrace.mark('content IPC done')
           const stripped = (raw as string).replace(/^---\n[\s\S]*?\n---\n*/, '')
           content.value = stripped
           // Real-world guard: a fully empty file (or one that's only
@@ -785,7 +664,7 @@ async function loadFileContent(file: MarkdownFile | null) {
             // Stale-render guard: if the user clicked another file mid-
             // worker, throw away this response. activeRenderId tracks
             // the latest request — earlier ones are dead by definition.
-            if (file.path !== props.file.path || renderId !== activeRenderId) return
+            if (file.path !== props.file.path || !isActiveRender(renderId)) return
             // Guard: never cache an empty render — that's how the pane
             // started returning empty on every subsequent visit. Show the
             // raw content as a fallback so the user gets *something*
@@ -806,16 +685,21 @@ async function loadFileContent(file: MarkdownFile | null) {
               endPreviewLoad()
               return
             }
+            perfTrace.mark('markdown worker done')
             renderedContent.value = rendered
             console.log(
               `[perf] file-switch markdown-only ${(performance.now() - markdownT0).toFixed(1)}ms · ${switchName}`,
             )
             perf('TOTAL (rendered)')
-            const skeleton = parseSkeleton(stripped)
-            cacheRender(cacheKey, { stripped, rendered, skeleton })
-            cacheSkeleton(file.path, skeleton)
+            perfTrace.mark('rendered · ref set')
+            // Flush after the browser actually paints the new post.
+            perfTrace.paintAfter('painted')
+            // Cache the render synchronously (cheap, keeps re-clicks instant);
+            // defer the expensive skeleton parse off the paint path.
+            cacheRender(cacheKey, { stripped, rendered })
             endPreviewLoad()
             nextTick(() => renderMermaidIn(document))
+            scheduleSkeletonCache(cacheKey, file.path, stripped)
           } catch (err) {
             if (file.path !== props.file.path) return
             console.error('[render] markdown processor threw', err, 'on', file.path)
@@ -827,12 +711,13 @@ async function loadFileContent(file: MarkdownFile | null) {
             if (file.path !== props.file.path) return
             if (serverHtml && serverHtml.trim()) {
               renderedContent.value = serverHtml
-              const skeleton = parseSkeleton(stripped)
-              cacheRender(cacheKey, { stripped, rendered: serverHtml, skeleton })
-              cacheSkeleton(file.path, skeleton)
+              perfTrace.mark('server fallback · ref set')
+              perfTrace.paintAfter('painted (server)')
+              cacheRender(cacheKey, { stripped, rendered: serverHtml })
               renderError.value = null
               endPreviewLoad()
               nextTick(() => renderMermaidIn(document))
+              scheduleSkeletonCache(cacheKey, file.path, stripped)
             } else {
               // Last resort: show the raw content plus the error so the user
               // can still see what they wrote AND know what went wrong.
@@ -903,6 +788,14 @@ async function loadFileContent(file: MarkdownFile | null) {
           .finally(() => {
             if (file.path === props.file.path) loadingStats.value = false
           })
+        postSources.value = []
+        invoke<{ x: string; y: number }[]>('get_post_sources', { url: file.published_url, days: 30 })
+          .then((res) => {
+            if (file.path === props.file.path) postSources.value = res || []
+          })
+          .catch(() => {
+            /* optional: needs Umami */
+          })
         invoke('get_post_pageview_series', { url: file.published_url, days: 30 })
           .then((res) => {
             if (file.path !== props.file.path) return
@@ -967,6 +860,8 @@ const titleIsDerived = computed(() => !props.file.title)
 // out via `v-if="slug"` instead of triggering ENOENT on a non-blog file.
 const slug = computed(() => {
   const baseName = props.file.filename.replace('.md', '')
+  // Dispatch pieces: bare slug → content/dispatch/<slug>.md (no year).
+  if (props.file.content_type === 'dispatch') return baseName
   const yearMatch = props.file.path.match(/\/blog\/(\d{4})\//)
   if (yearMatch) return `${yearMatch[1]}/${baseName}`
   return props.file.path.includes('/blog/') ? baseName : ''
@@ -980,6 +875,10 @@ const targetUrl = computed(() => {
         ?.find((t: any) => t.id === target.id)
         ?.domain?.replace(/^https?:\/\//, '') || 'ejfox.com'
     : 'ejfox.com'
+  // Dispatch pieces live at /dispatch/<slug> (no year folder).
+  if (props.file.content_type === 'dispatch') {
+    return `${domain}/dispatch/${props.file.filename.replace(/\.md$/, '')}`
+  }
   // slug already includes year (e.g. "2013/the-magazine-..."), so just append.
   return `${domain}/blog/${slug.value}`
 })
@@ -996,6 +895,30 @@ const missingAltTextCount = computed(() => {
   const match = w.match(/\((\d+)\)/)
   return match ? parseInt(match[1]) : 0
 })
+
+// ── Photo-post treatment ─────────────────────────────────────────────────
+// A post the vault marks `type: photos` (content_type set in vault.rs). These
+// get a contact-sheet gallery up top + a media/alt-text-first summary banner.
+const isPhotoPost = computed(() => props.file.content_type === 'photos')
+
+// Every image URL in the rendered body, pulled straight from the HTML we're
+// about to show — the gallery and the inline render stay in sync by construction.
+const galleryImages = computed<string[]>(() => {
+  if (!isPhotoPost.value || !renderedContent.value) return []
+  const urls: string[] = []
+  const re = /<img[^>]+src="([^"]+)"/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(renderedContent.value))) urls.push(m[1])
+  return urls
+})
+
+// Small cropped Cloudinary variant for gallery cells (keeps the grid light).
+function galleryThumb(url: string): string {
+  if (url.includes('res.cloudinary.com') && url.includes('/upload/')) {
+    return url.replace('/upload/', '/upload/w_320,h_320,c_fill,q_auto,f_auto/')
+  }
+  return url
+}
 
 // Visibility states
 const isUnlisted = computed(() => props.file.unlisted || !!props.file.password)
@@ -1112,7 +1035,7 @@ function copyUrlAndPassword() {
 }
 
 // Expose methods for parent component
-defineExpose({ openPublishConfirm })
+defineExpose({ openPublishConfirm: requestPublish })
 
 async function openInObsidian() {
   await invoke('open_in_obsidian', { path: props.file.path })
@@ -1196,6 +1119,20 @@ async function openPreview() {
       </template>
     </div>
 
+    <!-- Photo-post summary: media + alt-text state up top, since for a photo
+         post those ARE the work. Buttons jump straight into the workflows. -->
+    <div v-if="isPhotoPost" class="photo-summary">
+      <span class="ps-count">{{ file.image_count }} photo{{ file.image_count === 1 ? '' : 's' }}</span>
+      <span v-if="missingAltTextCount > 0" class="ps-item warn">
+        {{ missingAltTextCount }} missing alt
+      </span>
+      <span v-else-if="file.image_count > 0" class="ps-item ok">alt text complete</span>
+      <span v-if="localImageCount > 0" class="ps-item local">{{ localImageCount }} to host</span>
+      <span class="ps-spacer" />
+      <button v-if="localImageCount > 0" class="ps-btn primary" @click="showMediaFixer = true">Upload</button>
+      <button v-if="missingAltTextCount > 0" class="ps-btn" @click="showAltTextReviewer = true">Describe</button>
+    </div>
+
     <!-- Analytics strip — visible up top whenever the post is live. Shows
          pageviews, visitors, avg time on page, bounce rate, and a 30-day
          sparkline of daily views. -->
@@ -1231,6 +1168,25 @@ async function openPreview() {
         </svg>
         <span class="stat-period">last 30d</span>
       </template>
+    </div>
+    <!-- Where the traffic came from (utm_source), and tagged links to share. -->
+    <div v-if="isLive && liveUrl" class="share-strip">
+      <span v-if="postSources.length" class="sources" data-tip="Visits by utm_source, last 30 days">
+        <span v-for="s in postSources.slice(0, 5)" :key="s.x" class="source">
+          {{ s.x }} <strong>{{ fmtCount(s.y) }}</strong>
+        </span>
+      </span>
+      <span class="share-spacer"></span>
+      <button class="share-btn" data-tip="Copies the link tagged utm_source=x" @click="copyShareLink('x', 'social')">
+        Copy link for X
+      </button>
+      <button
+        class="share-btn"
+        data-tip="Copies the link tagged utm_source=newsletter"
+        @click="copyShareLink('newsletter', 'email')"
+      >
+        Copy link for newsletter
+      </button>
     </div>
 
     <!-- Info / Metadata -->
@@ -1368,7 +1324,7 @@ async function openPreview() {
     <!-- OG Image (only after publish) -->
     <!-- OG picker shows for any post with a usable slug, not just live ones —
          picking an OG before publish is a natural part of the publish flow. -->
-    <OgImagePicker v-if="slug" :slug="slug" @picked="() => {}" />
+    <OgImagePicker v-if="slug && file.content_type !== 'dispatch'" :slug="slug" @picked="() => {}" />
 
     <!-- Local Media Fixer (the modal — surface lives in the Local Media section above) -->
     <LocalMediaFixer
@@ -1395,7 +1351,7 @@ async function openPreview() {
         :selected-target-id="selectedTargetId"
         :is-live="isLive"
         :live-url="liveUrl"
-        :is-vue-page="isVuePage"
+        :is-vue-page="isVuePage || file.content_type === 'dispatch' /* no Vue-page conversion for dispatch */"
         :converting="converting"
         :unpublishing="unpublishing"
         :publishing="publishing"
@@ -1409,7 +1365,7 @@ async function openPreview() {
         @show-syndication="showSyndicationWizard = true"
         @convert-to-vue-page="convertToVuePage"
         @unpublish="unpublish"
-        @open-publish-confirm="openPublishConfirm"
+        @open-publish-confirm="requestPublish"
         @publish-unlisted="publishUnlisted"
         @toggle-schedule="showSchedulePicker = !showSchedulePicker"
       />
@@ -1445,13 +1401,32 @@ async function openPreview() {
       :post-url="liveUrl"
       :title="title"
       :slug="slug"
+      :source-path="file.path"
       :dek="file.dek"
       :tags="file.tags"
       :content-type="file.content_type"
       :visibility="isPasswordProtected ? 'protected' : isUnlisted ? 'unlisted' : 'public'"
-      @close="showSyndicationWizard = false"
+      :quick="autoWizard"
+      @close="onWizardClosed"
       @queued="onSyndicationQueued"
+      @syndicated="onWizardSyndicated"
     />
+
+    <!-- Draft gate: a `draft: true` piece asks before publishing. -->
+    <div v-if="showDraftPrompt" class="draft-overlay" @click.self="showDraftPrompt = false">
+      <div class="draft-modal">
+        <div class="draft-title">This piece is still a draft</div>
+        <div class="draft-body">
+          Its frontmatter says <code>draft: true</code>. Remove that and continue to publish?
+        </div>
+        <div class="draft-actions">
+          <button class="btn" @click="showDraftPrompt = false">Not yet <kbd>esc</kbd></button>
+          <button class="btn accent" :disabled="clearingDraft" @click="clearDraftAndContinue">
+            {{ clearingDraft ? 'Clearing…' : 'Remove draft & publish' }} <kbd>⏎</kbd>
+          </button>
+        </div>
+      </div>
+    </div>
 
 
     <!-- Publish Confirmation -->
@@ -1463,7 +1438,7 @@ async function openPreview() {
       :publish-context="publishContext"
       :is-republish="publishConfirmRepublish"
       @close="closePublishConfirm"
-      @confirm="(isRepublish: boolean) => publish(isRepublish)"
+      @confirm="(isRepublish: boolean) => publishWithPrep(isRepublish)"
     />
 
     <!-- Content divider — plain tracked-caps label, no decorative glyph.
@@ -1489,6 +1464,23 @@ async function openPreview() {
         <div class="render-error-stage">{{ renderError.stage }} failed</div>
         <div class="render-error-msg">{{ renderError.message }}</div>
         <div class="render-error-path">{{ file.path }}</div>
+      </div>
+
+      <!-- Contact-sheet gallery for photo posts — the images ARE the post, so
+           lead with a grid. The full inline render stays below for captions and
+           any prose between shots. -->
+      <div v-if="isPhotoPost && galleryImages.length" class="photo-gallery">
+        <a
+          v-for="(src, gi) in galleryImages"
+          :key="gi"
+          class="gallery-cell"
+          :href="src"
+          target="_blank"
+          rel="noopener"
+          :title="`Open image ${gi + 1} of ${galleryImages.length}`"
+        >
+          <img :src="galleryThumb(src)" loading="lazy" alt="" />
+        </a>
       </div>
 
       <Transition name="preview-fade">
@@ -1882,6 +1874,79 @@ async function openPreview() {
 
 /* Media health sections (Local Media + Alt Text) — shared shell so both
    feel like steps of the same flow. */
+/* Photo-post summary banner */
+.photo-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.photo-summary .ps-count {
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.3px;
+}
+.photo-summary .ps-item {
+  padding: 1px 6px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+.photo-summary .ps-item.warn {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+.photo-summary .ps-item.ok {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.photo-summary .ps-spacer {
+  flex: 1;
+}
+.photo-summary .ps-btn {
+  padding: 2px 8px;
+  font-size: 10.5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.photo-summary .ps-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.photo-summary .ps-btn:hover {
+  filter: brightness(1.1);
+}
+
+/* Contact-sheet gallery */
+.photo-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 4px;
+  padding: 8px 16px 12px;
+}
+.photo-gallery .gallery-cell {
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+.photo-gallery .gallery-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.15s ease;
+}
+.photo-gallery .gallery-cell:hover img {
+  transform: scale(1.05);
+}
+
 .media-section {
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
@@ -2344,6 +2409,85 @@ async function openPreview() {
   font-size: 10px;
   color: var(--text-tertiary, #666);
   word-break: break-all;
+}
+
+/* Share strip: utm_source breakdown + tagged copy links */
+.share-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 16px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.share-strip .sources {
+  display: flex;
+  gap: 10px;
+  color: var(--text-tertiary);
+}
+.share-strip .source strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.share-spacer {
+  flex: 1;
+}
+.share-btn {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border-light);
+  background: var(--hover-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.share-btn:hover {
+  color: var(--text-primary);
+  background: var(--active-bg);
+}
+
+/* Draft gate */
+.draft-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.draft-modal {
+  width: 380px;
+  max-width: 92vw;
+  background: var(--modal-bg);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: var(--shadow-lg);
+}
+.draft-title {
+  font-size: 15px;
+  font-weight: 650;
+  margin-bottom: 6px;
+}
+.draft-body {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.draft-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.draft-actions kbd {
+  font-size: 9px;
+  opacity: 0.75;
+  margin-left: 4px;
 }
 </style>
 

@@ -14,17 +14,39 @@ interface NewQueueItem {
   scheduled_at: string | null
 }
 
+interface NetworkOutcome {
+  network: string
+  status: 'posted' | 'skipped' | 'failed' | 'not_configured' | 'dry_run'
+  url: string | null
+  error: string | null
+  attempts: number
+  payload: unknown | null
+}
+
+interface OmniReport {
+  dry_run: boolean
+  post_url: string
+  results: NetworkOutcome[]
+  image_alt: string | null
+  image_alt_generated: boolean
+  warnings: string[]
+  preview: { title: string; description: string; image: string | null; image_alt: string | null }
+}
+
 const props = defineProps<{
   postUrl: string
   title: string
   slug: string
+  sourcePath?: string
   dek: string | null
   tags: string[]
   contentType: string
   visibility: string
+  /** Opened automatically after publishing: jump straight to review. */
+  quick?: boolean
 }>()
 
-const emit = defineEmits<{ close: []; queued: [] }>()
+const emit = defineEmits<{ close: []; queued: []; syndicated: [urls: string[]] }>()
 
 // Esc closes the wizard — consistent with every other modal in the app.
 function onEscape(e: KeyboardEvent) {
@@ -37,7 +59,7 @@ onMounted(() => window.addEventListener('keydown', onEscape))
 onUnmounted(() => window.removeEventListener('keydown', onEscape))
 
 // Wizard state
-const step = ref(1)
+const step = ref(props.quick ? 5 : 1)
 const queuing = ref(false)
 const error = ref<string | null>(null)
 const queuedIds = ref<number[]>([])
@@ -45,25 +67,52 @@ const queuedIds = ref<number[]>([])
 // Step 1: Platform selection
 const platforms = ref<Record<string, boolean>>({
   mastodon: true,
+  bluesky: true,
   linkedin: false,
   instagram: false,
 })
 
 const platformStatus = ref<Record<string, string>>({})
+const dryRunEnv = ref(false)
 
-// Check which platforms are configured
+// Check which platforms are configured. Credentials presence comes from the
+// backend (no network call); Mastodon is additionally verified.
 async function checkPlatforms() {
+  let configured: Record<string, boolean> = {}
   try {
-    const result = await invoke<string>('verify_mastodon')
-    platformStatus.value.mastodon = result
+    const s = await invoke<{ networks: Record<string, boolean>; dry_run_env: boolean }>(
+      'syndication_network_status',
+    )
+    configured = s.networks
+    dryRunEnv.value = s.dry_run_env
   } catch {
+    /* treat as unconfigured */
+  }
+  if (configured.mastodon) {
+    try {
+      platformStatus.value.mastodon = await invoke<string>('verify_mastodon')
+    } catch {
+      platformStatus.value.mastodon = 'not configured'
+    }
+  } else {
     platformStatus.value.mastodon = 'not configured'
   }
-  // LinkedIn and Instagram checked via env vars on backend — for now just mark as coming soon
+  platformStatus.value.bluesky = configured.bluesky ? 'configured' : 'not configured'
+  // Unconfigured networks start unchecked (still selectable for a dry run).
+  for (const p of ['mastodon', 'bluesky']) {
+    if (platformStatus.value[p] === 'not configured') platforms.value[p] = false
+  }
   platformStatus.value.linkedin = 'coming soon'
   platformStatus.value.instagram = 'coming soon'
 }
 checkPlatforms()
+
+// Networks the fan-out (Post now / Dry run) can handle.
+const OMNI_NETWORKS = ['mastodon', 'bluesky']
+const isDispatch = computed(() => props.contentType === 'dispatch')
+const canPostNow = computed(
+  () => !!props.sourcePath && selectedPlatforms.value.every((p) => OMNI_NETWORKS.includes(p)),
+)
 
 const selectedPlatforms = computed(() =>
   Object.entries(platforms.value)
@@ -72,7 +121,7 @@ const selectedPlatforms = computed(() =>
 )
 
 // Step 2: Per-platform text
-const CHAR_LIMITS: Record<string, number> = { mastodon: 500, linkedin: 3000, instagram: 2200 }
+const CHAR_LIMITS: Record<string, number> = { mastodon: 500, bluesky: 300, linkedin: 3000, instagram: 2200 }
 
 function defaultText(platform: string): string {
   const title = props.dek || props.title
@@ -85,6 +134,9 @@ function defaultText(platform: string): string {
 
   switch (platform) {
     case 'mastodon':
+    case 'bluesky':
+      // Bluesky: the backend trims to 300 graphemes (keeping the URL) and adds
+      // link/hashtag facets + the link card.
       return [title, url, tags].filter(Boolean).join('\n\n')
     case 'linkedin':
       return `${title}\n\n${url}`
@@ -126,9 +178,9 @@ function onOgPicked(url: string) {
 
 // Step 4: Schedule
 const DRIP_PRESETS: Record<string, Record<string, string>> = {
-  now: { mastodon: 'now', linkedin: 'now', instagram: 'now' },
-  drip: { mastodon: 'now', linkedin: '+2h', instagram: '+1d' },
-  tomorrow: { mastodon: '+1d', linkedin: '+1d', instagram: '+2d' },
+  now: { mastodon: 'now', bluesky: 'now', linkedin: 'now', instagram: 'now' },
+  drip: { mastodon: 'now', bluesky: 'now', linkedin: '+2h', instagram: '+1d' },
+  tomorrow: { mastodon: '+1d', bluesky: '+1d', linkedin: '+1d', instagram: '+2d' },
 }
 
 const schedulePreset = ref('drip')
@@ -186,6 +238,71 @@ async function queueAll() {
   }
   queuing.value = false
 }
+
+// Post now (or dry run) through the omnipublish fan-out: each network posts
+// independently, networks already in the note's `syndication:` are skipped,
+// and new links are written back to the vault note.
+const report = ref<OmniReport | null>(null)
+const posting = ref(false)
+
+async function postNow(dryRun: boolean) {
+  if (!props.sourcePath) return
+  posting.value = true
+  error.value = null
+  try {
+    const texts: Record<string, string> = {}
+    for (const p of selectedPlatforms.value) texts[p] = platformTexts.value[p] || defaultText(p)
+    report.value = await invoke<OmniReport>('syndicate_everywhere', {
+      sourcePath: props.sourcePath,
+      networks: selectedPlatforms.value,
+      texts,
+      dryRun,
+    })
+    step.value = 6
+    if (!report.value.dry_run) {
+      const urls = report.value.results
+        .filter((r) => (r.status === 'posted' || r.status === 'skipped') && r.url)
+        .map((r) => r.url as string)
+      emit('syndicated', urls)
+    }
+  } catch (e) {
+    error.value = `${e}`
+  }
+  posting.value = false
+}
+
+// Review step: show what the link card / image will look like, from a dry run
+// (no network calls, nothing written).
+const cardPreview = ref<OmniReport['preview'] | null>(null)
+watch(
+  step,
+  async (s) => {
+    if (s !== 5 || !props.sourcePath || cardPreview.value) return
+    try {
+      const r = await invoke<OmniReport>('syndicate_everywhere', {
+        sourcePath: props.sourcePath,
+        networks: OMNI_NETWORKS,
+        dryRun: true,
+      })
+      cardPreview.value = r.preview
+    } catch {
+      /* preview is optional */
+    }
+  },
+  { immediate: true },
+)
+
+const STATUS_LABEL: Record<string, string> = {
+  posted: 'posted',
+  skipped: 'already posted',
+  failed: 'failed',
+  not_configured: 'not configured',
+  dry_run: 'dry run',
+}
+
+function openUrl(url: string) {
+  window.open(url, '_blank')
+}
 </script>
 
 <template>
@@ -222,9 +339,12 @@ async function queueAll() {
             <span v-else-if="platformStatus[platform] === 'not configured'" class="platform-status warn">
               not configured
             </span>
-            <span v-else-if="platformStatus[platform]" class="platform-status ok">connected</span>
+            <span v-else-if="platformStatus[platform]" class="platform-status ok">
+              {{ platformStatus[platform] === 'configured' ? 'configured' : 'connected' }}
+            </span>
           </label>
         </div>
+        <div v-if="dryRunEnv" class="hint">DISPATCH_SYNDICATE_DRY_RUN is set — nothing will actually be sent.</div>
       </div>
 
       <!-- Step 2: Edit text -->
@@ -254,8 +374,17 @@ async function queueAll() {
 
       <!-- Step 3: Media — generative OG image picker -->
       <div v-if="step === 3" class="step-content">
-        <div class="step-title">Pick an OG image</div>
-        <OgImagePicker :slug="slug" @picked="onOgPicked" />
+        <template v-if="isDispatch">
+          <div class="step-title">Image</div>
+          <div class="hint">
+            Dispatch pieces use their frontmatter <code>image</code> + <code>image_alt</code> (alt text is generated
+            and saved to the note if missing). Bluesky gets a link card; Mastodon gets the image with its alt text.
+          </div>
+        </template>
+        <template v-else>
+          <div class="step-title">Pick an OG image</div>
+          <OgImagePicker :slug="slug" @picked="onOgPicked" />
+        </template>
       </div>
 
       <!-- Step 4: Schedule -->
@@ -282,7 +411,22 @@ async function queueAll() {
 
       <!-- Step 5: Review -->
       <div v-if="step === 5" class="step-content">
-        <div class="step-title">Review & queue</div>
+        <div class="step-title">Review & send</div>
+        <div v-if="cardPreview" class="card-preview">
+          <img v-if="cardPreview.image" :src="cardPreview.image" :alt="cardPreview.image_alt || ''" />
+          <div class="card-text">
+            <div class="card-title">{{ cardPreview.title }}</div>
+            <div class="card-desc">{{ cardPreview.description }}</div>
+            <div class="card-url">{{ postUrl.replace(/^https?:\/\//, '') }}</div>
+          </div>
+        </div>
+        <div v-if="cardPreview?.image" class="hint">
+          Alt text: {{ cardPreview.image_alt || '(none yet — generated and saved when you post)' }}
+        </div>
+        <div v-if="selectedPlatforms.length === 0" class="hint warn">
+          No networks selected. Add BLUESKY_HANDLE / BLUESKY_APP_PASSWORD or MASTODON_ACCESS_TOKEN to .env, or go
+          Back and pick one for a dry run.
+        </div>
         <div class="review-list">
           <div v-for="p in selectedPlatforms" :key="p" class="review-card">
             <div class="review-header">
@@ -300,7 +444,30 @@ async function queueAll() {
       </div>
 
       <!-- Step 6: Success -->
-      <div v-if="step === 6" class="step-content success-step">
+      <div v-if="step === 6 && report" class="step-content">
+        <div class="step-title">{{ report.dry_run ? 'Dry run — nothing was sent' : 'Results' }}</div>
+        <div class="review-list">
+          <div v-for="r in report.results" :key="r.network" class="review-card">
+            <div class="review-header">
+              <span class="review-platform">{{ r.network }}</span>
+              <span class="result-pill" :data-status="r.status">{{ STATUS_LABEL[r.status] || r.status }}</span>
+            </div>
+            <div v-if="r.url" class="review-text">
+              <a href="#" class="result-link" @click.prevent="openUrl(r.url)">{{ r.url }}</a>
+            </div>
+            <div v-if="r.error" class="review-text result-error">
+              {{ r.error }}<span v-if="r.attempts > 1"> ({{ r.attempts }} attempts)</span>
+            </div>
+            <details v-if="r.payload" class="payload">
+              <summary>payload</summary>
+              <pre>{{ JSON.stringify(r.payload, null, 2) }}</pre>
+            </details>
+          </div>
+        </div>
+        <div v-if="report.image_alt_generated" class="hint">Generated image_alt and saved it to the note.</div>
+        <div v-for="w in report.warnings" :key="w" class="hint warn">{{ w }}</div>
+      </div>
+      <div v-else-if="step === 6" class="step-content success-step">
         <div class="success-icon"><PhCheck :size="32" weight="bold" /></div>
         <div class="success-title">Queued!</div>
         <div class="success-detail">{{ queuedIds.length }} post(s) scheduled for syndication</div>
@@ -322,9 +489,28 @@ async function queueAll() {
           Next
           <PhArrowRight :size="12" />
         </button>
-        <button v-else-if="step === 5" class="btn primary" :disabled="queuing" @click="queueAll">
-          {{ queuing ? 'Queuing...' : `Queue ${selectedPlatforms.length} post(s)` }}
-        </button>
+        <template v-else-if="step === 5">
+          <button
+            v-if="canPostNow"
+            class="btn secondary"
+            :disabled="posting || selectedPlatforms.length === 0"
+            data-tip="Build every payload without sending anything"
+            @click="postNow(true)"
+          >
+            Dry run
+          </button>
+          <button class="btn secondary" :disabled="queuing || posting" @click="queueAll">
+            {{ queuing ? 'Queuing...' : `Queue ${selectedPlatforms.length}` }}
+          </button>
+          <button
+            v-if="canPostNow"
+            class="btn primary"
+            :disabled="posting || selectedPlatforms.length === 0"
+            @click="postNow(false)"
+          >
+            {{ posting ? 'Posting...' : 'Post now' }}
+          </button>
+        </template>
         <button v-else class="btn primary" @click="$emit('close')">Done</button>
       </div>
     </div>
@@ -596,6 +782,106 @@ async function queueAll() {
   font-size: 11px;
   color: var(--text-secondary);
   line-height: 1.4;
+}
+
+.card-preview {
+  display: flex;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.card-preview img {
+  width: 120px;
+  object-fit: cover;
+  background: #fff;
+  flex-shrink: 0;
+}
+.card-text {
+  padding: 8px 10px 8px 0;
+  min-width: 0;
+}
+.card-preview img + .card-text {
+  padding-left: 0;
+}
+.card-preview .card-text:first-child {
+  padding-left: 10px;
+}
+.card-title {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.card-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-top: 3px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card-url {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+.review-list {
+  margin-top: 10px;
+}
+.hint {
+  margin-top: 10px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+.hint.warn {
+  color: var(--warning);
+}
+.result-pill {
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-tertiary);
+}
+.result-pill[data-status='posted'] {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
+}
+.result-pill[data-status='failed'],
+.result-pill[data-status='not_configured'] {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
+.result-pill[data-status='dry_run'] {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+.result-link {
+  color: var(--accent);
+  word-break: break-all;
+}
+.result-error {
+  color: var(--danger);
+}
+.payload summary {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  margin-top: 6px;
+}
+.payload pre {
+  font-size: 9px;
+  max-height: 180px;
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 8px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* Step 6: Success */

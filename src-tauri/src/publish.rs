@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 use tauri::Emitter;
 
-fn check_git_status(repo_path: &str) -> Result<(), String> {
+pub(crate) fn check_git_status(repo_path: &str) -> Result<(), String> {
     // Check if we're in a git repo
     let status = Command::new(crate::bin_paths::git())
         .args(["rev-parse", "--git-dir"])
@@ -151,6 +151,10 @@ pub fn publish_file(
     let app_config = config::get()?;
     let target = config::resolve_target(target_id)?;
     let normalized_path = source_path.replace('\\', "/");
+    // Dispatch pieces (vault dispatch/) → content/dispatch/<slug>.md. Blog path below is untouched.
+    if crate::dispatch::is_dispatch_note(&app_config.vault.path, &normalized_path) {
+        return crate::dispatch::publish(source_path, slug, &target);
+    }
     if !normalized_path.starts_with(&app_config.vault.path)
         || (!normalized_path.contains("/blog/")
             && !normalized_path.contains("/drafts/")

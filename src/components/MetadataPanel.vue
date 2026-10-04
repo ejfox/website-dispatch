@@ -13,7 +13,7 @@ import {
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import type { MarkdownFile, GitStatus, PostAnalytics } from '../types'
 import { formatDate, formatAgeShort, formatDateCompact } from '../utils/formatting'
-import { useAppConfig } from '../composables/useAppConfig'
+import { useAppConfig } from '../composables/useVaultData'
 
 const { publishTargets } = useAppConfig()
 function siteDomain() {

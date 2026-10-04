@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, shallowRef, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -30,10 +30,12 @@ import {
   PhArrowSquareDown,
   PhFileText,
   PhWarningCircle,
+  PhNewspaper,
 } from '@phosphor-icons/vue'
 import FileList from './components/FileList.vue'
+import DeskView from './components/DeskView.vue'
 import ResizeHandle from './components/ResizeHandle.vue'
-import { useResizable } from './composables/useResizable'
+import { useResizable, useToasts } from './composables/useUiState'
 import FilePreview from './components/FilePreview.vue'
 import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
 import PublishingJournal from './components/PublishingJournal.vue'
@@ -48,15 +50,19 @@ import ToastStack from './components/ToastStack.vue'
 import { useLocalStorage } from '@vueuse/core'
 import type { MarkdownFile } from './types'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
-import { useAppConfig } from './composables/useAppConfig'
-import { useConnectionStatus } from './composables/useConnectionStatus'
-import { useToasts } from './composables/useToasts'
+import { useAppConfig, useConnectionStatus } from './composables/useVaultData'
 import { checkForUpdate } from './composables/useAutoUpdate'
 
 const toasts = useToasts()
 
-const files = ref<MarkdownFile[]>([])
-const selectedFile = ref<MarkdownFile | null>(null)
+// shallowRef: `files` (up to ~200 items) and `selectedFile` are only ever
+// replaced wholesale (`files.value = await invoke(...)`), never mutated in
+// place, and every consumer compares by `.path`, never by deep identity. Deep
+// reactivity here just added Proxy overhead to every property read across
+// FileList's ~180 memo evaluations, the CommandPalette action map, and several
+// filters — pure cost with no benefit.
+const files = shallowRef<MarkdownFile[]>([])
+const selectedFile = shallowRef<MarkdownFile | null>(null)
 const loading = ref(true)
 
 const appVersion = __APP_VERSION__
@@ -234,11 +240,28 @@ watch(
 // Right panel tab state. Persists the user's last/preferred home tab so
 // Dispatch opens where they want to be — Preview by default for most folks,
 // but switchable to Journal or Gear for routines that don't start with the post list.
-const defaultHomeTab = useLocalStorage<'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'>(
-  'dispatch-home-tab',
-  'preview',
-)
-const rightTab = ref<'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'>(defaultHomeTab.value)
+type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'
+const defaultHomeTab = useLocalStorage<RightTab>('dispatch-home-tab', 'desk')
+// The Desk is the landing view (`d` returns to it from anywhere). A stored
+// 'preview' is the old default, not a choice — land on the Desk instead.
+const rightTab = ref<RightTab>(defaultHomeTab.value === 'preview' ? 'desk' : defaultHomeTab.value)
+
+// Desk → "Start piece": the desk wrote a draft into vault dispatch/. Refresh,
+// select it, and open it in the default editor.
+async function onPieceStarted(notePath: string) {
+  await loadFiles()
+  const match = files.value.find((f) => f.path === notePath)
+  if (match) {
+    selectedFile.value = match
+    rightTab.value = 'preview'
+  } else {
+    toasts.warn('Piece created', `It isn't in the list yet: ${notePath}`)
+  }
+  const editor = appConfig.value?.default_editor || 'iA Writer'
+  invoke('open_in_app', { path: notePath, app: editor }).catch((e) =>
+    toasts.error(`Couldn't open ${editor}`, String(e)),
+  )
+}
 
 // Connection status (auto-checks on creation)
 const { cloudinaryConnected, obsidianConnected, analyticsConnected, companionUrl, companionPin, gitBranch } =
@@ -377,6 +400,18 @@ async function loadFiles() {
     console.error('Failed to load files:', e)
   }
   loading.value = false
+  // Re-point the selection at the fresh object so state (live/draft) isn't stale.
+  if (selectedFile.value) {
+    const fresh = files.value.find((f) => f.path === selectedFile.value?.path)
+    const cur = selectedFile.value
+    const changed =
+      fresh &&
+      (fresh.modified !== cur.modified ||
+        fresh.published_url !== cur.published_url ||
+        fresh.draft !== cur.draft ||
+        fresh.warnings.join('|') !== cur.warnings.join('|'))
+    if (changed) selectedFile.value = fresh
+  }
   // Restore prior selection on first load if it still exists in the list.
   if (!selectedFile.value && lastFilePath.value) {
     const match = files.value.find((f) => f.path === lastFilePath.value)
@@ -549,6 +584,16 @@ const { handleGlobalKey } = useKeyboardShortcuts({
 
 let unlistenSchedule: (() => void) | null = null
 
+// Collector for the many async Tauri subscriptions registered in onMounted.
+// `listen()` / `onFocusChanged` / `onDragDropEvent` all resolve to an unlisten
+// fn; previously those were discarded, so on every remount (HMR, or a future
+// non-root mount) the handlers stacked into ghosts — a single drop firing N
+// uploads. `track()` stashes each disposer; onUnmounted calls them all.
+const eventDisposers: Array<() => void> = []
+function track(p: Promise<() => void>) {
+  p.then((u) => eventDisposers.push(u)).catch(() => {})
+}
+
 function onSettingsSaved() {
   loadConfig()
   loadFiles()
@@ -574,22 +619,22 @@ onMounted(async () => {
   unlistenSchedule = unlisten
 
   // Track window focus for native dimming behavior
-  getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+  track(getCurrentWindow().onFocusChanged(({ payload: focused }) => {
     windowFocused.value = focused
-  })
+  }))
 
   // Handle menu bar events from Rust
-  listen('menu-new-post', () => openNewPost())
-  listen('menu-refresh', () => loadFiles())
-  listen('menu-toggle-compact', () => {
+  track(listen('menu-new-post', () => openNewPost()))
+  track(listen('menu-refresh', () => loadFiles()))
+  track(listen('menu-toggle-compact', () => {
     compactMode.value = !compactMode.value
-  })
-  listen('menu-search', () => openSearch())
+  }))
+  track(listen('menu-search', () => openSearch()))
 
   // Open Recent: payload is the absolute file path. If the file is in the
   // current scan, select it; otherwise the path is stale (deleted/moved) —
   // surface a toast so the user knows why nothing happened.
-  listen<string>('menu-open-recent', (event) => {
+  track(listen<string>('menu-open-recent', (event) => {
     const path = event.payload
     const match = files.value.find((f) => f.path === path)
     if (match) {
@@ -598,13 +643,13 @@ onMounted(async () => {
     } else {
       toasts.info('That file is no longer in the vault.')
     }
-  })
+  }))
 
   // Auto-refresh on vault file changes (fs::notify watcher in Rust).
   // Debounced 500ms server-side; we still throttle the toast so a flurry
   // of saves doesn't spam the UI.
   let lastVaultToastAt = 0
-  listen('vault-changed', () => {
+  track(listen('vault-changed', () => {
     loadFiles()
     refreshJournalStats()
     const now = Date.now()
@@ -612,7 +657,7 @@ onMounted(async () => {
       lastVaultToastAt = now
       toasts.info('Vault updated')
     }
-  })
+  }))
 
   // Drag-in handler: routes by file type.
   //   .md  → select the post in the list (existing behavior)
@@ -641,7 +686,7 @@ onMounted(async () => {
     return 'mixed'
   }
 
-  getCurrentWindow().onDragDropEvent(async (event) => {
+  track(getCurrentWindow().onDragDropEvent(async (event) => {
     const t = event.payload.type
     if (t === 'enter') {
       // Only classify once per drag — `over` fires continuously and the
@@ -809,12 +854,14 @@ onMounted(async () => {
         `Dispatch accepts .md, images, and video. Got: ${paths.map((p) => '.' + ext(p)).join(', ')}`,
       )
     }
-  })
+  }))
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKey)
   unlistenSchedule?.()
+  eventDisposers.forEach((u) => u())
+  eventDisposers.length = 0
 })
 </script>
 
@@ -958,6 +1005,10 @@ onUnmounted(() => {
              This is the Apple Mail two-row chrome: titlebar (title + actions)
              on top, tab strip below. -->
         <div class="panel-tabs">
+          <button data-tab="desk" :class="{ active: rightTab === 'desk' }" data-tip="The Desk (d)" @click="rightTab = 'desk'">
+            <PhNewspaper :size="13" />
+            <span>Desk</span>
+          </button>
           <button data-tab="preview" :class="{ active: rightTab === 'preview' }" @click="rightTab = 'preview'">
             <Eye :size="13" />
             <span>Preview</span>
@@ -986,8 +1037,10 @@ onUnmounted(() => {
         </div>
 
         <div class="panel-content">
+          <DeskView v-if="rightTab === 'desk'" :files="files" @started="onPieceStarted" />
+
           <FilePreview
-            v-if="rightTab === 'preview' && selectedFile"
+            v-else-if="rightTab === 'preview' && selectedFile"
             ref="filePreviewRef"
             :file="selectedFile"
             @published="loadFiles"
