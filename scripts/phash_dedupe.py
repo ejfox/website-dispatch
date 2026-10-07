@@ -14,9 +14,9 @@ from PIL import Image
 import imagehash
 
 # Cloudinary credentials
-CLOUD_NAME = "ejf"
-API_KEY = "772121974764543"
-API_SECRET = "OaPOrn409H_wXnhS3eR6Y8B-4WY"
+CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME", "ejf")
+API_KEY = os.environ["CLOUDINARY_API_KEY"]
+API_SECRET = os.environ["CLOUDINARY_API_SECRET"]
 
 def fetch_all_images():
     """Fetch all images from Cloudinary."""
