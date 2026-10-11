@@ -80,8 +80,14 @@ export function useKeyboardShortcuts(options: {
       return
     }
 
-    // ⌘Enter publishes the selected file (republishes if live).
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && options.selectedFile.value) {
+    // ⌘Enter opens the review sheet for the selected file. Not over another
+    // overlay: an open sheet owns ⌘Enter (its primary action).
+    if (
+      (e.metaKey || e.ctrlKey) &&
+      e.key === 'Enter' &&
+      options.selectedFile.value &&
+      !document.querySelector('[class$="-overlay"]')
+    ) {
       e.preventDefault()
       const isRepublish = !!options.selectedFile.value.published_url
       options.filePreviewRef.value?.openPublishConfirm(isRepublish)

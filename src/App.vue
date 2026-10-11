@@ -275,6 +275,18 @@ const showSettings = ref(false)
 // FilePreview ref for Cmd+Enter publish
 const filePreviewRef = ref<InstanceType<typeof FilePreview> | null>(null)
 
+/** Show `file` (default: the selected one) in the Preview tab and open its
+ *  publish review sheet. Every publish entry point outside FilePreview
+ *  (menu, Modified tab) comes through here, so none can skip the sheet. */
+async function openReviewSheet(file: MarkdownFile | null = null, mode: 'publish' | 'unlisted' = 'publish') {
+  const target = file ?? selectedFile.value
+  if (!target) return
+  selectedFile.value = target
+  rightTab.value = 'preview'
+  await nextTick()
+  filePreviewRef.value?.openPublishConfirm?.(!!target.published_url, mode)
+}
+
 // App config (shared singleton)
 const { appConfig, fetchConfig: loadConfig } = useAppConfig()
 
@@ -599,6 +611,11 @@ onMounted(async () => {
   }))
   track(listen('menu-search', () => openSearch()))
   track(listen('menu-settings', () => (showSettings.value = true)))
+  // Publish menu (⌘↩ / ⌘⇧↩): open the review sheet for the selected post.
+  // An open sheet handles menu-publish itself, so skip when any overlay is up.
+  const overlayOpen = () => !!document.querySelector('[class$="-overlay"]')
+  track(listen('menu-publish', () => !overlayOpen() && openReviewSheet()))
+  track(listen('menu-publish-unlisted', () => !overlayOpen() && openReviewSheet(null, 'unlisted')))
 
   // Open Recent: payload is the absolute file path. If the file is in the
   // current scan, select it; otherwise the path is stale (deleted/moved) —
@@ -883,7 +900,7 @@ onUnmounted(() => {
       @publish="
         () => {
           paletteOpen = false
-          filePreviewRef?.openPublishConfirm?.(false)
+          openReviewSheet()
         }
       "
     />
@@ -1053,6 +1070,7 @@ onUnmounted(() => {
             v-else-if="rightTab === 'modified'"
             :files="files"
             @select-file="(file) => { selectedFile = file; rightTab = 'preview' }"
+            @review-file="(file) => openReviewSheet(file)"
             @published="loadFiles"
           />
 
