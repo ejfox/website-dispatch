@@ -2,7 +2,7 @@ import { nextTick, onMounted, onUnmounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { MarkdownFile } from '../types'
-import { useToasts } from './useUiState'
+import { useToasts, useInspector } from './useUiState'
 
 type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'
 type HelpSection = 'overview' | 'shortcuts'
@@ -50,6 +50,7 @@ export function useMenuActions(options: {
   modalFlags: Ref<boolean>[]
 }) {
   const toasts = useToasts()
+  const inspector = useInspector()
   const { selectedFile, rightTab } = options
 
   /** A sheet or modal is up, so a menu shortcut mustn't act on the post
@@ -94,9 +95,14 @@ export function useMenuActions(options: {
 
   /** Open the social-card (OG image) picker and roll a batch. OgImagePicker
    *  listens for this; it isn't mounted for dispatch pieces, which
-   *  `handled` reports back. */
+   *  `handled` reports back. The picker lives in the inspector, so make
+   *  sure that is on screen first. */
   async function generateOgForSelected() {
     if (!(await withPreview())) return
+    if (!inspector.visible.value) {
+      inspector.show()
+      await nextTick()
+    }
     const detail = { handled: false }
     window.dispatchEvent(new CustomEvent('dispatch:generate-og', { detail }))
     if (!detail.handled) toasts.info('Social cards are for blog posts', 'Dispatch pieces use their chart image.')
@@ -120,6 +126,7 @@ export function useMenuActions(options: {
     'menu-open-site-preview': () => invoke('open_preview'),
     // View
     'menu-toggle-sidebar': () => (options.sidebarCollapsed.value = !options.sidebarCollapsed.value),
+    'menu-toggle-inspector': () => inspector.toggle(),
     'menu-panel-desk': () => (rightTab.value = 'desk'),
     'menu-panel-preview': () => (rightTab.value = 'preview'),
     'menu-panel-media': () => (rightTab.value = 'media'),

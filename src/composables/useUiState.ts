@@ -1,7 +1,7 @@
 // Grouped UI-state composables: toast notifications, command-palette
 // history (recency ranking), and resizable-panel size persistence.
 
-import { ref, readonly } from 'vue'
+import { ref, readonly, computed } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
 import { invoke } from '@tauri-apps/api/core'
 import type { DeployState } from './usePublishFlow'
@@ -234,5 +234,56 @@ export function useDeployStatus() {
     clear(path: string) {
       delete deployStatus.value[path]
     },
+  }
+}
+
+// ── Inspector (Preview tab) ─────────────────────────────────────────────────
+// The Preview tab's right-hand inspector column: status, actions, details.
+// One singleton so the tab-bar toggle (App.vue), the View menu
+// (useMenuActions) and FilePreview itself all read the same state.
+//
+//   open     the user's choice, remembered across launches
+//   narrow   set by FilePreview from the pane's measured width; below the
+//            threshold the column auto-collapses so the post keeps its room
+//   overlay  while narrow, the toggle opens the inspector as a floating panel
+//            over the post instead of a column; cleared when the pane widens
+
+export const INSPECTOR_WIDTH = 260
+/** Below this pane width the inspector column auto-collapses. */
+export const INSPECTOR_COLLAPSE_BELOW = 620
+
+const inspectorOpen = useLocalStorage('dispatch-inspector-open', true)
+const inspectorNarrow = ref(false)
+const inspectorOverlay = ref(false)
+
+export function useInspector() {
+  const visible = computed(() => (inspectorNarrow.value ? inspectorOverlay.value : inspectorOpen.value))
+
+  function toggle() {
+    if (inspectorNarrow.value) inspectorOverlay.value = !inspectorOverlay.value
+    else inspectorOpen.value = !inspectorOpen.value
+  }
+
+  /** Make sure the inspector is on screen (e.g. before scrolling to the
+   *  social-card picker from the menu). */
+  function show() {
+    if (inspectorNarrow.value) inspectorOverlay.value = true
+    else inspectorOpen.value = true
+  }
+
+  function setNarrow(narrow: boolean) {
+    if (narrow === inspectorNarrow.value) return
+    inspectorNarrow.value = narrow
+    if (!narrow) inspectorOverlay.value = false
+  }
+
+  return {
+    open: inspectorOpen,
+    narrow: readonly(inspectorNarrow),
+    overlay: inspectorOverlay,
+    visible,
+    toggle,
+    show,
+    setNarrow,
   }
 }

@@ -11,6 +11,7 @@ import {
   Activity,
   Pencil,
   BookOpen,
+  PanelRight,
 } from 'lucide-vue-next'
 import {
   PhRows,
@@ -34,7 +35,7 @@ import UiButton from './components/ui/UiButton.vue'
 import FileList from './components/FileList.vue'
 import DeskView from './components/DeskView.vue'
 import ResizeHandle from './components/ResizeHandle.vue'
-import { useResizable, useToasts } from './composables/useUiState'
+import { useResizable, useToasts, useInspector } from './composables/useUiState'
 import FilePreview from './components/FilePreview.vue'
 import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
 import PublishingJournal from './components/PublishingJournal.vue'
@@ -53,6 +54,10 @@ import { useMenuActions } from './composables/useMenuActions'
 import { CHANGED_LABEL, CHANGED_TAB, CHANGED_HINT, NOT_PUBLISHED_LABEL } from './utils/vocab'
 
 const toasts = useToasts()
+
+// The Preview tab's inspector column (View › Toggle Inspector, ⌥⌘I). The
+// toggle sits at the right end of the tab strip while a post is shown.
+const inspector = useInspector()
 
 // shallowRef: `files` (up to ~200 items) and `selectedFile` are only ever
 // replaced wholesale (`files.value = await invoke(...)`), never mutated in
@@ -1040,6 +1045,19 @@ onUnmounted(() => {
             <Activity :size="13" />
             <span>Activity</span>
           </button>
+          <span class="panel-tabs-spacer" />
+          <UiButton
+            v-if="rightTab === 'preview' && selectedFile"
+            variant="plain"
+            size="small"
+            :icon="PanelRight"
+            class="inspector-toggle"
+            :class="{ active: inspector.visible.value }"
+            :data-tip="inspector.visible.value ? 'Hide Inspector (⌥⌘I)' : 'Show Inspector (⌥⌘I)'"
+            :aria-label="inspector.visible.value ? 'Hide Inspector' : 'Show Inspector'"
+            :aria-pressed="inspector.visible.value"
+            @click="inspector.toggle()"
+          />
         </div>
 
         <div class="panel-content">
@@ -1437,10 +1455,27 @@ onUnmounted(() => {
    is load-bearing — Tauri 2's `data-tauri-drag-region` attribute alone is
    unreliable in dev mode; the CSS rule is what actually activates the
    OS-level drag handle. */
-/* .panel-tabs-spacer removed — the unified titlebar above now hosts the
-   trailing toolbar buttons and the window-drag region, so the panel-tabs
-   row no longer needs a spacer between tabs and (former) right-side
-   buttons. */
+/* Pushes the inspector toggle to the strip's right edge. */
+.panel-tabs-spacer {
+  flex: 1;
+  min-width: var(--space-2);
+}
+.inspector-toggle {
+  flex-shrink: 0;
+  margin-right: -2px;
+}
+.inspector-toggle.active {
+  color: var(--label);
+}
+/* The strip's tooltip would overflow the window's right edge. */
+.panel-tabs .inspector-toggle::after {
+  left: auto;
+  right: 0;
+  transform: translateX(0) translateY(-2px);
+}
+.panel-tabs .inspector-toggle:hover::after {
+  transform: translateX(0) translateY(0);
+}
 
 .titlebar-btns {
   -webkit-app-region: no-drag;

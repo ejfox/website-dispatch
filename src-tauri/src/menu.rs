@@ -189,6 +189,14 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
                 true,
                 Some("CmdOrCtrl+Shift+C"),
             )?,
+            // The Preview tab's inspector column (status, actions, details).
+            &MenuItem::with_id(
+                handle,
+                "toggle_inspector",
+                "Toggle Inspector",
+                true,
+                Some("CmdOrCtrl+Alt+I"),
+            )?,
             &PredefinedMenuItem::separator(handle)?,
             // Tab order in the window matches these numbers, left to right
             // after the Desk (which is `d`, a bare key a menu can't own).
@@ -409,6 +417,7 @@ pub const MENU_EVENT_IDS: &[&str] = &[
     "generate_og",
     "show_journal",
     "toggle_sidebar",
+    "toggle_inspector",
     "panel_desk",
     "panel_preview",
     "panel_media",
