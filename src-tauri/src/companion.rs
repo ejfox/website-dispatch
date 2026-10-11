@@ -168,8 +168,9 @@ async fn api_publish(
         .find(|f| f.filename.trim_end_matches(".md") == slug)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    match crate::publish::publish_file(&file.path, &slug, None) {
-        Ok(url) => Ok(Json(serde_json::json!({ "url": url }))),
+    let path = file.path.clone();
+    match crate::publish::off_main(move || crate::publish::publish_file(&path, None)).await {
+        Ok(p) => Ok(Json(serde_json::json!({ "url": p.url }))),
         Err(e) => Ok(Json(serde_json::json!({ "error": e }))),
     }
 }
