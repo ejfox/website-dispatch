@@ -237,7 +237,7 @@ async function save() {
       <div class="settings-modal">
         <div class="settings-header">
           <h2>Settings</h2>
-          <button class="close-btn" @click="emit('close')"><X :size="16" /></button>
+          <button class="close-btn" @click="emit('close')" data-tip="Close without saving" aria-label="Close settings"><X :size="16" /></button>
         </div>
 
         <div class="settings-tabs">
@@ -263,7 +263,7 @@ async function save() {
                 <button :class="{ active: homeTab === 'preview' }" @click="homeTab = 'preview'">Preview</button>
                 <button :class="{ active: homeTab === 'media' }" @click="homeTab = 'media'">Media</button>
                 <button :class="{ active: homeTab === 'activity' }" @click="homeTab = 'activity'">Activity</button>
-                <button :class="{ active: homeTab === 'modified' }" @click="homeTab = 'modified'">Modified</button>
+                <button :class="{ active: homeTab === 'modified' }" @click="homeTab = 'modified'">Changed since live</button>
                 <button :class="{ active: homeTab === 'journal' }" @click="homeTab = 'journal'">Journal</button>
               </div>
             </div>

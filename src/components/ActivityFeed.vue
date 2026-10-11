@@ -235,7 +235,7 @@ function handleClick(e: ActivityEvent) {
   <div class="activity-feed">
     <div class="activity-header">
       <h2>Activity</h2>
-      <button class="refresh-btn" :class="{ spinning: loading }" @click="loadActivity" data-tip="Refresh">
+      <button class="refresh-btn" :class="{ spinning: loading }" @click="loadActivity" data-tip="Reload the activity feed" aria-label="Reload activity">
         <PhArrowsCounterClockwise :size="12" weight="bold" />
       </button>
     </div>

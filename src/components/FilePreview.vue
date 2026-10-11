@@ -996,20 +996,20 @@ async function schedulePublish() {
     await invoke('schedule_publish', { path: props.file.path, publishAt: isoDate })
     showSchedulePicker.value = false
     scheduleDate.value = ''
-    showCopyFeedback('Scheduled!')
+    showCopyFeedback('Will publish then')
     emit('published')
   } catch (e) {
-    await message(String(e), { title: 'Couldn’t schedule', kind: 'error' })
+    await message(String(e), { title: 'Couldn’t set the time', kind: 'error' })
   }
 }
 
 async function cancelSchedule() {
   try {
     await invoke('cancel_schedule', { path: props.file.path })
-    showCopyFeedback('Schedule cancelled')
+    showCopyFeedback('Won’t publish later')
     emit('published')
   } catch (e) {
-    await message(String(e), { title: 'Couldn’t cancel the schedule', kind: 'error' })
+    await message(String(e), { title: 'Couldn’t cancel publishing later', kind: 'error' })
   }
 }
 
@@ -1029,7 +1029,7 @@ function copyUrlAndPassword() {
 }
 
 // Expose methods for parent component
-defineExpose({ openPublishConfirm: requestPublish })
+defineExpose({ openPublishConfirm: requestPublish, unpublish })
 
 async function openInObsidian() {
   await invoke('open_in_obsidian', { path: props.file.path })
@@ -1373,7 +1373,7 @@ async function openPreview() {
           class="schedule-input"
           :min="new Date().toISOString().slice(0, 16)"
         />
-        <button @click="schedulePublish" :disabled="!scheduleDate" class="btn accent">Confirm Schedule</button>
+        <button @click="schedulePublish" :disabled="!scheduleDate" class="btn accent">Publish at this time</button>
         <button @click="showSchedulePicker = false" class="btn">Cancel</button>
       </div>
     </div>

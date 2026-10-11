@@ -12,6 +12,7 @@ import {
   PhEyeSlash,
 } from '@phosphor-icons/vue'
 import type { EditorConfig, PublishTarget } from '../types'
+import { SITE_PREVIEW_LABEL, SITE_PREVIEW_HINT } from '../utils/vocab'
 
 defineProps<{
   enabledEditors: EditorConfig[]
@@ -57,9 +58,9 @@ defineEmits<{
         <PhNotePencil :size="12" weight="duotone" />
         {{ editor.name }}
       </button>
-      <button @click="$emit('open-preview')" class="tool-btn" data-tip="Open local preview server">
+      <button @click="$emit('open-preview')" class="tool-btn" :data-tip="SITE_PREVIEW_HINT">
         <PhPlay :size="12" weight="fill" />
-        Preview
+        {{ SITE_PREVIEW_LABEL }}
       </button>
     </div>
     <div class="toolbar-actions">
@@ -106,9 +107,14 @@ defineEmits<{
         </button>
       </template>
       <template v-else>
-        <button v-if="isSafe && !isScheduled" @click="$emit('toggle-schedule')" class="btn">
+        <button
+          v-if="isSafe && !isScheduled"
+          @click="$emit('toggle-schedule')"
+          class="btn"
+          data-tip="Dispatch publishes it at the time you pick (keep Dispatch running)"
+        >
           <PhClock :size="12" weight="bold" />
-          Schedule
+          Publish later…
         </button>
         <button
           v-if="isSafe && !isUnlisted && !publishing"

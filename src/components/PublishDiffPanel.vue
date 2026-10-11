@@ -56,7 +56,7 @@ watch(
           −{{ diff.words_removed }}<span class="diff-stat-unit">w</span>
         </span>
       </template>
-      <button class="diff-close" @click="emit('close')" data-tip="Collapse">
+      <button class="diff-close" @click="emit('close')" data-tip="Hide the changes" aria-label="Hide changes">
         <PhX :size="11" weight="bold" />
       </button>
     </div>

@@ -37,7 +37,7 @@ const emit = defineEmits<{
     <div v-if="show && asset" class="detail-panel">
       <div class="detail-header">
         <h3>{{ asset.public_id.split('/').pop() }}</h3>
-        <button @click="emit('close')" class="close-btn">✕</button>
+        <button @click="emit('close')" class="close-btn" data-tip="Close details" aria-label="Close details">✕</button>
       </div>
 
       <div class="detail-preview">

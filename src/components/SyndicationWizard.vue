@@ -313,7 +313,7 @@ function openUrl(url: string) {
         <PhPaperPlaneTilt :size="16" weight="fill" class="header-icon" />
         <h2>Syndicate</h2>
         <span class="step-indicator">{{ step < 6 ? `Step ${step} of 5` : 'Done' }}</span>
-        <button class="close-btn" @click="$emit('close')"><PhX :size="14" weight="bold" /></button>
+        <button class="close-btn" @click="$emit('close')" data-tip="Close" aria-label="Close"><PhX :size="14" weight="bold" /></button>
       </div>
 
       <!-- Error -->
