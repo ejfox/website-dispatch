@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useToasts } from '../composables/useUiState'
 
@@ -138,19 +138,33 @@ watch(
 watch(collapsed, (isCollapsed) => {
   if (!isCollapsed && !variants.value && !generating.value) generate()
 })
+
+// Publish › Generate Social Card (App.vue) asks for a batch: open the picker,
+// bring it into view, and roll one (the expand watcher above generates the
+// first batch; an already-open picker rerolls).
+const root = ref<HTMLElement | null>(null)
+function onGenerateRequest(e: Event) {
+  const detail = (e as CustomEvent<{ handled: boolean }>).detail
+  if (detail) detail.handled = true
+  if (collapsed.value) collapsed.value = false
+  else if (!generating.value) reroll()
+  root.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+}
+onMounted(() => window.addEventListener('dispatch:generate-og', onGenerateRequest))
+onUnmounted(() => window.removeEventListener('dispatch:generate-og', onGenerateRequest))
 </script>
 
 <template>
-  <div class="og-picker">
+  <div ref="root" class="og-picker">
     <!-- Header -->
     <div class="picker-header">
       <button class="header-toggle" @click="collapsed = !collapsed" :aria-expanded="!collapsed">
         <PhCaretDown :size="9" weight="bold" class="caret" :class="{ collapsed }" />
         <PhSparkle :size="14" weight="fill" class="header-icon" />
-        <span class="header-title">OG Image</span>
+        <span class="header-title">Social card (OG image)</span>
         <span v-if="variants" class="header-batch">batch {{ batch }}</span>
       </button>
-      <button v-if="!collapsed" class="reroll-btn" @click.stop="reroll" :disabled="generating" title="Generate 4 new variants">
+      <button v-if="!collapsed" class="reroll-btn" @click.stop="reroll" :disabled="generating" title="Generate 4 new variants" aria-label="Generate 4 new social card variants">
         <PhArrowsClockwise :size="12" weight="bold" :class="{ spinning: generating }" />
         {{ generating ? '' : 'Reroll' }}
       </button>

@@ -96,6 +96,13 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
                 true,
                 Some("CmdOrCtrl+Shift+R"),
             )?,
+            &MenuItem::with_id(
+                handle,
+                "open_site_preview",
+                "Open Site Preview",
+                true,
+                None::<&str>,
+            )?,
             &PredefinedMenuItem::separator(handle)?,
             &open_recent,
             &PredefinedMenuItem::separator(handle)?,
@@ -117,7 +124,9 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
                 true,
                 Some("CmdOrCtrl+Shift+Return"),
             )?,
+            &MenuItem::with_id(handle, "unpublish", "Unpublish\u{2026}", true, None::<&str>)?,
             &PredefinedMenuItem::separator(handle)?,
+            &MenuItem::with_id(handle, "view_on_site", "View on Site", true, None::<&str>)?,
             &MenuItem::with_id(
                 handle,
                 "copy_public_url",
@@ -128,7 +137,7 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
             &MenuItem::with_id(
                 handle,
                 "generate_og",
-                "Generate OG Image",
+                "Generate Social Card (OG Image)",
                 true,
                 None::<&str>,
             )?,
@@ -181,6 +190,9 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
                 Some("CmdOrCtrl+Shift+C"),
             )?,
             &PredefinedMenuItem::separator(handle)?,
+            // Tab order in the window matches these numbers, left to right
+            // after the Desk (which is `d`, a bare key a menu can't own).
+            &MenuItem::with_id(handle, "panel_desk", "Show Desk", true, None::<&str>)?,
             &MenuItem::with_id(
                 handle,
                 "panel_preview",
@@ -202,6 +214,20 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
                 true,
                 Some("CmdOrCtrl+3"),
             )?,
+            &MenuItem::with_id(
+                handle,
+                "panel_changed",
+                "Show Changed Since Live",
+                true,
+                Some("CmdOrCtrl+4"),
+            )?,
+            &MenuItem::with_id(
+                handle,
+                "panel_activity",
+                "Show Activity",
+                true,
+                Some("CmdOrCtrl+5"),
+            )?,
             &PredefinedMenuItem::separator(handle)?,
             &MenuItem::with_id(handle, "search", "Search...", true, Some("CmdOrCtrl+K"))?,
             &PredefinedMenuItem::separator(handle)?,
@@ -217,8 +243,15 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         &[
             &MenuItem::with_id(
                 handle,
+                "show_overview",
+                "How Dispatch Publishes",
+                true,
+                None::<&str>,
+            )?,
+            &MenuItem::with_id(
+                handle,
                 "show_help",
-                "Dispatch Help",
+                "Keyboard Shortcuts",
                 true,
                 Some("CmdOrCtrl+/"),
             )?,
@@ -358,29 +391,43 @@ pub fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Menu ids that are forwarded to the frontend as `menu-<id with dashes>`.
+/// Kept in one list so a test can check the frontend handles each one.
+pub const MENU_EVENT_IDS: &[&str] = &[
+    "new_post",
+    "refresh",
+    "toggle_compact",
+    "search",
+    "open_in_obsidian",
+    "reveal_in_finder",
+    "open_site_preview",
+    "publish",
+    "publish_unlisted",
+    "unpublish",
+    "view_on_site",
+    "copy_public_url",
+    "generate_og",
+    "show_journal",
+    "toggle_sidebar",
+    "panel_desk",
+    "panel_preview",
+    "panel_media",
+    "panel_journal",
+    "panel_changed",
+    "panel_activity",
+    "show_help",
+    "show_overview",
+];
+
 /// Handle custom menu item clicks by emitting events to the frontend.
 pub fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
     let id = event.id().as_ref();
 
     // Most items are passthrough emits with a stable naming convention.
-    let passthrough = [
-        "new_post",
-        "refresh",
-        "toggle_compact",
-        "search",
-        "open_in_obsidian",
-        "reveal_in_finder",
-        "publish",
-        "publish_unlisted",
-        "copy_public_url",
-        "generate_og",
-        "show_journal",
-        "toggle_sidebar",
-        "panel_preview",
-        "panel_media",
-        "panel_journal",
-        "show_help",
-    ];
+    // Every id here MUST have a listener (App.vue or useMenuActions.ts) —
+    // an id without one is a dead menu item (and, if it has an accelerator,
+    // a dead shortcut, since the menu sees the key before the webview).
+    let passthrough = MENU_EVENT_IDS;
     if id == "settings" {
         // The window may be hidden (hide-on-close); Settings lives in it.
         show_main_window(app);
@@ -497,3 +544,27 @@ fn open_url(url: &str) -> std::io::Result<()> {
 // @tauri-apps/api/menu — see FileList.vue:showContextMenu. Cleaner there
 // because actions can route through Tauri commands directly without a
 // round-trip through Rust event emission.
+
+#[cfg(test)]
+mod tests {
+    use super::MENU_EVENT_IDS;
+
+    /// A menu item whose event nobody listens to is dead, and on macOS its
+    /// accelerator is dead too (the menu takes the key before the webview).
+    /// v0.8.0 shipped eleven of these, including Publish ⌘↩. Each id must be
+    /// named in App.vue or useMenuActions.ts.
+    #[test]
+    fn every_menu_event_has_a_frontend_listener() {
+        let frontend = [
+            include_str!("../../src/App.vue"),
+            include_str!("../../src/composables/useMenuActions.ts"),
+        ]
+        .concat();
+        let missing: Vec<String> = MENU_EVENT_IDS
+            .iter()
+            .map(|id| format!("'menu-{}'", id.replace('_', "-")))
+            .filter(|ev| !frontend.contains(ev.as_str()))
+            .collect();
+        assert!(missing.is_empty(), "menu events with no listener: {:?}", missing);
+    }
+}
