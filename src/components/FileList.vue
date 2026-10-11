@@ -20,6 +20,8 @@ import {
   PhClockCounterClockwise,
 } from '@phosphor-icons/vue'
 import type { MarkdownFile } from '../types'
+import { useAppConfig } from '../composables/useVaultData'
+import { CHANGED_LABEL, CHANGED_PILL, CHANGED_HINT, NOT_PUBLISHED_LABEL } from '../utils/vocab'
 
 const props = defineProps<{
   files: MarkdownFile[]
@@ -31,7 +33,13 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [file: MarkdownFile]
   'request-unpublish': [file: MarkdownFile]
+  'open-settings': []
 }>()
+
+const { appConfig, defaultEditor } = useAppConfig()
+const vaultPath = computed(() => appConfig.value?.vault.path || '')
+const vaultPathShort = computed(() => vaultPath.value.replace(/^\/Users\/[^/]+/, '~'))
+const vaultDirs = computed(() => (appConfig.value?.vault.publishable_dirs || ['blog', 'dispatch']).join('/ and ') + '/')
 
 // Start the click→paint timer at the true origin — the moment the row is
 // clicked, before emit/select/watchers/re-render run. FilePreview's
@@ -125,7 +133,7 @@ const filterDefs = computed<FilterDef[]>(() => {
   const defs: FilterDef[] = [
     { key: 'all', label: `All ${counts.value.all}`, active: filter.value === 'all', onPick: () => (filter.value = 'all') },
     { key: 'published', label: `Live ${counts.value.published}`, active: filter.value === 'published', onPick: () => (filter.value = 'published') },
-    { key: 'drafts', label: `Drafts ${counts.value.drafts}`, active: filter.value === 'drafts', onPick: () => (filter.value = 'drafts') },
+    { key: 'drafts', label: `${NOT_PUBLISHED_LABEL} ${counts.value.drafts}`, active: filter.value === 'drafts', onPick: () => (filter.value = 'drafts') },
   ]
   if (counts.value.photos > 0) {
     defs.push({
@@ -220,6 +228,22 @@ const groupedFiles = computed(() => {
   return groups
 })
 
+/** What the empty list says when a filter hides everything. */
+const emptyFilterText = computed(() => {
+  switch (filter.value) {
+    case 'published':
+      return 'Nothing live yet.'
+    case 'drafts':
+      return 'Everything here is live.'
+    case 'scheduled':
+      return 'Nothing set to publish later.'
+    case 'photos':
+      return 'No photo posts.'
+    default:
+      return showWeeknotes.value ? 'No posts match.' : 'Only week notes here, and they’re hidden.'
+  }
+})
+
 function formatTitle(file: MarkdownFile): string {
   return file.title || file.filename.replace(/\.md$/, '').replace(/-/g, ' ')
 }
@@ -241,15 +265,15 @@ function rowStateLabel(file: MarkdownFile): string {
   const s = rowState(file)
   switch (s) {
     case 'modified':
-      return 'Modified since publish'
+      return `${CHANGED_LABEL}: ${CHANGED_HINT.charAt(0).toLowerCase()}${CHANGED_HINT.slice(1)}`
     case 'live':
-      return 'Published'
+      return 'Live'
     case 'unlisted':
-      return 'Published (unlisted)'
+      return 'Live, unlisted (link only)'
     case 'protected':
-      return 'Published (password-protected)'
+      return 'Live, password-protected'
     case 'scheduled':
-      return 'Scheduled to publish'
+      return 'Publishes later: Dispatch publishes it at the set time, if running'
     default:
       return ''
   }
@@ -317,8 +341,8 @@ async function showContextMenu(file: MarkdownFile, e: MouseEvent) {
   const items = [
     await MenuItem.new({ text: 'Open in Obsidian', action: () => invoke('open_in_obsidian', { path: file.path }) }),
     await MenuItem.new({
-      text: 'Open in iA Writer',
-      action: () => invoke('open_in_app', { path: file.path, app: 'iA Writer' }),
+      text: `Open in ${defaultEditor.value}`,
+      action: () => invoke('open_in_app', { path: file.path, app: defaultEditor.value }),
     }),
     await MenuItem.new({
       text: 'Reveal in Finder',
@@ -401,24 +425,47 @@ function getAgeColor(ts: number): string {
         <button
           v-if="hiddenFilterIndices.length"
           class="filter-overflow"
-          data-tip="More filters"
+          data-tip="Show filters that didn’t fit"
+          aria-label="More filters"
           @click="showOverflowMenu"
         >»</button>
       </div>
       <div class="sort-row">
-        <button :class="{ active: sort === 'recent' }" @click="sort = 'recent'" data-tip="Recent">
+        <button :class="{ active: sort === 'recent' }" @click="sort = 'recent'" data-tip="Sort by most recent" aria-label="Sort by most recent">
           <PhClockCounterClockwise :size="9" weight="bold" />
         </button>
-        <button :class="{ active: sort === 'created' }" @click="sort = 'created'" data-tip="Created">
+        <button :class="{ active: sort === 'created' }" @click="sort = 'created'" data-tip="Sort by date created" aria-label="Sort by date created">
           <PhCalendarBlank :size="9" weight="bold" />
         </button>
-        <button :class="{ active: sort === 'title' }" @click="sort = 'title'" data-tip="Title">
+        <button :class="{ active: sort === 'title' }" @click="sort = 'title'" data-tip="Sort by title" aria-label="Sort by title">
           <PhTextAlignLeft :size="9" weight="bold" />
         </button>
       </div>
     </div>
 
     <div v-if="loading" class="loading">Loading...</div>
+
+    <!-- Nothing scanned at all: no vault, or a vault with nothing to publish. -->
+    <div v-else-if="files.length === 0" class="list-empty">
+      <template v-if="!vaultPath">
+        <div class="list-empty-title">No vault yet</div>
+        <div class="list-empty-sub">Point Dispatch at your Obsidian vault folder and your posts show up here.</div>
+      </template>
+      <template v-else>
+        <div class="list-empty-title">No posts found</div>
+        <div class="list-empty-sub">
+          Dispatch lists notes in {{ vaultDirs }} inside
+          <code>{{ vaultPathShort }}</code>. Wrong folder?
+        </div>
+      </template>
+      <button class="list-empty-btn" @click="emit('open-settings')">Choose vault folder…</button>
+    </div>
+
+    <!-- A filter hid everything. -->
+    <div v-else-if="filteredFiles.length === 0" class="list-empty">
+      <div class="list-empty-sub">{{ emptyFilterText }}</div>
+      <button class="list-empty-btn" @click="filter = 'all'; showWeeknotes = true">Show all</button>
+    </div>
 
     <div v-else class="list">
       <template v-for="group in groupedFiles" :key="group.label">
@@ -507,11 +554,11 @@ function getAgeColor(ts: number): string {
                 class="modified-badge"
                 :data-tip="
                   file.published_word_count != null
-                    ? `Was ${file.published_word_count.toLocaleString()}w, now ${file.word_count.toLocaleString()}w`
-                    : 'Body changed since publish'
+                    ? `${CHANGED_HINT} · was ${file.published_word_count.toLocaleString()}w, now ${file.word_count.toLocaleString()}w`
+                    : CHANGED_HINT
                 "
               >
-                MODIFIED
+                {{ CHANGED_PILL }}
                 <span
                   v-if="file.published_word_count != null"
                   class="modified-delta"
@@ -535,7 +582,7 @@ function getAgeColor(ts: number): string {
               </span>
               <span v-else-if="file.publish_at" class="scheduled-badge">
                 <PhClock :size="9" weight="bold" />
-                SCHEDULED
+                PUBLISH LATER
               </span>
             </div>
             <div v-if="file.dek" class="dek">{{ file.dek }}</div>
@@ -723,6 +770,34 @@ function getAgeColor(ts: number): string {
 
 .weeknote-toggle[data-tip]:hover::after {
   transform: translateX(0) translateY(0);
+}
+
+.list-empty {
+  padding: 40px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.list-empty-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.list-empty-sub {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  max-width: 240px;
+}
+.list-empty-sub code {
+  font-family: 'SF Mono', monospace;
+  font-size: 10px;
+}
+.list-empty-btn {
+  margin-top: 4px;
+  font-size: 11px;
 }
 
 .loading {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CHANGED_LABEL, CHANGED_HINT } from '../utils/vocab'
 import { ref, watch } from 'vue'
 import {
   PhLockSimple,
@@ -79,9 +80,9 @@ watch(
   </div>
   <div v-else-if="isLive && hasUnpublishedChanges">
     <div class="banner modified">
-      <span class="banner-text">MODIFIED</span>
+      <span class="banner-text" :data-tip="CHANGED_HINT">{{ CHANGED_LABEL.toUpperCase() }}</span>
       <span v-if="visibilityLabel" class="visibility-badge">{{ visibilityLabel }}</span>
-      <span class="modified-msg">Source changed since last publish</span>
+      <span class="modified-msg">{{ CHANGED_HINT }}</span>
       <button
         class="see-changes"
         :class="{ open: diffOpen }"
@@ -126,10 +127,10 @@ watch(
   <div v-else-if="isScheduled" class="banner scheduled">
     <span class="banner-text">
       <PhClock :size="13" weight="bold" />
-      SCHEDULED
+      PUBLISHES LATER
     </span>
-    <span>{{ formatScheduledTime(publishAt!) }}</span>
-    <button @click="$emit('cancel-schedule')">Cancel</button>
+    <span data-tip="Dispatch publishes it then, if Dispatch is running">{{ formatScheduledTime(publishAt!) }}</span>
+    <button @click="$emit('cancel-schedule')" data-tip="Don’t publish it later">Cancel</button>
   </div>
   <div v-else-if="!isSafe" class="banner warn">
     {{ warnings.join(' · ') }}

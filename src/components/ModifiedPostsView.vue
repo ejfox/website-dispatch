@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CHANGED_LABEL, CHANGED_HINT } from '../utils/vocab'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import {
@@ -139,7 +140,7 @@ function formatAge(ts: number): string {
 <template>
   <div class="modified-view">
     <div class="modified-header">
-      <h2>Modified posts <span class="count">{{ modifiedFiles.length }}</span></h2>
+      <h2 :data-tip="CHANGED_HINT">{{ CHANGED_LABEL }} <span class="count">{{ modifiedFiles.length }}</span></h2>
       <div class="header-actions">
         <select v-model="sort" class="sort-select" data-no-drag>
           <option value="most-recent-edit">Recently edited</option>
@@ -159,8 +160,8 @@ function formatAge(ts: number): string {
 
     <div v-if="modifiedFiles.length === 0" class="empty-state">
       <PhArrowsClockwise :size="32" weight="duotone" class="empty-icon" />
-      <div class="empty-title">Nothing diverged</div>
-      <div class="empty-sub">Every live post matches your vault. Nice.</div>
+      <div class="empty-title">Everything matches</div>
+      <div class="empty-sub">Every live post is the same in your vault and on ejfox.com. Edit one in Obsidian and it shows up here.</div>
     </div>
 
     <div v-else class="modified-list">
