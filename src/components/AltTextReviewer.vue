@@ -316,7 +316,7 @@ generate()
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   z-index: 200;
@@ -329,7 +329,7 @@ generate()
   width: 580px;
   max-width: 95vw;
   max-height: 85vh;
-  background: rgba(30, 30, 34, 0.95);
+  background: var(--modal-bg);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid var(--border-light);
@@ -337,7 +337,7 @@ generate()
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 
 /* Header */
@@ -382,8 +382,8 @@ generate()
 /* Error */
 .error-banner {
   padding: 8px 16px;
-  background: rgba(239, 68, 68, 0.15);
-  border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+  background: var(--tint-broken);
+  border-bottom: 1px solid color-mix(in srgb, var(--status-broken) 25%, transparent);
   color: var(--danger);
   font-size: 11px;
 }
@@ -463,12 +463,12 @@ generate()
 }
 
 .summary-chip.confident {
-  background: rgba(34, 197, 94, 0.15);
+  background: var(--tint-live);
   color: var(--success);
 }
 
 .summary-chip.review {
-  background: rgba(251, 191, 36, 0.15);
+  background: var(--tint-attention);
   color: var(--warning);
 }
 
@@ -488,7 +488,7 @@ generate()
   cursor: pointer;
 }
 .accept-all-btn:hover {
-  border-color: rgba(255, 255, 255, 0.3);
+  border-color: var(--label-3);
   color: var(--text-primary);
 }
 
@@ -503,16 +503,16 @@ generate()
   display: flex;
   gap: 10px;
   padding: 8px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--separator);
   transition: background 0.15s;
 }
 
 .review-item:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--fill);
 }
 
 .review-item.is-accepted {
-  background: rgba(34, 197, 94, 0.04);
+  background: color-mix(in srgb, var(--status-live) 5%, transparent);
 }
 
 .review-item.needs-review:not(.is-accepted) {
@@ -526,7 +526,7 @@ generate()
   height: 56px;
   border-radius: 4px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--fill);
 }
 
 .review-thumb img {
@@ -559,21 +559,24 @@ generate()
   border-radius: 3px;
 }
 
+/* Tint carries the verdict; the text stays neutral for contrast. */
+.conf-badge.high,
+.conf-badge.good,
+.conf-badge.low,
+.conf-badge.poor {
+  color: var(--label);
+}
 .conf-badge.high {
-  background: rgba(34, 197, 94, 0.2);
-  color: var(--success);
+  background: color-mix(in srgb, var(--status-live) 24%, transparent);
 }
 .conf-badge.good {
-  background: rgba(34, 197, 94, 0.12);
-  color: var(--success);
+  background: var(--tint-live);
 }
 .conf-badge.low {
-  background: rgba(251, 191, 36, 0.15);
-  color: var(--warning);
+  background: var(--tint-attention);
 }
 .conf-badge.poor {
-  background: rgba(239, 68, 68, 0.15);
-  color: var(--danger);
+  background: var(--tint-broken);
 }
 
 .line-num {
@@ -595,7 +598,7 @@ generate()
 }
 
 .review-item.needs-review:not(.is-accepted) .alt-text {
-  border-bottom: 1px dashed rgba(251, 191, 36, 0.4);
+  border-bottom: 1px dashed color-mix(in srgb, var(--status-attention) 50%, transparent);
 }
 
 .alt-textarea {
@@ -603,7 +606,7 @@ generate()
   font-family: inherit;
   line-height: 1.4;
   padding: 4px 6px;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--control-bg);
   color: var(--text-primary);
   border: 1px solid var(--accent);
   border-radius: 4px;
@@ -641,13 +644,13 @@ generate()
 }
 
 .action-btn:hover {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: var(--label-3);
   color: var(--text-secondary);
 }
 
 .action-btn.accept.active {
-  background: rgba(34, 197, 94, 0.2);
-  border-color: rgba(34, 197, 94, 0.4);
+  background: var(--tint-live);
+  border-color: color-mix(in srgb, var(--status-live) 40%, transparent);
   color: var(--success);
 }
 
@@ -729,7 +732,7 @@ generate()
 /* Footer */
 .modal-footer {
   padding: 12px 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--separator);
   display: flex;
   align-items: center;
   justify-content: space-between;

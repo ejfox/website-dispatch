@@ -472,8 +472,8 @@ onUnmounted(() => {
   background: transparent;
 }
 .day.shipped .dot {
-  background: var(--success);
-  border-color: var(--success);
+  background: var(--status-live);
+  border-color: var(--status-live);
 }
 .day.today .dot {
   outline: 2px solid var(--accent);
@@ -492,12 +492,12 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 .slot.open {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
+  background: var(--fill-2);
+  color: var(--label);
 }
 .slot.done {
-  background: color-mix(in srgb, var(--success) 16%, transparent);
-  color: var(--success);
+  background: var(--tint-live);
+  color: var(--label);
 }
 .desk-head {
   position: relative;
@@ -557,8 +557,9 @@ onUnmounted(() => {
   font-weight: 400;
   margin-left: 6px;
 }
+/* A favorite, not a status: neutral. */
 .star {
-  color: var(--warning);
+  color: var(--label);
   font-size: 13px;
 }
 .coverage {
@@ -576,21 +577,22 @@ onUnmounted(() => {
   background: var(--hover-bg);
   color: var(--text-tertiary);
 }
+/* Tint carries the tone; text stays neutral. "busy" is neutral — the
+   only in-flight color is the deploying dot. */
+.pill[data-tone] {
+  color: var(--label);
+}
 .pill[data-tone='ok'] {
-  background: color-mix(in srgb, var(--success) 16%, transparent);
-  color: var(--success);
+  background: var(--tint-live);
 }
 .pill[data-tone='warn'] {
-  background: color-mix(in srgb, var(--warning) 16%, transparent);
-  color: var(--warning);
+  background: var(--tint-attention);
 }
 .pill[data-tone='bad'] {
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
-  color: var(--danger);
+  background: var(--tint-broken);
 }
 .pill[data-tone='busy'] {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
+  background: var(--fill-2);
 }
 .chart {
   border-radius: 8px;
@@ -703,8 +705,8 @@ kbd {
   opacity: 0.8;
 }
 .btn.primary kbd {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.3);
+  background: color-mix(in srgb, var(--on-accent) 20%, transparent);
+  border-color: color-mix(in srgb, var(--on-accent) 30%, transparent);
 }
 .link-btn {
   background: none;

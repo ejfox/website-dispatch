@@ -604,7 +604,7 @@ async function save() {
 .settings-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.42);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   z-index: 200;
@@ -702,7 +702,7 @@ async function save() {
 
 .segmented {
   display: inline-flex;
-  border: 1px solid var(--border, #2a2a2a);
+  border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
   width: fit-content;
@@ -714,13 +714,13 @@ async function save() {
   border: none;
   color: var(--text-tertiary);
   cursor: pointer;
-  border-right: 1px solid var(--border, #2a2a2a);
+  border-right: 1px solid var(--border);
 }
 .segmented button:last-child { border-right: none; }
 .segmented button:hover { color: var(--text-secondary); }
 .segmented button.active {
   background: var(--text-primary);
-  color: var(--bg, #0a0a0a);
+  color: var(--control-bg);
   font-weight: 600;
 }
 
@@ -753,11 +753,11 @@ async function save() {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--border, #444);
+  background: var(--status-draft);
 }
-.status-dot.ok { background: var(--success); }
-.status-dot.bad { background: var(--danger); }
-.status-dot.unknown { background: var(--border, #444); }
+.status-dot.ok { background: var(--status-live); }
+.status-dot.bad { background: var(--status-broken); }
+.status-dot.unknown { background: var(--status-draft); }
 
 .mirror-row {
   display: flex;

@@ -74,7 +74,7 @@ const labelFor = (bl: Backlink) => {
   overflow: visible;
 }
 .graph-edge {
-  stroke: var(--text-tertiary, #555);
+  stroke: var(--text-tertiary);
   stroke-width: 1;
   opacity: 0.35;
 }
@@ -82,8 +82,8 @@ const labelFor = (bl: Backlink) => {
   cursor: pointer;
 }
 .graph-node circle {
-  fill: rgba(107, 26, 61, 0.6);
-  stroke: var(--text-secondary, #aaa);
+  fill: var(--label-3);
+  stroke: var(--text-secondary);
   stroke-width: 1;
   transition: fill 0.15s, r 0.15s;
 }
@@ -94,22 +94,23 @@ const labelFor = (bl: Backlink) => {
 .graph-node-label {
   font-size: 8px;
   font-family: 'SF Mono', Menlo, monospace;
-  fill: var(--text-secondary, #ccc);
+  fill: var(--text-secondary);
   text-anchor: middle;
   pointer-events: none;
   letter-spacing: 0.5px;
 }
 .graph-node:hover .graph-node-label {
-  fill: var(--bg, #000);
+  fill: var(--label);
 }
+/* The post you're looking at: accent (it's the selection in this graph). */
 .graph-center {
-  fill: var(--text-primary, #e5e5e5);
-  stroke: rgba(107, 26, 61, 0.8);
+  fill: var(--accent);
+  stroke: var(--accent);
   stroke-width: 2;
 }
 .graph-center-label {
   font-size: 9px;
-  fill: var(--bg, #000);
+  fill: var(--on-accent);
   text-anchor: middle;
   pointer-events: none;
 }
