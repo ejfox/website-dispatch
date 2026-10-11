@@ -4,7 +4,7 @@
 // written), and offers one verb button. Publishing is reversible, so the
 // sentence plus the button is the confirmation; the irreversible extra
 // (webmentions) gets its own visible toggle.
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { MarkdownFile, PublishPreview } from '../types'
@@ -62,7 +62,7 @@ async function load() {
 }
 
 function submit() {
-  if (!canSubmit.value || !preview.value) return
+  if (!props.show || !canSubmit.value || !preview.value) return
   submitting.value = true
   emit('confirm', { isUpdate: preview.value.is_update, webmentions: sendWebmentions.value })
   emit('close')
@@ -89,24 +89,26 @@ function onKey(e: KeyboardEvent) {
 let unlistenMenu: UnlistenFn | null = null
 let openedAt = 0
 function onMenuPublish() {
-  if (Date.now() - openedAt < 700) return
+  if (!props.show || Date.now() - openedAt < 700) return
   submit()
 }
+// Registered once for the component's life (not per open), so a quick
+// open/close can't leave a stray listener behind.
+onMounted(async () => {
+  unlistenMenu = await listen('menu-publish', onMenuPublish).catch(() => null)
+})
 
 watch(
   () => props.show,
-  async (open) => {
+  (open) => {
     if (open) {
       openedAt = Date.now()
       submitting.value = false
       sendWebmentions.value = true
       window.addEventListener('keydown', onKey, true)
-      unlistenMenu = await listen('menu-publish', onMenuPublish).catch(() => null)
       load()
     } else {
       window.removeEventListener('keydown', onKey, true)
-      unlistenMenu?.()
-      unlistenMenu = null
     }
   },
   { immediate: true },
@@ -140,7 +142,8 @@ onUnmounted(() => {
               <ul v-if="review.blockerList.length" class="pub-issues">
                 <li v-for="issue in review.blockerList" :key="issue">{{ issue }}</li>
               </ul>
-              <p class="pub-line pub-muted">Nothing was written. {{ review.summary[0] }}</p>
+              <p class="pub-line pub-muted">Nothing was written.</p>
+              <p class="pub-git">{{ review.git }}</p>
             </template>
 
             <template v-else>

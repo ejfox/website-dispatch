@@ -116,7 +116,11 @@ function syndicationLine(p: PublishPreview): string {
       `${queued.length ? 'Beyond that, nothing' : 'Nothing'} is posted on its own: after the push, Dispatch opens the share sheet for ${names} so you can decide.`,
     )
   }
-  if (!parts.length) parts.push('It won’t be posted to Bluesky or Mastodon.')
+  if (!parts.length) {
+    parts.push('It won’t be posted to Bluesky or Mastodon.')
+    // A first Dispatch piece opens the share sheet even with no network set up.
+    if (p.kind === 'dispatch' && !p.is_update) parts.push('Dispatch still opens the share sheet after the push.')
+  }
   return parts.join(' ')
 }
 

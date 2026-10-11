@@ -63,7 +63,9 @@ const summary = computed(() => {
   const lines = [
     n === 1
       ? `It’ll be committed to ${first.repo_name} on ${first.branch} and deployed, about ${mins} minutes.`
-      : `Each is its own commit to ${first.repo_name} on ${first.branch} and its own deploy. Deploys run one after another, so the last one is live in about ${n * mins} minutes.`,
+      : // website2's deploy group keeps one run going and one waiting; each
+        // new push replaces the waiting run, so the last run ships them all.
+        `Each is its own commit to ${first.repo_name} on ${first.branch}. GitHub finishes the deploy already running, then builds the newest commit (runs in between are skipped), so all of them are live in about ${2 * mins} minutes.`,
     'Dispatch won’t watch these deploys or send webmentions for them; open a post and update it on its own if you want that.',
   ]
   const queued = ready.value.flatMap((r) => r.preview!.syndication.filter((s) => s.mode === 'queued'))
@@ -77,7 +79,7 @@ const summary = computed(() => {
 })
 
 function submit() {
-  if (submitting.value || loading.value || !ready.value.length) return
+  if (!props.show || submitting.value || loading.value || !ready.value.length) return
   submitting.value = true
   emit('confirm', ready.value.map((r) => r.file.path))
   emit('close')
