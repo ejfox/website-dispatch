@@ -437,6 +437,10 @@ pub struct Published {
 /// Publish a vault note using the app config. Blocking (git + network): call
 /// it through `off_main`, never on the UI thread.
 pub fn publish_file(source_path: &str, target_id: Option<&str>) -> Result<Published, String> {
+    // Hard refusal first: week-notes/, drafts/, `type: weeknote`, empty slug.
+    // (publish_guard owns this; it runs before any config or path logic.)
+    let guard_slug = bare_slug(source_path).unwrap_or_default();
+    crate::publish_guard::refuse_unpublishable(source_path, &guard_slug)?;
     let app_config = config::get()?;
     let target = config::resolve_target(target_id)?;
     // Dispatch pieces (vault dispatch/) → content/dispatch/<slug>.md.

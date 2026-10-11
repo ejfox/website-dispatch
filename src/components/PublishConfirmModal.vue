@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { PhArrowsClockwise, PhArrowSquareUpRight, PhKeyboard, PhCheck } from '@phosphor-icons/vue'
 import type { MarkdownFile } from '../types'
 
@@ -33,7 +33,16 @@ watch(
   },
 )
 
+// Type-to-confirm must never pass on an empty or missing expected slug:
+// a week-notes/ or drafts/ path yields slug '' and ''.trim() === '' would
+// otherwise enable Publish with nothing typed.
+const slugMatches = computed(() => {
+  const expected = (props.slug ?? '').trim()
+  return expected !== '' && publishConfirmText.value.trim() === expected
+})
+
 function handleConfirm() {
+  if (!slugMatches.value) return
   emit('confirm', props.isRepublish)
   emit('close')
 }
@@ -110,10 +119,10 @@ function handleConfirm() {
             v-model="publishConfirmText"
             :placeholder="slug"
             autofocus
-            @keydown.enter="publishConfirmText.trim() === slug && handleConfirm()"
+            @keydown.enter="slugMatches && handleConfirm()"
           />
           <div class="pub-slug-match" v-if="publishConfirmText.length > 0">
-            <span v-if="publishConfirmText.trim() === slug" class="pub-match-yes">Match!</span>
+            <span v-if="slugMatches" class="pub-match-yes">Match!</span>
             <span v-else class="pub-match-no">{{ publishConfirmText.length }}/{{ slug.length }}</span>
           </div>
         </div>
@@ -134,7 +143,7 @@ function handleConfirm() {
           <button
             v-else
             class="pub-btn-go pub-btn-publish"
-            :disabled="publishConfirmText.trim() !== slug"
+            :disabled="!slugMatches"
             @click="handleConfirm()"
           >
             {{ isRepublish ? 'Republish' : 'Publish' }}

@@ -37,6 +37,7 @@ mod open; // Open files in Obsidian, editors, terminal
 mod patterns; // Shared compiled regex patterns (LazyLock statics)
 mod preview; // Manages a local Node.js server for previewing posts
 mod publish; // Handles git operations to publish posts to your website
+mod publish_guard; // Hard refusal of week-notes/, drafts/, type: weeknote
 mod publish_diff; // Computes a line-level diff between vault source and the published copy
 mod r2; // Cloudflare R2 (S3-compatible) uploader with hand-rolled SigV4
 mod sketchybar_cache; // Snapshot JSON for sketchybar / ambient surfaces
