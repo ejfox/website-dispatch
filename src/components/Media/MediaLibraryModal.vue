@@ -388,7 +388,7 @@ onMounted(() => {
             <button :class="{ active: resourceType === 'image' }" @click="resourceType = 'image'">Images</button>
             <button :class="{ active: resourceType === 'video' }" @click="resourceType = 'video'">Videos</button>
           </div>
-          <button v-if="!inline" class="close-btn" @click="$emit('close')">✕</button>
+          <button v-if="!inline" class="close-btn" @click="$emit('close')" data-tip="Close the media library" aria-label="Close">✕</button>
         </div>
 
         <div class="search-bar">

@@ -40,6 +40,10 @@ const loading = ref(false)
 const loadError = ref<string | null>(null)
 const loadedAt = ref(0)
 
+// desk.rs words a missing binary as "Couldn't find the desk command at …".
+// That isn't an error to retry, it's setup; say what the Desk needs.
+const deskMissing = computed(() => !!loadError.value?.startsWith('Couldn\'t find the desk command'))
+
 async function load() {
   loading.value = true
   try {
@@ -226,6 +230,8 @@ onUnmounted(() => {
 
 <template>
   <div class="desk">
+    <p class="desk-intro">Your writing desk: today’s pieces and what’s on deck</p>
+
     <!-- Header: streak · week · slot -->
     <header class="desk-head">
       <div class="streak" :class="{ zero: !desk?.streak }">
@@ -247,11 +253,28 @@ onUnmounted(() => {
       <div class="slot" :class="{ open: desk?.slot.open && !desk?.shipped_today, done: desk?.shipped_today }">
         {{ slotLabel }}
       </div>
-      <button class="refresh" :class="{ spinning: loading }" data-tip="Refresh the desk" @click="load">↻</button>
+      <button class="refresh" :class="{ spinning: loading }" data-tip="Reload today’s desk" aria-label="Reload the desk" @click="load">↻</button>
     </header>
 
+    <!-- No desk command: teach the setup instead of showing an error -->
+    <div v-if="deskMissing && !desk" class="setup">
+      <div class="setup-title">The Desk needs chart-desk</div>
+      <p>
+        Each morning chart-desk finds a story, pulls the data and sketches a chart. The Desk shows that
+        bench here so you can start the piece in one keystroke. Dispatch reads it from the
+        <code>desk</code> command, which isn't at <code>~/.local/bin/desk</code>.
+      </p>
+      <p>To set it up, put chart-desk in <code>~/code/chart-desk</code> and link its CLI:</p>
+      <pre>ln -s ~/code/chart-desk/desk.py ~/.local/bin/desk</pre>
+      <p class="setup-sub">
+        Or point <code>DISPATCH_DESK_BIN</code> at it. Everything else in Dispatch works without it, and
+        Settings › Vault › Open to can start you on another tab.
+      </p>
+      <button class="btn" @click="load">Check again</button>
+    </div>
+
     <!-- Couldn't read the desk -->
-    <div v-if="loadError && !desk" class="notice bad">
+    <div v-else-if="loadError && !desk" class="notice bad">
       <div>{{ loadError }}</div>
       <button class="btn" @click="load">Try again</button>
     </div>
@@ -415,6 +438,44 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.desk-intro {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.setup {
+  max-width: 520px;
+  padding: 16px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.setup-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.setup p {
+  margin: 0 0 8px;
+}
+.setup-sub {
+  color: var(--text-tertiary);
+}
+.setup code,
+.setup pre {
+  font-family: 'SF Mono', monospace;
+  font-size: 11px;
+}
+.setup pre {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  background: var(--kbd-bg);
+  border-radius: 4px;
+  user-select: text;
+}
+
 .desk {
   height: 100%;
   overflow-y: auto;

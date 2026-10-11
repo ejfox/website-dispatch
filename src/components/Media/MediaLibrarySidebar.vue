@@ -61,7 +61,7 @@ const unusedCountLabel = () => {
     <div class="sidebar-footer">
       <div v-if="usageData" class="usage-stats">
         <span>{{ usageData.usage_map.total_posts }} posts scanned</span>
-        <button @click="emit('rescan')" :disabled="loadingUsage" class="rescan-btn">
+        <button @click="emit('rescan')" :disabled="loadingUsage" class="rescan-btn" data-tip="Rescan posts to see which assets they use" aria-label="Rescan asset usage">
           {{ loadingUsage ? '...' : '↻' }}
         </button>
       </div>

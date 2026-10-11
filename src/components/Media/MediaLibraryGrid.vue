@@ -89,7 +89,7 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
       <div class="asset-thumbnail">
         <img :src="getThumbnailUrl(asset)" :alt="asset.public_id" loading="lazy" />
         <span v-if="asset.resource_type === 'video'" class="badge video">VID</span>
-        <span v-if="getUsageCount(asset.public_id) === 0" class="badge unused" title="Not used in any posts">•</span>
+        <span v-if="getUsageCount(asset.public_id) === 0" class="badge unused" data-tip="Not used in any post" aria-label="Not used in any post">•</span>
         <span v-else-if="getUsageCount(asset.public_id) > 0" class="badge used">
           {{ getUsageCount(asset.public_id) }}
         </span>

@@ -156,7 +156,7 @@ generate()
         <PhSparkle :size="16" weight="fill" class="header-icon" />
         <h2>Alt Text Review</h2>
         <span class="header-count">{{ props.count }} images</span>
-        <button class="close-btn" @click="$emit('close')">
+        <button class="close-btn" @click="$emit('close')" data-tip="Close without applying" aria-label="Close">
           <PhX :size="14" weight="bold" />
         </button>
       </div>
@@ -245,11 +245,12 @@ generate()
                 class="action-btn accept"
                 :class="{ active: accepted.has(item.originalIdx) }"
                 @click="toggleAccept(item.originalIdx)"
-                :title="accepted.has(item.originalIdx) ? 'Undo accept' : 'Accept'"
+                :data-tip="accepted.has(item.originalIdx) ? 'Undo accept' : 'Accept this description'"
+                :aria-label="accepted.has(item.originalIdx) ? 'Undo accept' : 'Accept this description'"
               >
                 <PhCheck :size="14" weight="bold" />
               </button>
-              <button class="action-btn edit" @click="startEdit(item.originalIdx)" title="Edit">
+              <button class="action-btn edit" @click="startEdit(item.originalIdx)" data-tip="Edit this description" aria-label="Edit this description">
                 <PhPencilSimple :size="12" weight="bold" />
               </button>
             </div>
