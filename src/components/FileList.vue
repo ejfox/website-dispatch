@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { perfTrace } from '../utils/perfTrace'
 import { useOverflowMenu } from '../composables/useOverflowMenu'
+import { useDeployStatus } from '../composables/useUiState'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useLocalStorage } from '@vueuse/core'
@@ -50,6 +51,8 @@ function thumbSrc(url: string): string {
   }
   return url
 }
+
+const { phaseFor } = useDeployStatus()
 
 const filter = ref<'all' | 'published' | 'drafts' | 'scheduled' | 'photos'>('all')
 const sort = ref<'recent' | 'created' | 'title' | 'words'>('recent')
@@ -224,22 +227,69 @@ function formatTitle(file: MarkdownFile): string {
   return file.title || file.filename.replace(/\.md$/, '').replace(/-/g, ' ')
 }
 
-/** State category for the leading row dot. Drafts return null so the dot
- *  doesn't render (keeps rest-state rows visually quiet — Mail's pattern). */
-type RowState = 'modified' | 'live' | 'unlisted' | 'protected' | 'scheduled'
+/** State for the leading row dot. Drafts return null so the dot doesn't
+ *  render (keeps rest-state rows visually quiet — Mail's pattern).
+ *  Precedence: what's happening now, then what's broken, then what needs
+ *  you, then where it stands. */
+type RowState =
+  | 'deploying'
+  | 'failed'
+  | 'privacy'
+  | 'modified'
+  | 'live'
+  | 'unlisted'
+  | 'protected'
+  | 'lint'
+  | 'scheduled'
+const MODIFIED = 'Modified since publish'
+function lintWarnings(file: MarkdownFile): string[] {
+  return (file.warnings ?? []).filter((w) => w !== MODIFIED)
+}
 function rowState(file: MarkdownFile): RowState | null {
-  if (file.published_url && file.warnings?.includes('Modified since publish')) return 'modified'
+  const deploy = phaseFor(file.path)
+  if (deploy === 'deploying') return 'deploying'
+  if (deploy === 'failed') return 'failed'
+  const lint = lintWarnings(file)
+  if (lint.some((w) => w.startsWith('[privacy]'))) return 'privacy'
+  if (file.published_url && file.warnings?.includes(MODIFIED)) return 'modified'
   if (file.published_url) {
     if (file.password) return 'protected'
     if (file.unlisted) return 'unlisted'
     return 'live'
   }
+  // `draft: true` files are parked on purpose — their lint stays quiet.
+  if (lint.length && !file.draft) return 'lint'
   if (file.publish_at) return 'scheduled'
   return null
+}
+/** Status color for a row state. Visibility (unlisted/password) is not a
+ *  status — those rows are live, and say so with a neutral glyph. */
+const ROW_STATUS: Record<RowState, string> = {
+  deploying: 'deploying',
+  failed: 'broken',
+  privacy: 'broken',
+  modified: 'attention',
+  lint: 'attention',
+  live: 'live',
+  unlisted: 'live',
+  protected: 'live',
+  scheduled: 'scheduled',
+}
+function rowStatus(file: MarkdownFile): string | null {
+  const s = rowState(file)
+  return s ? ROW_STATUS[s] : null
 }
 function rowStateLabel(file: MarkdownFile): string {
   const s = rowState(file)
   switch (s) {
+    case 'deploying':
+      return 'Deploying'
+    case 'failed':
+      return 'Deploy failed'
+    case 'privacy':
+      return 'Privacy warning'
+    case 'lint':
+      return `${lintWarnings(file).length} lint warning${lintWarnings(file).length === 1 ? '' : 's'}`
     case 'modified':
       return 'Modified since publish'
     case 'live':
@@ -363,18 +413,6 @@ async function startWindowDrag(e: MouseEvent) {
     console.warn('startDragging failed', err)
   }
 }
-
-function getAgeColor(ts: number): string {
-  const days = Math.min(Math.floor((Date.now() / 1000 - ts) / 86400), 365)
-  const t = days / 365
-  if (t < 0.1) return 'var(--warning)'
-  if (t < 0.25) return 'var(--warning)'
-  if (t < 0.4) return 'var(--warning)'
-  if (t < 0.55) return 'var(--danger)'
-  if (t < 0.7) return 'var(--accent-strong)'
-  if (t < 0.85) return 'var(--accent-strong)'
-  return 'var(--accent-strong)'
-}
 </script>
 
 <template>
@@ -440,6 +478,8 @@ function getAgeColor(ts: number): string {
             file.published_word_count,
             file.word_count,
             file.warnings.length,
+            file.draft,
+            phaseFor(file.path),
             selected?.path === file.path,
           ]"
           class="item"
@@ -449,11 +489,9 @@ function getAgeColor(ts: number): string {
             weeknote: file.content_type === 'weeknote',
             photos: file.content_type === 'photos',
           }"
-          :style="{ '--age': getAgeColor(file.created) }"
           @click="onRowClick(file)"
           @contextmenu="showContextMenu(file, $event)"
         >
-          <div class="age-bar"></div>
           <img
             v-if="file.content_type === 'photos' && file.thumbnail"
             class="row-thumb"
@@ -468,8 +506,9 @@ function getAgeColor(ts: number): string {
                    they read as quiet. -->
               <span
                 v-if="rowState(file)"
-                class="row-dot"
+                class="status-dot row-dot"
                 :data-state="rowState(file)"
+                :data-status="rowStatus(file)"
                 :data-tip="rowStateLabel(file)"
                 aria-hidden="true"
               ></span>
@@ -664,22 +703,23 @@ function getAgeColor(ts: number): string {
      of the old "just bump the text weight" treatment. Reads as a real
      selected state against the vibrant sidebar. */
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  background: var(--accent-selected);
   border-radius: 4px;
   font-weight: 600;
 }
 
 .filters .week-toggle {
   margin-left: 4px;
-  background: rgba(245, 158, 11, 0.12);
-  color: var(--warning);
+  /* Content-type filter, not a status: neutral. */
+  background: var(--fill-2);
+  color: var(--label-2);
   border-radius: 8px;
   letter-spacing: 0.5px;
   font-weight: 600;
 }
 .filters .week-toggle:hover {
-  background: rgba(245, 158, 11, 0.2);
-  color: var(--warning);
+  background: var(--fill-2);
+  color: var(--label);
 }
 .filters .week-toggle.off {
   background: transparent;
@@ -801,9 +841,8 @@ function getAgeColor(ts: number): string {
   padding: 0;
   /* Inset the rounded source-list selection from the sidebar edges. The
      6px margin holds the selection rect away from the sidebar walls —
-     same idiom as Mail / Finder. overflow:hidden clips the age-bar's
-     square top-left/bottom-left corners to the row's border-radius so
-     the stripe doesn't poke out of the rounded rect. */
+     same idiom as Mail / Finder. overflow:hidden clips the row
+     thumbnail's corners to the row's border-radius. */
   margin: 0 6px;
   border-radius: 6px;
   border: none;
@@ -832,7 +871,7 @@ function getAgeColor(ts: number): string {
    floating with margin from the sidebar edges. The macOS NSSourceList
    look. Replaces the old solid-color row + left accent stripe. */
 .item.selected {
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: var(--accent-selected);
   box-shadow: none;
 }
 .item.selected + .item {
@@ -844,36 +883,15 @@ function getAgeColor(ts: number): string {
 /* Old override compensated for the now-gone 2px left accent border — the
    source-list rect doesn't need a content padding adjustment. */
 
+/* The selection fill is a translucent tint, not a solid accent — so the
+   title stays --label. (Forcing #fff here was 1.5:1 in light mode.) */
 .item.selected .title {
-  color: #fff;
-}
-
-.item.selected .filename {
-  opacity: 0.35;
+  color: var(--label);
 }
 
 .item.selected .meta,
 .item.selected .dir {
   color: var(--text-tertiary);
-}
-
-.item.published {
-  /* Subtle indicator - no screaming green border */
-}
-
-.item.published.selected {
-  border-left-color: var(--success);
-}
-
-.age-bar {
-  width: 3px;
-  background: var(--age);
-  flex-shrink: 0;
-  opacity: 0.8;
-}
-
-.item.published .age-bar {
-  display: none;
 }
 
 .content {
@@ -888,27 +906,24 @@ function getAgeColor(ts: number): string {
   gap: 6px;
 }
 
-/* Leading status dot — Mail's blue-unread-dot pattern, generalized for the
-   visibility states Dispatch tracks. Filled circle, 6px, color-coded.
-   Drafts render no dot so the rest-state row reads quiet. */
+/* Leading status dot — Mail's unread-dot idiom. Color comes from the
+   global .status-dot[data-status] map (live green, attention orange, broken
+   red, scheduled purple, deploying = pulsing accent). Drafts get no dot. */
 .row-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  background: var(--text-tertiary);
+  margin-left: 1px;
 }
-.row-dot[data-state='live']      { background: var(--success, #34d399); }
-.row-dot[data-state='modified']  { background: var(--warning, #f59e0b); }
-.row-dot[data-state='scheduled'] { background: #fbbf24; }
-.row-dot[data-state='unlisted']  { background: var(--accent); }
-.row-dot[data-state='protected'] { background: #a78bfa; }
+/* Hold the dot off the accent selection fill so it never merges into it. */
+.item.selected .row-dot:not([data-status='deploying']) {
+  box-shadow: 0 0 0 1.5px var(--control-bg);
+}
 
+/* Pills: one dialect. Status pills = 15% tint + colored glyph + neutral
+   label text. Visibility and content-type tags = neutral fill + --label-2. */
 .live-badge {
   font-size: 7.5px;
   font-weight: 600;
-  background: rgba(48, 209, 88, 0.12);
-  color: var(--success);
+  background: var(--tint-live);
+  color: var(--label);
   padding: 1px 5px;
   border-radius: 8px;
   flex-shrink: 0;
@@ -918,11 +933,15 @@ function getAgeColor(ts: number): string {
   letter-spacing: 0.3px;
 }
 
+.live-badge svg {
+  color: var(--status-live);
+}
+
 .modified-badge {
   font-size: 7.5px;
   font-weight: 600;
-  background: rgba(255, 159, 10, 0.15);
-  color: var(--warning);
+  background: var(--tint-attention);
+  color: var(--label);
   padding: 1px 5px;
   border-radius: 8px;
   flex-shrink: 0;
@@ -936,14 +955,14 @@ function getAgeColor(ts: number): string {
   letter-spacing: 0;
   opacity: 0.85;
 }
-.modified-delta.pos { color: var(--success); }
-.modified-delta.neg { color: var(--danger); }
+/* A word-count diff, not a status: neutral (green here read as "live"). */
+.modified-delta { color: var(--label-2); }
 
 .unlisted-badge {
   font-size: 7.5px;
   font-weight: 600;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
+  background: var(--fill-2);
+  color: var(--label-2);
   padding: 1px 5px;
   border-radius: 8px;
   flex-shrink: 0;
@@ -956,8 +975,8 @@ function getAgeColor(ts: number): string {
 .protected-badge {
   font-size: 7.5px;
   font-weight: 600;
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  color: var(--accent);
+  background: var(--fill-2);
+  color: var(--label-2);
   padding: 1px 5px;
   border-radius: 8px;
   flex-shrink: 0;
@@ -970,8 +989,8 @@ function getAgeColor(ts: number): string {
 .weeknote-badge {
   font-size: 7.5px;
   font-weight: 600;
-  background: rgba(245, 158, 11, 0.12);
-  color: var(--warning);
+  background: var(--fill-2);
+  color: var(--label-2);
   padding: 1px 5px;
   border-radius: 8px;
   flex-shrink: 0;
@@ -981,8 +1000,8 @@ function getAgeColor(ts: number): string {
 .photo-badge {
   font-size: 7.5px;
   font-weight: 600;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
+  background: var(--fill-2);
+  color: var(--label-2);
   padding: 1px 5px;
   border-radius: 8px;
   flex-shrink: 0;
@@ -992,8 +1011,8 @@ function getAgeColor(ts: number): string {
 .dispatch-badge {
   font-size: 7.5px;
   font-weight: 700;
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  background: var(--fill-2);
+  color: var(--label-2);
   padding: 1px 5px;
   border-radius: 8px;
   flex-shrink: 0;
@@ -1003,16 +1022,16 @@ function getAgeColor(ts: number): string {
 .draft-badge {
   font-size: 7.5px;
   font-weight: 600;
-  border: 1px dashed var(--text-tertiary);
-  color: var(--text-secondary);
+  border: 1px dashed var(--label-3);
+  color: var(--label-2);
   padding: 0 5px;
   border-radius: 8px;
   flex-shrink: 0;
   letter-spacing: 0.5px;
 }
 
-/* List thumbnail for photo posts — small cropped square between the age-bar
-   and the text content, so photo posts are scannable in the sidebar. */
+/* List thumbnail for photo posts — small cropped square before the text
+   content, so photo posts are scannable in the sidebar. */
 .row-thumb {
   width: 34px;
   height: 34px;
@@ -1020,17 +1039,7 @@ function getAgeColor(ts: number): string {
   object-fit: cover;
   border-radius: 4px;
   margin: 4px 0 4px 4px;
-  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
-}
-
-.item.weeknote .age-bar {
-  background: var(--warning) !important;
-  opacity: 0.6;
-  display: block;
-}
-
-.item.weeknote.published .age-bar {
-  display: block;
+  background: var(--under-page);
 }
 
 .unlisted-badge-draft {
@@ -1038,8 +1047,8 @@ function getAgeColor(ts: number): string {
   flex-shrink: 0;
   padding: 1px 4px;
   border-radius: 2px;
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  color: var(--accent);
+  background: transparent;
+  color: var(--label-2);
 }
 
 .protected-badge-draft {
@@ -1047,8 +1056,8 @@ function getAgeColor(ts: number): string {
   flex-shrink: 0;
   padding: 1px 4px;
   border-radius: 2px;
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  color: var(--accent);
+  background: transparent;
+  color: var(--label-2);
 }
 
 .scheduled-badge {
@@ -1056,11 +1065,14 @@ function getAgeColor(ts: number): string {
   font-weight: 500;
   padding: 1px 4px;
   border-radius: 2px;
-  background: rgba(255, 159, 10, 0.2);
-  color: var(--warning);
+  background: var(--tint-scheduled);
+  color: var(--label);
+}
+.scheduled-badge svg {
+  color: var(--status-scheduled);
 }
 
-/* Badges keep their own colors when selected — row is subtle now */
+/* Pills keep their tints when selected — the selection is a tint too. */
 
 .filename {
   font-size: 8.5px;
@@ -1126,7 +1138,7 @@ function getAgeColor(ts: number): string {
 }
 
 .pub-date {
-  color: var(--success);
+  color: var(--text-tertiary);
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -1174,10 +1186,6 @@ function getAgeColor(ts: number): string {
 
 .sidebar.compact .item .row {
   gap: 4px;
-}
-
-.sidebar.compact .age-bar {
-  width: 2px;
 }
 
 .sidebar.compact .group-header {

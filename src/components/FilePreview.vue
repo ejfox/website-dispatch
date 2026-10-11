@@ -15,7 +15,7 @@ import ActionToolbar from './ActionToolbar.vue'
 import PublishConfirmModal from './PublishConfirmModal.vue'
 import WebmentionStatus from './WebmentionStatus.vue'
 import ResizeHandle from './ResizeHandle.vue'
-import { useResizable, useToasts } from '../composables/useUiState'
+import { useResizable, useToasts, useDeployStatus } from '../composables/useUiState'
 // Markdown processing now lives in src/workers/markdownWorker.ts — see
 // `renderWorker` / `renderMarkdownInWorker` below. The pipeline imports
 // (unified / remark-* / rehype-*) used to live here and run on the main
@@ -459,6 +459,15 @@ function onDraftPromptKey(e: KeyboardEvent) {
     showDraftPrompt.value = false
   }
 }
+// Mirror this file's deploy into the shared store so its file-list row can
+// show a deploying (pulsing accent) or failed (red) dot. A null deploy on
+// the same path means it was dismissed; a path change just means we moved.
+const deployStatusStore = useDeployStatus()
+watch([() => props.file.path, currentDeploy], ([path, d], [oldPath]) => {
+  if (d) deployStatusStore.track(path, d)
+  else if (path === oldPath) deployStatusStore.clear(path)
+})
+
 watch(showDraftPrompt, (open) => {
   if (open) window.addEventListener('keydown', onDraftPromptKey)
   else window.removeEventListener('keydown', onDraftPromptKey)

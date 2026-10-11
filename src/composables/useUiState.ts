@@ -4,6 +4,7 @@
 import { ref, readonly } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
 import { invoke } from '@tauri-apps/api/core'
+import type { DeployState } from './usePublishFlow'
 
 // ── Toasts ──────────────────────────────────────────────────────────────────
 
@@ -210,4 +211,28 @@ export function useResizable(
   }
 
   return { size, dragging, start, reset }
+}
+
+// ── Deploy status (shared) ──────────────────────────────────────────────────
+// usePublishing() keeps its deploys inside FilePreview. FilePreview mirrors
+// each deploy here (by file path) so the file list can show a deploying /
+// failed dot per row. We keep the reactive DeployState itself, not a copy,
+// so a background deploy that finishes or fails after you click away still
+// updates its row.
+
+const deployStatus = ref<Record<string, DeployState>>({})
+
+export function useDeployStatus() {
+  return {
+    deployStatus: readonly(deployStatus),
+    phaseFor(path: string): DeployState['phase'] | null {
+      return deployStatus.value[path]?.phase ?? null
+    },
+    track(path: string, d: DeployState) {
+      deployStatus.value[path] = d
+    },
+    clear(path: string) {
+      delete deployStatus.value[path]
+    },
+  }
 }
