@@ -196,7 +196,10 @@ const modifiedCount = computed(
 watch(
   modifiedCount,
   (n) => {
-    getCurrentWindow().setBadgeCount(n > 0 ? n : undefined).catch(() => {})
+    // Needs core:window:allow-set-badge-count (core:default is read-only).
+    getCurrentWindow()
+      .setBadgeCount(n > 0 ? n : undefined)
+      .catch((e) => console.warn('dock badge failed', e))
   },
   { immediate: true },
 )
