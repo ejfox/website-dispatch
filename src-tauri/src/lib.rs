@@ -246,6 +246,17 @@ fn publish_file_blocking(
     Ok(url)
 }
 
+// What publishing this note would do, stated before anything is written:
+// destination, new vs update, branch and clobber checks, visibility, embargo,
+// webmentions and syndication. Reads only (git status, no pull).
+#[tauri::command]
+async fn publish_preview(
+    source_path: String,
+    target_id: Option<String>,
+) -> Result<publish::PublishPreview, String> {
+    publish::off_main(move || publish::publish_preview(&source_path, target_id.as_deref())).await
+}
+
 // Unpublish a file (move from blog/ to drafts/ in the website repo)
 #[tauri::command]
 async fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), String> {
@@ -1119,6 +1130,7 @@ pub fn run() {
             get_file_content,
             append_to_file,
             publish_file,
+            publish_preview,
             unpublish_file,
             get_git_status,
             deploy::get_head_sha,
