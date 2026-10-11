@@ -384,7 +384,7 @@ export function usePostActions(options: {
     unpublishing.value = true
     try {
       await invoke('unpublish_file', { slug: options.slug.value, targetId: options.getActiveTargetId() || null })
-      options.showSuccessToast('Unpublished — moved to drafts')
+      options.showSuccessToast('Unpublished: it\'ll come down in about 3 minutes')
       setTimeout(() => options.onRefresh(), 500)
     } catch (e) {
       await message(String(e), { title: 'Couldn’t unpublish', kind: 'error' })

@@ -200,7 +200,7 @@ onUnmounted(() => {
 .pub-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.42);
+  background: var(--scrim);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   z-index: 200;
@@ -223,7 +223,7 @@ onUnmounted(() => {
   border-radius: 16px;
   box-shadow:
     var(--shadow-lg),
-    0 0 0 1px rgba(255, 255, 255, 0.05);
+    0 0 0 1px var(--separator);
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 }
@@ -286,7 +286,7 @@ onUnmounted(() => {
 
 .pub-toggle input {
   margin: 2px 0 0;
-  accent-color: var(--success);
+  accent-color: var(--accent);
   flex-shrink: 0;
 }
 
@@ -359,29 +359,29 @@ kbd {
   padding: 8px 18px;
   font-size: 12px;
   font-weight: 600;
-  background: var(--success);
-  color: #000;
+  background: var(--accent);
+  color: var(--on-accent);
   border: none;
   border-radius: 8px;
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 8px;
-  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: background 0.2s ease-out;
 }
 
 .pub-btn-go kbd {
-  background: rgba(0, 0, 0, 0.12);
-  border-color: rgba(0, 0, 0, 0.18);
-  color: rgba(0, 0, 0, 0.7);
+  background: color-mix(in srgb, var(--on-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--on-accent) 24%, transparent);
+  color: var(--on-accent);
 }
 
 .pub-btn-go:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--success) 88%, white);
+  background: color-mix(in srgb, var(--accent) 88%, white);
 }
 
 .pub-btn-go:active:not(:disabled) {
-  background: color-mix(in srgb, var(--success) 80%, black);
+  background: color-mix(in srgb, var(--accent) 80%, black);
 }
 
 .pub-btn-go:disabled {

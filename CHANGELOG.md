@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.8.1 — 2026-10-11
+
+The clarity release: Dispatch says what it's about to do, every shortcut
+works, things have one name each, and color means something.
+
+### Added — Review before publishing
+- **A review sheet that states the consequences**, built from a new
+  `publish_preview` (same checks as publish, writes nothing): where the post
+  will live, that it goes to website2 on `main` and is live in ~3 minutes,
+  who can see it, whether anything is posted to Bluesky/Mastodon, and how to
+  undo. If it can't publish (wrong branch, conflicts, edited outside
+  Dispatch) it says why in plain words, and says nothing was written.
+- **Every publish path goes through it**: toolbar, the "Changed since live"
+  banner and tab, Unlisted, the palette and the Publish menu. Bulk republish
+  gets one sheet listing every post. Lint issues are explained in the sheet.
+- The type-the-slug step is gone: publishing is reversible, so the sentence
+  and one button are the confirmation.
+- **"How Dispatch publishes"** under Help and `?`: what publishing does,
+  what's never published, unlisted vs password, Publish later vs Schedule
+  (with the time-zone gotcha), and when webmentions go out.
+
+### Fixed — Shortcuts
+- **⌘↩ and most menu shortcuts did nothing.** macOS gives menu shortcuts to
+  the native menu first, and 11 menu items had no listener. All are wired,
+  each shortcut has one owner, and a test fails if a menu item has none.
+- ⌘1–⌘5 now run left to right across the tabs (⌘3 is Journal everywhere).
+
+### Changed — One name per thing
+- Modified → **Changed since live**; the Drafts filter → **Not published**;
+  the external preview → **Open site preview**; Dispatch's own timer →
+  **Publish later…** (Schedule now only means the site's `publishAt`).
+- Empty states that teach (no vault, empty filter, nothing selected, Desk
+  setup), and a hover hint plus `aria-label` on every icon-only control.
+
+### Changed — Color
+- **One color per status**, from the macOS system palette: live green,
+  needs-attention orange, broken red, scheduled purple, draft gray, and
+  deploying as a pulsing dot in your accent color. Status color only on
+  dots and pills, never text.
+- Your accent color is reserved for selection, focus and the primary
+  button. Removed per-tab hues, the green preview wash and the age bar.
+  Fixed unreadable selected rows in light mode, invisible palette pills,
+  and the media library / social-card picker ignoring light mode.
+- Rows show deploying and failed state live.
+
 ## 0.8.0 — 2026-10-11
 
 Publishing actually works again, waits for the site to really be live,
