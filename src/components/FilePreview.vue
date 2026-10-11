@@ -2,7 +2,7 @@
 import { ref, watch, computed, nextTick, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { message } from '@tauri-apps/plugin-dialog'
-import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhTrophy, PhCaretDown } from '@phosphor-icons/vue'
+import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhCaretDown } from '@phosphor-icons/vue'
 import LintReceipt from './LintReceipt.vue'
 import LocalMediaFixer from './LocalMediaFixer.vue'
 import BacklinksGraph from './BacklinksGraph.vue'
@@ -317,12 +317,10 @@ const {
   dismissDeploy,
   showSuccess,
   successMessage,
-  isMilestoneToast,
   showPublishConfirm,
   publishConfirmRepublish,
   showSyndicationWizard,
   showAltTextReviewer,
-  publishContext,
   openPublishConfirm,
   closePublishConfirm,
   publish,
@@ -1058,9 +1056,8 @@ async function openPreview() {
   <div class="panel" :class="{ live: isLive, 'just-published': justPublishedGlow }">
     <!-- Success Toast -->
     <Transition name="toast">
-      <div v-if="showSuccess" class="success-toast" :class="{ milestone: isMilestoneToast }">
-        <PhCheckCircle v-if="!isMilestoneToast" :size="13" weight="fill" />
-        <PhTrophy v-else :size="15" weight="fill" />
+      <div v-if="showSuccess" class="success-toast">
+        <PhCheckCircle :size="13" weight="fill" />
         <span>{{ successMessage }}</span>
       </div>
     </Transition>
@@ -1441,7 +1438,6 @@ async function openPreview() {
       :file="file"
       :slug="slug"
       :target-url="targetUrl"
-      :publish-context="publishContext"
       :is-republish="publishConfirmRepublish"
       @close="closePublishConfirm"
       @confirm="(isRepublish: boolean) => publishWithPrep(isRepublish)"
@@ -1723,18 +1719,6 @@ async function openPreview() {
   align-items: center;
   gap: 8px;
   white-space: nowrap;
-}
-
-.success-toast.milestone {
-  background: color-mix(in srgb, var(--bg-solid) 88%, transparent);
-  color: var(--warning);
-  padding: 12px 22px;
-  border-radius: 10px;
-  font-size: 14px;
-  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
-  box-shadow:
-    0 8px 28px rgba(0, 0, 0, 0.4),
-    0 0 0 1px color-mix(in srgb, var(--warning) 18%, transparent);
 }
 
 .toast-enter-active {

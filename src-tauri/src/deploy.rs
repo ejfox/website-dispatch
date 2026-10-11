@@ -462,7 +462,6 @@ fn finish(app: &tauri::AppHandle, title: Option<&str>, result: DeployResult) -> 
         )
     };
     let _ = app.notification().builder().title(head).body(body).show();
-    std::thread::spawn(crate::sketchybar_cache::update);
     result
 }
 

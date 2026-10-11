@@ -198,7 +198,7 @@ const actions = computed<Action[]>(() => {
       icon: PhListBullets,
       enabled: true,
       shortcut: '⌘3',
-      synonyms: ['stats', 'streak', 'history', 'milestones'],
+      synonyms: ['history', 'log', 'heatmap'],
       run: () => emit('togglePanel', 'journal'),
     },
   ]

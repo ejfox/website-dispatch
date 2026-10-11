@@ -26,7 +26,7 @@ mod desk; // The Desk: chart-desk daily feed via the `desk` CLI
 mod dispatch; // Dispatch pieces: vault dispatch/ → content/dispatch/<slug>.md
 mod dock_menu; // Dock right-click menu (macOS, via objc_sys class_addMethod)
 mod frontmatter_edit; // Text-preserving frontmatter reads/edits (syndication write-back)
-mod journal; // Publishing journal, streaks, milestones
+mod journal; // Publishing journal: event log + heatmap
 mod mac_native; // NSWindow proxy icon + dirty-dot via objc2 (macOS-only)
 mod media; // Multi-destination upload orchestrator (Cloudinary / R2 / both)
 mod menu; // Application menu bar builder
@@ -40,11 +40,9 @@ mod publish; // Handles git operations to publish posts to your website
 mod publish_guard; // Hard refusal of week-notes/, drafts/, type: weeknote
 mod publish_diff; // Computes a line-level diff between vault source and the published copy
 mod r2; // Cloudflare R2 (S3-compatible) uploader with hand-rolled SigV4
-mod sketchybar_cache; // Snapshot JSON for sketchybar / ambient surfaces
 mod syndication; // Post-publish social distribution (Mastodon, etc.)
 mod syndication_queue; // Scheduled syndication queue with background sender
 mod vault; // Scans your Obsidian vault for markdown files
-mod vault_pulse; // Read-only vault intelligence (never publishes)
 mod vault_watcher; // fs::notify-driven auto-refresh on vault changes
 mod webmention; // IndieWeb webmention sending
 
@@ -246,10 +244,6 @@ fn publish_file_blocking(
     // No "is live" notification here: a push is not a deploy. The frontend
     // calls deploy::wait_for_deploy, which notifies once the site serves it.
 
-    // Refresh the ambient cache so sketchybar reflects the new state on its
-    // next tick (~120s by default).
-    std::thread::spawn(sketchybar_cache::update);
-
     Ok(url)
 }
 
@@ -272,8 +266,6 @@ async fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), S
         target_id: target_id.as_deref(),
         visibility: "public",
     });
-
-    std::thread::spawn(sketchybar_cache::update);
 
     Ok(())
 }
@@ -581,18 +573,8 @@ async fn send_webmentions(
 // --- JOURNAL COMMANDS ---
 
 #[tauri::command]
-fn get_journal_stats() -> Result<journal::JournalStats, String> {
-    journal::get_stats()
-}
-
-#[tauri::command]
 fn get_journal_entries(limit: Option<usize>) -> Result<Vec<journal::JournalEntry>, String> {
     journal::get_recent_entries(limit.unwrap_or(50))
-}
-
-#[tauri::command]
-fn get_journal_nudge() -> Result<Option<journal::Nudge>, String> {
-    journal::get_nudge()
 }
 
 #[tauri::command]
@@ -604,13 +586,6 @@ fn get_journal_heatmap(days: Option<u32>) -> Result<Vec<(String, u32)>, String> 
 fn backfill_journal() -> Result<u32, String> {
     let target = config::default_target()?;
     journal::backfill_from_git(&target.repo_path, &target.domain)
-}
-
-// --- VAULT PULSE ---
-
-#[tauri::command]
-fn get_vault_pulse() -> Result<vault_pulse::VaultPulse, String> {
-    vault_pulse::scan_vault()
 }
 
 // Tell the preview server which file to display
@@ -1084,10 +1059,6 @@ pub fn run() {
     // --- START PREVIEW SERVER ---
     preview::init_server();
 
-    // --- WARM SKETCHYBAR CACHE ---
-    // Off-thread so a slow first-vault-scan doesn't block app launch.
-    std::thread::spawn(sketchybar_cache::update);
-
     // --- BUILD AND RUN THE APP ---
     // (Open Recent commands defined below the run block.)
     tauri::Builder::default()
@@ -1201,12 +1172,9 @@ pub fn run() {
             cancel_schedule,
             set_frontmatter,
             send_webmentions,
-            get_journal_stats,
             get_journal_entries,
-            get_journal_nudge,
             backfill_journal,
             get_journal_heatmap,
-            get_vault_pulse,
             check_analytics_status,
             get_post_analytics,
             get_post_sources,

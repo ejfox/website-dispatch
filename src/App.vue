@@ -270,17 +270,6 @@ async function onPieceStarted(notePath: string) {
 const { cloudinaryConnected, obsidianConnected, analyticsConnected, companionUrl, companionPin, gitBranch } =
   useConnectionStatus()
 
-// Journal stats (for status bar / titlebar)
-const journalStats = ref<any>(null)
-
-async function refreshJournalStats() {
-  try {
-    journalStats.value = await invoke('get_journal_stats')
-  } catch (_) {
-    /* journal may not be ready yet */
-  }
-}
-
 // Settings modal
 const showSettings = ref(false)
 
@@ -420,8 +409,6 @@ async function loadFiles() {
     const match = files.value.find((f) => f.path === lastFilePath.value)
     if (match) selectedFile.value = match
   }
-  // Refresh journal stats (publish may have just happened)
-  refreshJournalStats()
 }
 
 watch(selectedFile, (f) => {
@@ -605,7 +592,6 @@ function onSettingsSaved() {
 
 onMounted(async () => {
   loadFiles()
-  refreshJournalStats()
   refreshMediaStatus()
   window.addEventListener('keydown', handleGlobalKey)
 
@@ -655,7 +641,6 @@ onMounted(async () => {
   let lastVaultToastAt = 0
   track(listen('vault-changed', () => {
     loadFiles()
-    refreshJournalStats()
     const now = Date.now()
     if (now - lastVaultToastAt > 8000) {
       lastVaultToastAt = now
@@ -1159,13 +1144,6 @@ onUnmounted(() => {
         >
           <PhTextAa :size="10" weight="duotone" />
           {{ selectedFile.word_count.toLocaleString() }}
-        </span>
-        <span
-          v-if="journalStats && journalStats.words_this_month > 0"
-          class="status-item muted tabular"
-          :data-tip="`${journalStats.words_this_month.toLocaleString()} words published this month`"
-        >
-          {{ (journalStats.words_this_month / 1000).toFixed(1) }}k/mo
         </span>
       </div>
       <div class="status-right">

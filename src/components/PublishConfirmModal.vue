@@ -8,7 +8,6 @@ const props = defineProps<{
   file: MarkdownFile
   slug: string
   targetUrl: string
-  publishContext: string | null
   isRepublish: boolean
 }>()
 
@@ -71,7 +70,6 @@ function handleConfirm() {
           </div>
           <h2 class="pub-modal-title">{{ isRepublish ? 'Republish' : 'Ready to publish?' }}</h2>
           <p class="pub-modal-subtitle">This will push to your live website.</p>
-          <p v-if="publishContext" class="pub-modal-context">{{ publishContext }}</p>
 
           <div class="pub-detail-card">
             <div class="pub-detail-row">
@@ -288,15 +286,6 @@ function handleConfirm() {
   margin: 4px 0 16px;
   font-size: 12px;
   color: var(--text-tertiary);
-}
-
-.pub-modal-context {
-  margin: -10px 0 14px;
-  font-size: 10px;
-  font-family: 'SF Mono', monospace;
-  color: var(--success);
-  opacity: 0.8;
-  letter-spacing: 0.01em;
 }
 
 /* Detail card */

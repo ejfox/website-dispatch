@@ -63,7 +63,6 @@ export function usePublishing(options: {
   const justPublishedGlow = ref(false)
   const showSuccess = ref(false)
   const successMessage = ref('')
-  const isMilestoneToast = ref(false)
   const showPublishConfirm = ref(false)
   const publishConfirmStep = ref<1 | 2>(1)
   const publishConfirmChecked = ref(false)
@@ -78,18 +77,6 @@ export function usePublishing(options: {
   const currentDeploy = computed(() => deploys.value[options.getFilePath()] ?? null)
 
   const toasts = useToasts()
-  const journalStatsCache = ref<any>(null)
-
-  const publishContext = computed(() => {
-    const s = journalStatsCache.value
-    if (!s) return null
-    const parts: string[] = []
-    const nth = s.total_publishes + 1
-    if (nth > 1) parts.push(`This will be publish #${nth}`)
-    if (s.current_streak_days >= 2) parts.push(`${s.current_streak_days}-day streak`)
-    if (s.words_this_month > 1000) parts.push(`${(s.words_this_month / 1000).toFixed(1)}k words this month`)
-    return parts.length > 0 ? parts.join(' · ') : null
-  })
 
   async function openPublishConfirm(isRepublish = false) {
     publishConfirmRepublish.value = isRepublish
@@ -97,11 +84,6 @@ export function usePublishing(options: {
     publishConfirmChecked.value = false
     publishConfirmText.value = ''
     showPublishConfirm.value = true
-    try {
-      journalStatsCache.value = await invoke('get_journal_stats')
-    } catch (_) {
-      /* ok */
-    }
   }
 
   function closePublishConfirm() {
@@ -117,42 +99,13 @@ export function usePublishing(options: {
     if (!isRepublish && !options.getFileIsSafe()) return
     publishing.value = true
     try {
-      let milestonesBefore: string[] = []
-      try {
-        const statsBefore = await invoke<any>('get_journal_stats')
-        milestonesBefore = (statsBefore.milestones || []).filter((m: any) => m.achieved_at).map((m: any) => m.id)
-      } catch (_) {
-        /* journal may not be ready */
-      }
-
       const url = await invoke<string>('publish_file', {
         sourcePath: options.getFilePath(),
         targetId: options.getActiveTargetId() || null,
       })
       justPublished.value = url
 
-      let newMilestone: { label: string; description: string } | null = null
-      try {
-        const statsAfter = await invoke<any>('get_journal_stats')
-        const earned = (statsAfter.milestones || []).filter((m: any) => m.achieved_at)
-        const fresh = earned.find((m: any) => !milestonesBefore.includes(m.id))
-        if (fresh) newMilestone = { label: fresh.label, description: fresh.description }
-      } catch (_) {
-        /* ok */
-      }
-
-      // Push-time feedback is quiet: the post isn't live yet. Milestones are
-      // journal facts (they happened at push), so they still celebrate now.
-      isMilestoneToast.value = !!newMilestone
-      if (newMilestone) {
-        successMessage.value = `${newMilestone.label}! ${newMilestone.description}`
-        playSound('Hero')
-        showSuccess.value = true
-        setTimeout(() => {
-          showSuccess.value = false
-        }, 5000)
-      }
-
+      // Push-time feedback is quiet: the post isn't live yet.
       setTimeout(() => options.onPublished(), 500)
       // Fire-and-forget post-push hook (desk shipping, syndication wizard).
       if (options.onPublishSuccess) {
@@ -296,7 +249,6 @@ export function usePublishing(options: {
     dismissDeploy,
     showSuccess,
     successMessage,
-    isMilestoneToast,
     showPublishConfirm,
     publishConfirmStep,
     publishConfirmChecked,
@@ -304,8 +256,6 @@ export function usePublishing(options: {
     publishConfirmRepublish,
     showSyndicationWizard,
     showAltTextReviewer,
-    journalStatsCache,
-    publishContext,
     openPublishConfirm,
     closePublishConfirm,
     publish,
