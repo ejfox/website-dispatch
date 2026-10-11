@@ -90,11 +90,9 @@ async function showMoreMenu(e: MouseEvent) {
         action: () => emit('convert-to-vue-page'),
       }),
     )
-  } else {
-    items.push(await MenuItem.new({ text: 'Custom Vue page', enabled: false, action: () => {} }))
+    items.push(await PredefinedMenuItem.new({ item: 'Separator' }))
   }
   items.push(
-    await PredefinedMenuItem.new({ item: 'Separator' }),
     await MenuItem.new({
       text: props.unpublishing ? 'Unpublishing…' : 'Unpublish…',
       enabled: !props.unpublishing,

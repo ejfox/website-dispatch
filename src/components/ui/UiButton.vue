@@ -17,6 +17,7 @@
  * (unless a `data-tip` HUD tooltip is already on the element).
  */
 import { computed, ref, useAttrs, useSlots, watchEffect, type Component } from 'vue'
+import { useResizeObserver } from '@vueuse/core'
 import { PhCaretDown } from '@phosphor-icons/vue'
 
 defineOptions({ inheritAttrs: false })
@@ -44,13 +45,21 @@ const slots = useSlots()
 const hasLabel = computed(() => !!props.label || !!slots.default)
 const iconOnly = computed(() => !hasLabel.value && !!props.icon)
 
-// Native title doubles as the truncation tooltip. Skip it when the caller
-// already attached a `data-tip` HUD tooltip so the two don't stack.
+// A native title appears only when it adds something: an explicit `title`,
+// the aria-label of an icon-only button, or the full text of a label that
+// is actually truncated. Never when a `data-tip` HUD tooltip is present.
+const labelEl = ref<HTMLElement | null>(null)
+const truncated = ref(false)
+useResizeObserver(labelEl, () => {
+  const el = labelEl.value
+  truncated.value = !!el && el.scrollWidth > el.clientWidth + 1
+})
 const title = computed<string | undefined>(() => {
   if (attrs.title !== undefined) return attrs.title as string
   if ('data-tip' in attrs) return undefined
   if (iconOnly.value) return attrs['aria-label'] as string | undefined
-  return props.label
+  if (truncated.value) return props.label ?? labelEl.value?.textContent?.trim() ?? undefined
+  return undefined
 })
 
 if (import.meta.env.DEV) {
@@ -95,7 +104,7 @@ function onClick(e: MouseEvent) {
     @click="onClick"
   >
     <component :is="icon" v-if="icon" :size="14" weight="bold" class="ui-btn-icon" aria-hidden="true" />
-    <span v-if="hasLabel" class="ui-btn-label"><slot>{{ label }}</slot></span>
+    <span v-if="hasLabel" ref="labelEl" class="ui-btn-label"><slot>{{ label }}</slot></span>
     <PhCaretDown v-if="menu" :size="10" weight="bold" class="ui-btn-caret" aria-hidden="true" />
   </component>
 </template>
@@ -152,13 +161,13 @@ function onClick(e: MouseEvent) {
   padding: 0;
 }
 
+/* Block, not flex: text-overflow only works on a block container. */
 .ui-btn-label {
+  display: block;
   min-width: 0;
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 .ui-btn-icon,
 .ui-btn-caret {
@@ -236,9 +245,9 @@ function onClick(e: MouseEvent) {
 /* Keyboard hint inside a label, e.g. Publish ⌘↩. Inherits the button's
    ink so it reads on an accent fill too. */
 .ui-btn :deep(kbd) {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
+  display: inline-block;
+  vertical-align: baseline;
+  margin-left: 6px;
   padding: 1px 4px;
   font-family: 'SF Mono', monospace;
   font-size: 9px;
