@@ -16,49 +16,111 @@ html {
   overscroll-behavior: none;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Color system. Three layers, one rule each:
+
+   1. Neutrals — the macOS label ladder. Everything that isn't status,
+      selection or the primary action is one of these.
+   2. Accent (AccentColor) — selection, focus, links, the ONE primary action
+      per screen, and the deploying dot. Nothing else. Text on an accent
+      fill is AccentColorText (`--on-accent`), never #fff.
+   3. Status — six meanings, one macOS system color each:
+        live        green    the site matches this file
+        attention   orange   needs you before it's right (edited since live, lint)
+        broken      red      failed deploy, privacy lint, destructive
+        scheduled   purple   will go live without you
+        draft       gray     local / never published
+        deploying   accent   pulsing dot only (see .status-pulse) — never a fill
+      Status color goes on the dot / glyph / pill FILL. Label text next to it
+      stays neutral. `--ink-*` exists only for the few places a status word
+      must itself be colored (deepened in light mode so it clears 4.5:1).
+
+   Visibility (unlisted / password) and content type (week / photo /
+   dispatch) are NOT statuses: neutral glyphs and tags in --label-2.
+   ───────────────────────────────────────────────────────────────────────── */
+
 /* Base/fallback (dark default) - must come FIRST */
 :root {
-  /* Surfaces */
+  /* ── Neutrals: macOS label ladder (NSColor.labelColor etc.) ── */
+  --label: rgba(255, 255, 255, 0.85);
+  --label-2: rgba(255, 255, 255, 0.55);
+  --label-3: rgba(255, 255, 255, 0.25); /* placeholder / disabled only */
+  --label-4: rgba(255, 255, 255, 0.1);
+  --separator: rgba(255, 255, 255, 0.1);
+  --fill: rgba(255, 255, 255, 0.08); /* hover */
+  --fill-2: rgba(255, 255, 255, 0.14); /* active / pressed / neutral tag */
+  --window: #1e1e1e; /* windowBackgroundColor */
+  --control-bg: #1e1e1e; /* controlBackgroundColor: lists, preview, inputs */
+  --under-page: #282828; /* underPageBackgroundColor: wells, modals, thumbs */
+  --scrim: rgba(0, 0, 0, 0.45);
+
+  /* ── Accent ── */
+  --accent: AccentColor;
+  --on-accent: AccentColorText;
+  --accent-selected: color-mix(in srgb, AccentColor 32%, transparent); /* source-list selection */
+  --accent-tint: color-mix(in srgb, AccentColor 14%, transparent);
+  --accent-focus: color-mix(in srgb, AccentColor 40%, transparent);
+
+  /* ── Status: macOS system colors (dark appearance values) ── */
+  --status-live: #32d74b; /* systemGreen  */
+  --status-attention: #ff9f0a; /* systemOrange */
+  --status-broken: #ff453a; /* systemRed    */
+  --status-scheduled: #bf5af2; /* systemPurple */
+  --status-draft: #98989d; /* systemGray   */
+  --status-deploying: AccentColor; /* dot only, pulsing */
+
+  /* 15% fills for pills and banners. Text on these is --label. */
+  --tint-live: color-mix(in srgb, var(--status-live) 15%, transparent);
+  --tint-attention: color-mix(in srgb, var(--status-attention) 15%, transparent);
+  --tint-broken: color-mix(in srgb, var(--status-broken) 15%, transparent);
+  --tint-scheduled: color-mix(in srgb, var(--status-scheduled) 15%, transparent);
+  --tint-draft: color-mix(in srgb, var(--status-draft) 15%, transparent);
+
+  /* Text-safe status ink (same hue; deepened in light mode). Prefer a
+     neutral label + colored glyph; use ink only when the word must carry it. */
+  --ink-live: var(--status-live);
+  --ink-attention: var(--status-attention);
+  --ink-broken: var(--status-broken);
+  --ink-scheduled: var(--status-scheduled);
+
+  /* Data ramp (journal heatmap) — the only place a color varies by value. */
+  --ramp: var(--status-live);
+
+  /* ── Legacy names, aliased onto the system above. New code should use
+     the names above; these keep the ~1,000 existing call sites honest. ── */
+  /* Surfaces stay translucent: the sidebar vibrancy material
+     (tauri.conf.json windowEffects) has to show through. */
   --bg-primary: rgba(20, 20, 22, 0.85);
   --bg-secondary: rgba(30, 30, 34, 0.8);
   --bg-tertiary: rgba(45, 45, 50, 0.6);
-  --bg-solid: #141416;
+  --bg-solid: var(--control-bg);
+  --bg: var(--control-bg);
+  --bg-elevated: var(--under-page);
   --modal-bg: rgba(35, 35, 40, 0.9);
-  --hover-bg: rgba(255, 255, 255, 0.06);
-  --active-bg: rgba(255, 255, 255, 0.12);
-
-  /* Borders */
-  --border: rgba(255, 255, 255, 0.08);
-  --border-light: rgba(255, 255, 255, 0.12);
-
-  /* Text */
-  --text-primary: #e5e5e5;
-  --text-secondary: #999;
-  --text-tertiary: #666;
-
-  /* macOS system accent (tracks System Settings → Appearance).
-     `AccentColor` is dynamic — it changes when the user switches their
-     accent in System Settings. Use these for focus, selection, and
-     primary actions so the app feels like a first-class Mac citizen. */
-  --accent: AccentColor;
+  --hover-bg: var(--fill);
+  --active-bg: var(--fill-2);
+  --border: var(--separator);
+  --border-light: rgba(255, 255, 255, 0.14);
+  --text-primary: var(--label);
+  --text-secondary: var(--label-2);
+  /* Metadata tier between label-2 and label-3. Was #666 (3.2:1); this is
+     ~4:1 so the 9-10px meta rows that use it stay readable. */
+  --text-tertiary: rgba(255, 255, 255, 0.42);
   --accent-soft: color-mix(in srgb, AccentColor 18%, transparent);
   --accent-softer: color-mix(in srgb, AccentColor 10%, transparent);
   --accent-strong: color-mix(in srgb, AccentColor 88%, white);
-  --accent-contrast: white;
+  --accent-contrast: var(--on-accent);
+  --success: var(--ink-live);
+  --warning: var(--ink-attention);
+  --danger: var(--ink-broken);
 
-  /* Text-selection inside inputs/contenteditable */
+  /* Text-selection inside inputs/contenteditable. The fill is translucent,
+     so the text stays --label (native: dark-on-light-blue / white-on-blue). */
   --selection-bg: color-mix(in srgb, AccentColor 55%, transparent);
-  --selection-text: white;
-
-  /* macOS system state colors */
-  --success: #30d158;
-  --warning: #ff9f0a;
-  --danger: #ff453a;
-  /* Used for unlisted/password-protected post badges */
-  --protected: var(--accent);
+  --selection-text: var(--label);
 
   /* Keyboard / monospace UI */
-  --kbd-bg: rgba(255, 255, 255, 0.1);
+  --kbd-bg: var(--label-4);
   --kbd-border: rgba(255, 255, 255, 0.15);
 
   /* Spacing scale */
@@ -86,33 +148,92 @@ html {
    `--accent` stays bound to AccentColor (the system value already adapts). */
 @media (prefers-color-scheme: light) {
   :root {
+    --label: rgba(0, 0, 0, 0.85);
+    /* NSColor.secondaryLabel is 0.50 (3.9:1 on white); 0.60 (5.7:1) because
+       the list sets 9-10px metadata in this color. Deliberate. */
+    --label-2: rgba(0, 0, 0, 0.6);
+    --label-3: rgba(0, 0, 0, 0.25);
+    --label-4: rgba(0, 0, 0, 0.1);
+    --separator: rgba(0, 0, 0, 0.1);
+    --fill: rgba(0, 0, 0, 0.05);
+    --fill-2: rgba(0, 0, 0, 0.09);
+    --window: #ececec;
+    --control-bg: #ffffff;
+    --under-page: #f5f5f5;
+    --scrim: rgba(0, 0, 0, 0.25);
+    --accent-selected: color-mix(in srgb, AccentColor 24%, transparent);
+
+    --status-live: #28cd41;
+    --status-attention: #ff9500;
+    --status-broken: #ff3b30;
+    --status-scheduled: #af52de;
+    --status-draft: #8e8e93;
+
+    /* systemGreen/Orange are ~2.2:1 on white — fine for a dot, never for
+       text. Ink is the same hue at 65%, ≥4.5:1 on white. */
+    --ink-live: color-mix(in srgb, var(--status-live) 65%, black);
+    --ink-attention: color-mix(in srgb, var(--status-attention) 65%, black);
+    --ink-broken: color-mix(in srgb, var(--status-broken) 80%, black);
+    --ink-scheduled: color-mix(in srgb, var(--status-scheduled) 80%, black);
+
     --bg-primary: rgba(255, 255, 255, 0.9);
     --bg-secondary: rgba(248, 248, 248, 0.95);
     --bg-tertiary: rgba(235, 235, 235, 0.8);
-    --bg-solid: #ffffff;
     --modal-bg: rgba(255, 255, 255, 0.92);
-    --hover-bg: rgba(0, 0, 0, 0.04);
-    --active-bg: rgba(0, 0, 0, 0.08);
-    --border: rgba(0, 0, 0, 0.08);
     --border-light: rgba(0, 0, 0, 0.12);
-    --text-primary: #1a1a1a;
-    --text-secondary: #555;
-    --text-tertiary: #888;
+    --text-tertiary: rgba(0, 0, 0, 0.5);
     --accent-soft: color-mix(in srgb, AccentColor 14%, transparent);
     --accent-softer: color-mix(in srgb, AccentColor 7%, transparent);
     --accent-strong: color-mix(in srgb, AccentColor 92%, black);
     --selection-bg: color-mix(in srgb, AccentColor 28%, transparent);
-    --selection-text: #1a1a1a;
-    --success: #28a745;
-    --warning: #e67700;
-    --danger: #dc3545;
-    --protected: var(--accent);
-    --kbd-bg: rgba(0, 0, 0, 0.06);
     --kbd-border: rgba(0, 0, 0, 0.12);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.03);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
     --shadow-lg: 0 24px 48px rgba(0, 0, 0, 0.1);
     --shadow-glow: 0 0 0 1px var(--accent), 0 2px 8px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+}
+
+/* ── Status dot: one primitive for list rows, banners, tabs. ──
+   <span class="status-dot" data-status="live|attention|broken|scheduled|draft|deploying"> */
+.status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--status-draft);
+}
+.status-dot[data-status='live'] { background: var(--status-live); }
+.status-dot[data-status='attention'] { background: var(--status-attention); }
+.status-dot[data-status='broken'] { background: var(--status-broken); }
+.status-dot[data-status='scheduled'] { background: var(--status-scheduled); }
+.status-dot[data-status='draft'] { background: var(--status-draft); }
+.status-dot[data-status='deploying'],
+.status-pulse {
+  background: var(--status-deploying);
+  animation: status-pulse 1.6s ease-in-out infinite;
+}
+
+/* Deploying = a gently breathing accent dot. Opacity + a soft halo, no
+   size change, so nothing around it reflows. */
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-deploying) 45%, transparent);
+  }
+  50% {
+    opacity: 0.45;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-deploying) 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-dot[data-status='deploying'],
+  .status-pulse {
+    animation: none;
+    opacity: 1;
   }
 }
 
@@ -269,7 +390,7 @@ kbd {
   left: 50%;
   transform: translateX(-50%) translateY(-2px);
   padding: 2px 7px;
-  background: color-mix(in srgb, var(--bg-solid, #1a1a1e) 92%, white);
+  background: var(--under-page);
   border: 0.5px solid color-mix(in srgb, var(--border-light) 60%, transparent);
   border-radius: 3px;
   font-size: 11px;
@@ -363,7 +484,7 @@ kbd {
 .search-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   z-index: 100;
