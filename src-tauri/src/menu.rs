@@ -202,7 +202,6 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
                 true,
                 Some("CmdOrCtrl+3"),
             )?,
-            &MenuItem::with_id(handle, "panel_gear", "Show Gear", true, Some("CmdOrCtrl+4"))?,
             &PredefinedMenuItem::separator(handle)?,
             &MenuItem::with_id(handle, "search", "Search...", true, Some("CmdOrCtrl+K"))?,
             &PredefinedMenuItem::separator(handle)?,
@@ -380,7 +379,6 @@ pub fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) 
         "panel_preview",
         "panel_media",
         "panel_journal",
-        "panel_gear",
         "show_help",
     ];
     if id == "settings" {

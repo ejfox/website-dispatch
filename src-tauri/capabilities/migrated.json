@@ -26,24 +26,6 @@
         "$HOME/Library/Application Support/com.ejfox.dispatch/**"
       ]
     },
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "args": true,
-          "cmd": "git",
-          "name": "git",
-          "sidecar": false
-        },
-        {
-          "args": true,
-          "cmd": "yarn",
-          "name": "yarn",
-          "sidecar": false
-        }
-      ]
-    },
-    "shell:allow-open",
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",
@@ -53,7 +35,6 @@
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
     "dialog:default",
-    "shell:default",
     "fs:default",
     "clipboard-manager:default",
     "updater:default",

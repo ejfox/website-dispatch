@@ -10,7 +10,7 @@ export function useKeyboardShortcuts(options: {
   showSettings: Ref<boolean>
   newPostOpen: Ref<boolean>
   showHelp: Ref<boolean>
-  rightTab: Ref<'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'>
+  rightTab: Ref<'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'>
   sidebarCollapsed: Ref<boolean>
   filePreviewRef: Ref<{ openPublishConfirm: (isRepublish: boolean) => void } | null>
   openSearch: () => void
@@ -72,10 +72,10 @@ export function useKeyboardShortcuts(options: {
       return
     }
 
-    // ⌘1..6 jump to right-panel tab.
-    if ((e.metaKey || e.ctrlKey) && ['1', '2', '3', '4', '5', '6'].includes(e.key)) {
+    // ⌘1..5 jump to right-panel tab.
+    if ((e.metaKey || e.ctrlKey) && ['1', '2', '3', '4', '5'].includes(e.key)) {
       e.preventDefault()
-      const tabs = ['preview', 'media', 'activity', 'modified', 'journal', 'gear'] as const
+      const tabs = ['preview', 'media', 'activity', 'modified', 'journal'] as const
       options.rightTab.value = tabs[parseInt(e.key) - 1]
       return
     }
@@ -181,11 +181,10 @@ export function useKeyboardShortcuts(options: {
     // actions). On other tabs the pane owns its own single-key bindings;
     // running these in the background would step on them silently.
     // Bugs this prevents:
-    //   - on Gear, arrows walked the sidebar selection in the background
-    //   - `c` copied the bg-selected file's URL AND committed gear changes
+    //   - arrows walked the sidebar selection in the background
     //   - `o`/`i`/`p`/`v` operated on the bg-selected file from any tab
     // The universal shortcuts above this point still fire everywhere.
-    // Panes that share a key with a universal (e.g. Gear's `m` for Move)
+    // Panes that share a key with a universal (e.g. a pane's `m`)
     // register with `capture: true` and call stopImmediatePropagation so
     // they run first and block the universal handler.
     if (options.rightTab.value !== 'preview') return

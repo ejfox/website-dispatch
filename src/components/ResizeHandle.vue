@@ -33,7 +33,7 @@ const emit = defineEmits<{
 <style scoped>
 /* Wide hit target, thin visual. The handle element is the grab zone; the
    inner `.line` is the hairline you actually see.
-   Position-agnostic: works in flow as a flex sibling (Media Library, GearPanel)
+   Position-agnostic: works in flow as a flex sibling (Media Library)
    or absolutely positioned by the parent on a grid seam (App.vue sidebar). */
 .resize-handle {
   display: flex;

@@ -26,7 +26,6 @@ mod desk; // The Desk: chart-desk daily feed via the `desk` CLI
 mod dispatch; // Dispatch pieces: vault dispatch/ → content/dispatch/<slug>.md
 mod dock_menu; // Dock right-click menu (macOS, via objc_sys class_addMethod)
 mod frontmatter_edit; // Text-preserving frontmatter reads/edits (syndication write-back)
-mod gear;
 mod journal; // Publishing journal, streaks, milestones
 mod mac_native; // NSWindow proxy icon + dirty-dot via objc2 (macOS-only)
 mod media; // Multi-destination upload orchestrator (Cloudinary / R2 / both)
@@ -47,7 +46,7 @@ mod syndication_queue; // Scheduled syndication queue with background sender
 mod vault; // Scans your Obsidian vault for markdown files
 mod vault_pulse; // Read-only vault intelligence (never publishes)
 mod vault_watcher; // fs::notify-driven auto-refresh on vault changes
-mod webmention; // IndieWeb webmention sending // Gear inventory hygiene (Last_Used, Location, Scan_3D_URL)
+mod webmention; // IndieWeb webmention sending
 
 // --- DATA STRUCTURES ---
 // These structs define the shape of data we pass between Rust and the Vue frontend.
@@ -1108,7 +1107,6 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         // --- APPLICATION MENU BAR ---
@@ -1248,13 +1246,6 @@ pub fn run() {
             generate_promo_image,
             generate_og_variants,
             upload_og_image,
-            gear::list_gear,
-            gear::mark_gear_used,
-            gear::update_gear_location,
-            gear::set_gear_scan_url,
-            gear::update_gear_field,
-            gear::gear_pending_changes,
-            gear::commit_gear_changes,
             play_system_sound,
             record_recent_file,
             clear_recent_files,

@@ -15,7 +15,6 @@ import {
   Activity,
   Pencil,
   BookOpen,
-  Backpack,
 } from 'lucide-vue-next'
 import {
   PhRows,
@@ -41,7 +40,6 @@ import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
 import PublishingJournal from './components/PublishingJournal.vue'
 import ActivityFeed from './components/ActivityFeed.vue'
 import ModifiedPostsView from './components/ModifiedPostsView.vue'
-import GearPanel from './components/GearPanel.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import SearchModal from './components/SearchModal.vue'
 import CommandPalette from './components/CommandPalette.vue'
@@ -242,12 +240,14 @@ watch(
 
 // Right panel tab state. Persists the user's last/preferred home tab so
 // Dispatch opens where they want to be — Preview by default for most folks,
-// but switchable to Journal or Gear for routines that don't start with the post list.
-type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'
+// but switchable to Journal for routines that don't start with the post list.
+type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'
 const defaultHomeTab = useLocalStorage<RightTab>('dispatch-home-tab', 'desk')
 // The Desk is the landing view (`d` returns to it from anywhere). A stored
 // 'preview' is the old default, not a choice — land on the Desk instead.
-const rightTab = ref<RightTab>(defaultHomeTab.value === 'preview' ? 'desk' : defaultHomeTab.value)
+// A stored 'gear' is from the removed Gear panel.
+const storedHome = defaultHomeTab.value as string
+const rightTab = ref<RightTab>(storedHome === 'preview' || storedHome === 'gear' ? 'desk' : defaultHomeTab.value)
 
 // Desk → "Start piece": the desk wrote a draft into vault dispatch/. Refresh,
 // select it, and open it in the default editor.
@@ -1034,10 +1034,6 @@ onUnmounted(() => {
             <BookOpen :size="13" />
             <span>Journal</span>
           </button>
-          <button data-tab="gear" :class="{ active: rightTab === 'gear' }" @click="rightTab = 'gear'">
-            <Backpack :size="13" />
-            <span>Gear</span>
-          </button>
         </div>
 
         <div class="panel-content">
@@ -1097,8 +1093,6 @@ onUnmounted(() => {
           />
 
           <PublishingJournal v-else-if="rightTab === 'journal'" @jump-to-slug="jumpToSlug" />
-
-          <GearPanel v-else-if="rightTab === 'gear'" />
         </div>
       </div>
     </main>
@@ -1417,7 +1411,6 @@ onUnmounted(() => {
 .panel-tabs button[data-tab='activity'].active > svg { color: #34d399; } /* green */
 .panel-tabs button[data-tab='modified'].active > svg { color: var(--warning); } /* amber/orange */
 .panel-tabs button[data-tab='journal'].active > svg  { color: #fbbf24; } /* gold */
-.panel-tabs button[data-tab='gear'].active > svg     { color: #22d3ee; } /* cyan */
 
 .panel-tabs button:hover {
   color: var(--text-secondary);
