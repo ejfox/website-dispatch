@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { parseDate } from '../utils/formatting'
 import { ref, onMounted, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -69,7 +70,9 @@ function formatWords(n: number): string {
 }
 
 function formatAge(ts: string): string {
-  const seconds = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
+  const then = parseDate(ts)
+  if (!then) return ''
+  const seconds = Math.floor((Date.now() - then.getTime()) / 1000)
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)

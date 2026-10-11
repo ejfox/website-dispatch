@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { parseEpochSeconds } from '../utils/formatting'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -76,8 +77,7 @@ const filter = ref<'all' | 'edits' | 'publishes' | 'syndications'>('all')
  *  is already epoch seconds. Returns epoch seconds (UTC). */
 function parseTs(s: string | number): number {
   if (typeof s === 'number') return s
-  const d = new Date(s)
-  return Math.floor(d.getTime() / 1000)
+  return parseEpochSeconds(s) ?? 0
 }
 
 async function loadActivity() {

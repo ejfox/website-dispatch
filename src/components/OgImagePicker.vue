@@ -29,24 +29,66 @@ const error = ref<string | null>(null)
 const batch = ref(0)
 
 // Convert file paths to displayable URLs (Tauri asset protocol)
-const variantUrls = computed(() => (variants.value?.paths || []).map((p) => convertFileSrc(p)))
+// Every render overwrites the same variant-N.png, so stamp the URL or the
+// webview serves the previous batch from cache (the asset protocol reads only
+// the path and ignores the query).
+const renderStamp = ref(0)
+const variantUrls = computed(() =>
+  (variants.value?.paths || []).map((p) => `${convertFileSrc(p)}?r=${renderStamp.value}`),
+)
+
+// The Rust side kills a wedged render at 90s; this is the backstop in case
+// the IPC reply itself never arrives. Either way the picker ends in an error
+// with a Retry, never an endless spinner.
+const GENERATE_TIMEOUT_MS = 100_000
+
+// Each request gets a ticket; a reply for a superseded request (slug changed,
+// or a newer reroll) is dropped instead of clobbering the current state.
+let ticket = 0
 
 async function generate() {
+  const mine = ++ticket
+  const slug = props.slug
   generating.value = true
   error.value = null
   selectedIdx.value = null
   uploadedUrl.value = null
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const result = await invoke<OgImageVariants>('generate_og_variants', {
-      slug: props.slug,
-      batch: batch.value,
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`Rendering took longer than ${GENERATE_TIMEOUT_MS / 1000}s and was abandoned.`)),
+        GENERATE_TIMEOUT_MS,
+      )
     })
+    const result = await Promise.race([
+      invoke<OgImageVariants>('generate_og_variants', { slug, batch: batch.value }),
+      timeout,
+    ])
+    if (mine !== ticket) return
+    brokenImages.value = 0
+    renderStamp.value = Date.now()
     variants.value = result
   } catch (e) {
-    error.value = `${e}`
-    toasts.error('OG image generation failed', String(e))
+    if (mine !== ticket) return
+    const msg = e instanceof Error ? e.message : String(e)
+    error.value = msg
+    toasts.error('Social card generation failed', msg)
+  } finally {
+    clearTimeout(timer)
+    if (mine === ticket) generating.value = false
   }
-  generating.value = false
+}
+
+// A rendered PNG the webview can't load (asset-protocol scope, file gone)
+// would otherwise show as an empty box forever. Count them; all four broken
+// is an error with a Retry.
+const brokenImages = ref(0)
+function onImageError() {
+  brokenImages.value++
+  if (variants.value && brokenImages.value >= variants.value.paths.length) {
+    error.value = 'The social cards rendered but could not be displayed.'
+  }
 }
 
 async function reroll() {
@@ -129,6 +171,9 @@ watch(
     uploadedUrl.value = null
     error.value = null
     batch.value = 0
+    brokenImages.value = 0
+    ticket++ // drop any in-flight reply for the previous post
+    generating.value = false
     if (!collapsed.value) generate()
   },
   { immediate: true },
@@ -162,7 +207,7 @@ onUnmounted(() => window.removeEventListener('dispatch:generate-og', onGenerateR
         <PhCaretDown :size="9" weight="bold" class="caret" :class="{ collapsed }" />
         <PhSparkle :size="14" weight="fill" class="header-icon" />
         <span class="header-title">Social card (OG image)</span>
-        <span v-if="variants" class="header-batch">batch {{ batch }}</span>
+        <span v-if="variants && batch > 0" class="header-batch" title="How many times you've rerolled this post's social cards">reroll {{ batch }}</span>
       </button>
       <button v-if="!collapsed" class="reroll-btn" @click.stop="reroll" :disabled="generating" title="Generate 4 new variants" aria-label="Generate 4 new social card variants">
         <PhArrowsClockwise :size="12" weight="bold" :class="{ spinning: generating }" />
@@ -172,7 +217,10 @@ onUnmounted(() => window.removeEventListener('dispatch:generate-og', onGenerateR
 
     <template v-if="!collapsed">
     <!-- Error -->
-    <div v-if="error" class="picker-error">{{ error }}</div>
+    <div v-if="error" class="picker-error" role="alert">
+      <span>{{ error }}</span>
+      <button class="retry-btn" :disabled="generating" @click="generate">Retry</button>
+    </div>
 
     <!-- Generating -->
     <div v-if="generating && !variants" class="picker-loading">
@@ -192,7 +240,7 @@ onUnmounted(() => window.removeEventListener('dispatch:generate-og', onGenerateR
         @dblclick="invoke('open_in_app', { path: variants!.paths[i], app: 'Preview' }).catch(() => {})"
         @contextmenu="showVariantMenu(i, $event)"
       >
-        <img :src="url" :alt="`OG variant ${i}`" loading="eager" />
+        <img :src="url" :alt="`OG variant ${i}`" loading="eager" @error="onImageError" />
         <div class="variant-label">v{{ i }}</div>
         <div v-if="selectedIdx === i" class="variant-check">
           <PhCheck :size="16" weight="bold" />
@@ -310,9 +358,28 @@ onUnmounted(() => window.removeEventListener('dispatch:generate-og', onGenerateR
 }
 
 .picker-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   font-size: 10px;
   color: var(--warning);
   margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+.retry-btn {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: inherit;
+  background: var(--fill);
+  color: var(--text-secondary);
+  border: 1px solid var(--separator);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.retry-btn:disabled {
+  opacity: 0.4;
+  cursor: wait;
 }
 
 .picker-loading {
