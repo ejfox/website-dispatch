@@ -259,6 +259,7 @@ pub async fn wait_for_deploy(
     timeout_secs: Option<u64>,
     target_id: Option<String>,
     title: Option<String>,
+    skip_url_check: Option<bool>,
 ) -> Result<DeployResult, String> {
     let target = config::resolve_target(target_id.as_deref())?;
     let client = reqwest::Client::builder()
@@ -397,6 +398,9 @@ pub async fn wait_for_deploy(
         ));
     };
 
+    // Password posts 404 at their own URL on website2 (isProtectedContent),
+    // so a URL check would cry wolf — the matching SHA is the confirmation.
+    let post_url = post_url.filter(|_| !skip_url_check.unwrap_or(false));
     let url_status = match &post_url {
         Some(u) => {
             progress(

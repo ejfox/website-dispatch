@@ -213,6 +213,7 @@ export function usePublishing(options: {
         timeoutSecs: 360,
         targetId: targetId || null,
         title: options.getTitle?.() ?? null,
+        skipUrlCheck: options.isPasswordProtected(),
       })
     } catch (e) {
       result = {

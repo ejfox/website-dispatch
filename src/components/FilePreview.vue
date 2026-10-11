@@ -339,7 +339,7 @@ const {
   onPublished: () => emit('published'),
   // Auto-fire webmentions after publish/republish. Bridgy Fed forwarding
   // is opt-in via Settings → Connections (default off).
-  getTitle: () => props.file.title || null,
+  getTitle: () => props.file.title || slug.value || null,
   onPublishSuccess: (url: string) => afterPublish(url),
   // Webmentions wait for the deploy to be confirmed live (page answers 200).
   onLive: (url: string) => {
