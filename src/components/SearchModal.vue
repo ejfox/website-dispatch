@@ -174,19 +174,18 @@ function selectResult(file: MarkdownFile) {
   flex-shrink: 0;
 }
 
+/* Glyph-only badges: status hue on the glyph, visibility stays neutral. */
+.result-badge {
+  display: inline-flex;
+  align-items: center;
+}
 .result-badge.live {
-  background: var(--success);
-  color: #000;
+  color: var(--status-live);
 }
 
-.result-badge.unlisted {
-  background: var(--accent);
-  color: #fff;
-}
-
+.result-badge.unlisted,
 .result-badge.protected {
-  background: var(--accent);
-  color: #fff;
+  color: var(--label-2);
 }
 
 .result-words {

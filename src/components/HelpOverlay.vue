@@ -297,19 +297,12 @@ const emit = defineEmits<{
   gap: 3px;
 }
 
-.vis-public {
-  background: var(--success);
-  color: #000;
-}
-
-.vis-unlisted {
-  background: var(--accent);
-  color: #fff;
-}
-
+/* Visibility is not a status — all three are neutral tags. */
+.vis-public,
+.vis-unlisted,
 .vis-protected {
-  background: var(--accent);
-  color: #fff;
+  background: var(--fill-2);
+  color: var(--label);
 }
 
 .vis-desc {
