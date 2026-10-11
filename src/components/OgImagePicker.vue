@@ -264,15 +264,15 @@ watch(collapsed, (isCollapsed) => {
   padding: 3px 8px;
   font-size: 10px;
   font-family: inherit;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--fill);
   color: var(--text-secondary);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--separator);
   border-radius: 4px;
   cursor: pointer;
 }
 
 .reroll-btn:hover {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: var(--label-3);
 }
 .reroll-btn:disabled {
   opacity: 0.4;
@@ -330,10 +330,11 @@ watch(collapsed, (isCollapsed) => {
 }
 
 .variant-card:hover {
-  border-color: rgba(255, 255, 255, 0.15);
+  border-color: var(--label-3);
 }
+/* Selection is accent (was red, which reads as an error). */
 .variant-card.selected {
-  border-color: var(--danger);
+  border-color: var(--accent);
 }
 .variant-card.generating {
   opacity: 0.4;
@@ -345,7 +346,7 @@ watch(collapsed, (isCollapsed) => {
   display: block;
   aspect-ratio: 1200 / 630;
   object-fit: cover;
-  background: #18181b;
+  background: var(--under-page);
 }
 
 .variant-label {
@@ -354,8 +355,9 @@ watch(collapsed, (isCollapsed) => {
   left: 3px;
   font-size: 8px;
   font-family: monospace;
+  /* Sits on the OG image: fixed light-on-dark in both appearances. */
   background: rgba(0, 0, 0, 0.6);
-  color: var(--text-tertiary);
+  color: rgba(255, 255, 255, 0.85);
   padding: 1px 4px;
   border-radius: 2px;
 }
@@ -365,8 +367,8 @@ watch(collapsed, (isCollapsed) => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color: var(--danger);
-  background: rgba(0, 0, 0, 0.5);
+  color: var(--on-accent);
+  background: var(--accent);
   border-radius: 50%;
   width: 28px;
   height: 28px;
@@ -377,11 +379,15 @@ watch(collapsed, (isCollapsed) => {
 
 .picker-success {
   font-size: 10px;
-  color: var(--success);
+  color: var(--label-2);
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 4px 0;
+}
+
+.picker-success svg {
+  color: var(--status-live);
 }
 
 .picker-actions {
@@ -397,7 +403,7 @@ watch(collapsed, (isCollapsed) => {
   font-size: 10px;
   font-family: inherit;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border: none;
   border-radius: 4px;
   cursor: pointer;

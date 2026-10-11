@@ -447,7 +447,7 @@ onMounted(() => {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--scrim);
   backdrop-filter: blur(8px);
   z-index: 200;
   display: flex;
@@ -461,12 +461,12 @@ onMounted(() => {
   max-width: 95vw;
   height: 80vh;
   max-height: 800px;
-  background: #1a1a1e;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--window);
+  border: 1px solid var(--separator);
   border-radius: 12px;
   display: flex;
   overflow: hidden;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal.with-detail {
@@ -510,11 +510,11 @@ onMounted(() => {
 
 .modal-header {
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--separator);
   display: flex;
   align-items: center;
   gap: 12px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--fill);
 }
 
 .modal-header h2 {
@@ -527,7 +527,7 @@ onMounted(() => {
   display: flex;
   gap: 2px;
   margin-left: auto;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--fill);
   padding: 2px;
   border-radius: 4px;
 }
@@ -547,7 +547,7 @@ onMounted(() => {
 }
 
 .filters button.active {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--fill-2);
   color: var(--text-primary);
 }
 
@@ -566,22 +566,22 @@ onMounted(() => {
 
 .search-bar {
   padding: 8px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--separator);
 }
 
 .search-bar input {
   width: 100%;
   padding: 8px 12px;
   font-size: 12px;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--control-bg);
+  border: 1px solid var(--separator);
   border-radius: 6px;
   color: var(--text-primary);
   outline: none;
 }
 
 .search-bar input:focus {
-  border-color: rgba(255, 255, 255, 0.3);
+  border-color: var(--accent);
 }
 
 .search-bar input::placeholder {
@@ -594,8 +594,8 @@ onMounted(() => {
   left: 50%;
   transform: translateX(-50%);
   padding: 8px 16px;
-  background: rgba(255, 255, 255, 0.9);
-  color: #000;
+  background: var(--label);
+  color: var(--control-bg);
   font-size: 12px;
   font-weight: 600;
   border-radius: 6px;
