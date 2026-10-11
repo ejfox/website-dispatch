@@ -123,13 +123,18 @@ html {
   --kbd-bg: var(--label-4);
   --kbd-border: rgba(255, 255, 255, 0.15);
 
-  /* Spacing scale */
+  /* Spacing scale — 4/8pt grid. Padding, gaps and margins come from here;
+     no stray 5/6/9/14px values in layout. Buttons: UiButton owns its own
+     height/radius per size (regular 28, small 22); don't restyle them. */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
+  /* Every section in the right panel aligns its content to this one
+     left/right inset (banner, header, sections, action rows). */
+  --gutter: var(--space-4);
 
   /* Animation timing */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
