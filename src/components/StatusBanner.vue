@@ -1,8 +1,17 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { PhLockSimple, PhEye, PhCheckCircle, PhClock, PhCaretDown } from '@phosphor-icons/vue'
+import {
+  PhLockSimple,
+  PhEye,
+  PhCheckCircle,
+  PhClock,
+  PhCaretDown,
+  PhCircleNotch,
+  PhWarningCircle,
+} from '@phosphor-icons/vue'
 import { formatScheduledTime } from '../utils/formatting'
 import PublishDiffPanel from './PublishDiffPanel.vue'
+import type { DeployState } from '../composables/usePublishFlow'
 
 const props = defineProps<{
   isLive: boolean
@@ -18,6 +27,8 @@ const props = defineProps<{
   publishing: boolean
   /** Path to the markdown file — needed to fetch the diff. */
   filePath: string
+  /** Post-push deploy tracking for this post (null when none in flight). */
+  deploy?: DeployState | null
 }>()
 
 defineEmits<{
@@ -25,7 +36,12 @@ defineEmits<{
   'copy-url-password': []
   republish: []
   'cancel-schedule': []
+  'dismiss-deploy': []
 }>()
+
+function fmtElapsed(secs: number) {
+  return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, '0')}s`
+}
 
 const diffOpen = ref(false)
 
@@ -40,7 +56,28 @@ watch(
 </script>
 
 <template>
-  <div v-if="isLive && hasUnpublishedChanges">
+  <!-- Pushed, not yet serving: quiet and persistent until the site confirms. -->
+  <div v-if="deploy?.phase === 'deploying'" class="banner deploying">
+    <span class="banner-text">
+      <PhCircleNotch :size="12" weight="bold" class="spin" />
+      DEPLOYING…
+    </span>
+    <span class="deploy-msg">
+      pushed {{ deploy.sha.slice(0, 7) }}
+      <template v-if="deploy.elapsedSecs">· {{ fmtElapsed(deploy.elapsedSecs) }}</template>
+    </span>
+    <a :href="deploy.runUrl" target="_blank">Actions</a>
+  </div>
+  <div v-else-if="deploy?.phase === 'failed'" class="banner deploy-failed">
+    <span class="banner-text">
+      <PhWarningCircle :size="13" weight="bold" />
+      NOT LIVE
+    </span>
+    <span class="deploy-msg">{{ deploy.message }}</span>
+    <a :href="deploy.runUrl" target="_blank">View run</a>
+    <button @click="$emit('dismiss-deploy')">Dismiss</button>
+  </div>
+  <div v-else-if="isLive && hasUnpublishedChanges">
     <div class="banner modified">
       <span class="banner-text">MODIFIED</span>
       <span v-if="visibilityLabel" class="visibility-badge">{{ visibilityLabel }}</span>
@@ -80,9 +117,10 @@ watch(
   <div v-else-if="isLive" class="banner live">
     <span class="banner-text">
       <PhCheckCircle :size="13" weight="fill" />
-      LIVE
+      {{ deploy?.phase === 'live' ? 'LIVE ✓' : 'LIVE' }}
     </span>
     <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
+    <a v-if="deploy?.phase === 'live'" :href="liveUrl!" target="_blank" class="open-link">Open</a>
     <button @click="$emit('copy-url')">Copy</button>
   </div>
   <div v-else-if="isScheduled" class="banner scheduled">
@@ -171,6 +209,55 @@ watch(
 }
 .banner.live button:hover {
   background: color-mix(in srgb, var(--success) 28%, transparent);
+}
+
+/* DEPLOYING — pushed, waiting on GitHub Actions. Neutral, not celebratory. */
+.banner.deploying {
+  background: color-mix(in srgb, var(--text-tertiary) 8%, transparent);
+  color: var(--text-secondary);
+  border-left-color: var(--text-tertiary);
+}
+.banner.deploying .deploy-msg,
+.banner.deploy-failed .deploy-msg {
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+}
+.banner.deploying a,
+.banner.deploy-failed a {
+  color: inherit;
+  opacity: 0.78;
+}
+.banner.deploy-failed {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  border-left-color: var(--danger);
+}
+.banner.deploy-failed button {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  border: none;
+  color: var(--danger);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.banner.live a.open-link {
+  flex: 0;
+  opacity: 1;
+}
+.spin {
+  animation: deploy-spin 1.2s linear infinite;
+}
+@keyframes deploy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
 }
 
 /* SCHEDULED state — already restrained; just normalize. */

@@ -21,6 +21,7 @@ mod bluesky; // Bluesky AT Protocol XRPC client + post/facet/embed builders
 mod cloudinary; // Uploads images/videos to Cloudinary CDN
 mod companion; // Companion web UI server for mobile access
 pub mod config; // App configuration (vault path, publish targets, editors)
+mod deploy; // Post-push deploy confirmation via the site's /api/healthcheck
 mod desk; // The Desk: chart-desk daily feed via the `desk` CLI
 mod dispatch; // Dispatch pieces: vault dispatch/ → content/dispatch/<slug>.md
 mod dock_menu; // Dock right-click menu (macOS, via objc_sys class_addMethod)
@@ -196,21 +197,18 @@ fn append_to_file(path: String, content: String) -> Result<(), String> {
 }
 
 // Publish a markdown file to the website (copy + git commit + push).
-// Takes the AppHandle so we can fire a native macOS notification post-success
-// — when Dispatch is in the background, the user gets a system banner with
-// the post title and a "View" interaction.
+// Returning means *pushed*, not live — the macOS "live" notification fires
+// from deploy::wait_for_deploy once the site actually serves the commit.
 #[tauri::command]
 async fn publish_file(
-    app: tauri::AppHandle,
     source_path: String,
     target_id: Option<String>,
 ) -> Result<String, String> {
     // git + network work: keep it off the UI thread.
-    publish::off_main(move || publish_file_blocking(app, source_path, target_id)).await
+    publish::off_main(move || publish_file_blocking(source_path, target_id)).await
 }
 
 fn publish_file_blocking(
-    app: tauri::AppHandle,
     source_path: String,
     target_id: Option<String>,
 ) -> Result<String, String> {
@@ -221,12 +219,9 @@ fn publish_file_blocking(
         republish: is_republish,
     } = publish::publish_file(&source_path, target_id.as_deref())?;
 
-    // Record in journal — read source file metadata, capture the title for
-    // the notification body so we don't re-read the file later.
-    let mut notif_title: Option<String> = None;
+    // Record in journal — read source file metadata.
     if let Ok(files) = vault::get_recent_files(9999) {
         if let Some(file) = files.iter().find(|f| f.path == source_path) {
-            notif_title = file.title.clone().or_else(|| Some(file.filename.clone()));
             let event = if is_republish { "republish" } else { "publish" };
             let visibility = if file.password.is_some() {
                 "protected"
@@ -249,26 +244,8 @@ fn publish_file_blocking(
         }
     }
 
-    // Native macOS Notification Center banner. Stays in the user's
-    // notification history; the body URL is logged but the notification
-    // click action returns focus to Dispatch (the only "app" target).
-    {
-        use tauri_plugin_notification::NotificationExt;
-        let verb = if is_republish { "Republished" } else { "Published" };
-        let title_str = notif_title
-            .as_deref()
-            .map(|t| t.trim().trim_start_matches('#').trim().to_string())
-            .unwrap_or_else(|| slug.clone());
-        let _ = app
-            .notification()
-            .builder()
-            .title(verb)
-            .body(format!(
-                "\u{2018}{}\u{2019} pushed, deploying to {}",
-                title_str, url
-            ))
-            .show();
-    }
+    // No "is live" notification here: a push is not a deploy. The frontend
+    // calls deploy::wait_for_deploy, which notifies once the site serves it.
 
     // Refresh the ambient cache so sketchybar reflects the new state on its
     // next tick (~120s by default).
@@ -1196,6 +1173,8 @@ pub fn run() {
             publish_file,
             unpublish_file,
             get_git_status,
+            deploy::get_head_sha,
+            deploy::wait_for_deploy,
             add_tag_to_file,
             get_backlinks,
             check_obsidian_api,
