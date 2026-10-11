@@ -1059,6 +1059,9 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
+        // Not imported by any JS: its injected script routes <a target="_blank">
+        // http(s)/mailto links to the system browser.
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         // --- APPLICATION MENU BAR ---

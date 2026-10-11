@@ -26,6 +26,7 @@
         "$HOME/Library/Application Support/com.ejfox.dispatch/**"
       ]
     },
+    "shell:allow-open",
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",
@@ -35,6 +36,7 @@
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
     "dialog:default",
+    "shell:default",
     "fs:default",
     "clipboard-manager:default",
     "updater:default",
