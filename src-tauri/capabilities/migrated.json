@@ -9,6 +9,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
+    "core:window:allow-set-badge-count",
     "fs:allow-read-file",
     "fs:allow-write-file",
     "fs:allow-read-dir",
@@ -23,23 +24,6 @@
         "$HOME/Library/Mobile Documents/**",
         "$HOME/code/**",
         "$HOME/Library/Application Support/com.ejfox.dispatch/**"
-      ]
-    },
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "args": true,
-          "cmd": "git",
-          "name": "git",
-          "sidecar": false
-        },
-        {
-          "args": true,
-          "cmd": "yarn",
-          "name": "yarn",
-          "sidecar": false
-        }
       ]
     },
     "shell:allow-open",

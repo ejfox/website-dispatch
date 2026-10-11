@@ -15,14 +15,12 @@ import {
   Activity,
   Pencil,
   BookOpen,
-  Backpack,
 } from 'lucide-vue-next'
 import {
   PhRows,
   PhSquaresFour,
   PhCircleWavy,
   PhChartBar,
-  PhDeviceMobile,
   PhFolder,
   PhTextAa,
   PhGitBranch,
@@ -41,7 +39,6 @@ import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
 import PublishingJournal from './components/PublishingJournal.vue'
 import ActivityFeed from './components/ActivityFeed.vue'
 import ModifiedPostsView from './components/ModifiedPostsView.vue'
-import GearPanel from './components/GearPanel.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import SearchModal from './components/SearchModal.vue'
 import CommandPalette from './components/CommandPalette.vue'
@@ -196,7 +193,10 @@ const modifiedCount = computed(
 watch(
   modifiedCount,
   (n) => {
-    getCurrentWindow().setBadgeCount(n > 0 ? n : undefined).catch(() => {})
+    // Needs core:window:allow-set-badge-count (core:default is read-only).
+    getCurrentWindow()
+      .setBadgeCount(n > 0 ? n : undefined)
+      .catch((e) => console.warn('dock badge failed', e))
   },
   { immediate: true },
 )
@@ -239,12 +239,14 @@ watch(
 
 // Right panel tab state. Persists the user's last/preferred home tab so
 // Dispatch opens where they want to be — Preview by default for most folks,
-// but switchable to Journal or Gear for routines that don't start with the post list.
-type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'gear'
+// but switchable to Journal for routines that don't start with the post list.
+type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'
 const defaultHomeTab = useLocalStorage<RightTab>('dispatch-home-tab', 'desk')
 // The Desk is the landing view (`d` returns to it from anywhere). A stored
 // 'preview' is the old default, not a choice — land on the Desk instead.
-const rightTab = ref<RightTab>(defaultHomeTab.value === 'preview' ? 'desk' : defaultHomeTab.value)
+// A stored 'gear' is from the removed Gear panel.
+const storedHome = defaultHomeTab.value as string
+const rightTab = ref<RightTab>(storedHome === 'preview' || storedHome === 'gear' ? 'desk' : defaultHomeTab.value)
 
 // Desk → "Start piece": the desk wrote a draft into vault dispatch/. Refresh,
 // select it, and open it in the default editor.
@@ -264,19 +266,8 @@ async function onPieceStarted(notePath: string) {
 }
 
 // Connection status (auto-checks on creation)
-const { cloudinaryConnected, obsidianConnected, analyticsConnected, companionUrl, companionPin, gitBranch } =
+const { cloudinaryConnected, obsidianConnected, analyticsConnected, gitBranch } =
   useConnectionStatus()
-
-// Journal stats (for status bar / titlebar)
-const journalStats = ref<any>(null)
-
-async function refreshJournalStats() {
-  try {
-    journalStats.value = await invoke('get_journal_stats')
-  } catch (_) {
-    /* journal may not be ready yet */
-  }
-}
 
 // Settings modal
 const showSettings = ref(false)
@@ -417,8 +408,6 @@ async function loadFiles() {
     const match = files.value.find((f) => f.path === lastFilePath.value)
     if (match) selectedFile.value = match
   }
-  // Refresh journal stats (publish may have just happened)
-  refreshJournalStats()
 }
 
 watch(selectedFile, (f) => {
@@ -508,26 +497,6 @@ async function showAnalyticsMenu(e: MouseEvent) {
   await menu.popup()
 }
 
-async function showCompanionMenu(e: MouseEvent) {
-  e.preventDefault()
-  if (!companionUrl.value) return
-  const url = companionUrl.value
-  const pin = companionPin.value || ''
-  const menu = await Menu.new({
-    items: [
-      await MenuItem.new({ text: 'Open Companion in Browser', action: () => window.open(url, '_blank') }),
-      await PredefinedMenuItem.new({ item: 'Separator' }),
-      await MenuItem.new({ text: 'Copy Companion URL', action: () => navigator.clipboard.writeText(url) }),
-      await MenuItem.new({ text: `Copy PIN (${pin})`, action: () => navigator.clipboard.writeText(pin) }),
-      await MenuItem.new({
-        text: 'Copy URL + PIN',
-        action: () => navigator.clipboard.writeText(`${url} (PIN: ${pin})`),
-      }),
-    ],
-  })
-  await menu.popup()
-}
-
 async function showBranchMenu(e: MouseEvent) {
   e.preventDefault()
   const branch = gitBranch.value
@@ -602,7 +571,6 @@ function onSettingsSaved() {
 
 onMounted(async () => {
   loadFiles()
-  refreshJournalStats()
   refreshMediaStatus()
   window.addEventListener('keydown', handleGlobalKey)
 
@@ -630,6 +598,7 @@ onMounted(async () => {
     compactMode.value = !compactMode.value
   }))
   track(listen('menu-search', () => openSearch()))
+  track(listen('menu-settings', () => (showSettings.value = true)))
 
   // Open Recent: payload is the absolute file path. If the file is in the
   // current scan, select it; otherwise the path is stale (deleted/moved) —
@@ -651,7 +620,6 @@ onMounted(async () => {
   let lastVaultToastAt = 0
   track(listen('vault-changed', () => {
     loadFiles()
-    refreshJournalStats()
     const now = Date.now()
     if (now - lastVaultToastAt > 8000) {
       lastVaultToastAt = now
@@ -1030,10 +998,6 @@ onUnmounted(() => {
             <BookOpen :size="13" />
             <span>Journal</span>
           </button>
-          <button data-tab="gear" :class="{ active: rightTab === 'gear' }" @click="rightTab = 'gear'">
-            <Backpack :size="13" />
-            <span>Gear</span>
-          </button>
         </div>
 
         <div class="panel-content">
@@ -1093,8 +1057,6 @@ onUnmounted(() => {
           />
 
           <PublishingJournal v-else-if="rightTab === 'journal'" @jump-to-slug="jumpToSlug" />
-
-          <GearPanel v-else-if="rightTab === 'gear'" />
         </div>
       </div>
     </main>
@@ -1162,13 +1124,6 @@ onUnmounted(() => {
           <PhTextAa :size="10" weight="duotone" />
           {{ selectedFile.word_count.toLocaleString() }}
         </span>
-        <span
-          v-if="journalStats && journalStats.words_this_month > 0"
-          class="status-item muted tabular"
-          :data-tip="`${journalStats.words_this_month.toLocaleString()} words published this month`"
-        >
-          {{ (journalStats.words_this_month / 1000).toFixed(1) }}k/mo
-        </span>
       </div>
       <div class="status-right">
         <button
@@ -1216,15 +1171,6 @@ onUnmounted(() => {
         >
           <PhChartBar :size="10" :weight="analyticsConnected ? 'fill' : 'light'" />
           analytics
-        </span>
-        <span
-          v-if="companionUrl"
-          class="status-item connected"
-          :data-tip="`Companion connected · PIN: ${companionPin} · right-click for options`"
-          @contextmenu="showCompanionMenu"
-        >
-          <PhDeviceMobile :size="10" weight="fill" />
-          {{ companionUrl.replace('http://', '') }}
         </span>
         <span class="status-divider"></span>
         <span class="status-item muted">v{{ appVersion }}</span>
@@ -1413,7 +1359,6 @@ onUnmounted(() => {
 .panel-tabs button[data-tab='activity'].active > svg { color: #34d399; } /* green */
 .panel-tabs button[data-tab='modified'].active > svg { color: var(--warning); } /* amber/orange */
 .panel-tabs button[data-tab='journal'].active > svg  { color: #fbbf24; } /* gold */
-.panel-tabs button[data-tab='gear'].active > svg     { color: #22d3ee; } /* cyan */
 
 .panel-tabs button:hover {
   color: var(--text-secondary);

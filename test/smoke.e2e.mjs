@@ -18,7 +18,7 @@
 import { webkit } from 'playwright'
 
 const BASE = process.env.SMOKE_URL || 'http://localhost:5199'
-const TABS = ['preview', 'media', 'activity', 'modified', 'journal', 'gear']
+const TABS = ['preview', 'media', 'activity', 'modified', 'journal']
 
 // Injected before any app code runs. The frontend calls Tauri APIs blindly,
 // so provide a minimal __TAURI_INTERNALS__ whose invoke returns safe empty

@@ -19,14 +19,13 @@ mod asset_usage; // Tracks which Cloudinary images are used in which posts
 mod bin_paths; // Login-shell-resolved paths to node/git
 mod bluesky; // Bluesky AT Protocol XRPC client + post/facet/embed builders
 mod cloudinary; // Uploads images/videos to Cloudinary CDN
-mod companion; // Companion web UI server for mobile access
 pub mod config; // App configuration (vault path, publish targets, editors)
+mod deploy; // Post-push deploy confirmation via the site's /api/healthcheck
 mod desk; // The Desk: chart-desk daily feed via the `desk` CLI
 mod dispatch; // Dispatch pieces: vault dispatch/ → content/dispatch/<slug>.md
 mod dock_menu; // Dock right-click menu (macOS, via objc_sys class_addMethod)
 mod frontmatter_edit; // Text-preserving frontmatter reads/edits (syndication write-back)
-mod gear;
-mod journal; // Publishing journal, streaks, milestones
+mod journal; // Publishing journal: event log + heatmap
 mod mac_native; // NSWindow proxy icon + dirty-dot via objc2 (macOS-only)
 mod media; // Multi-destination upload orchestrator (Cloudinary / R2 / both)
 mod menu; // Application menu bar builder
@@ -37,15 +36,14 @@ mod open; // Open files in Obsidian, editors, terminal
 mod patterns; // Shared compiled regex patterns (LazyLock statics)
 mod preview; // Manages a local Node.js server for previewing posts
 mod publish; // Handles git operations to publish posts to your website
+mod publish_guard; // Hard refusal of week-notes/, drafts/, type: weeknote
 mod publish_diff; // Computes a line-level diff between vault source and the published copy
 mod r2; // Cloudflare R2 (S3-compatible) uploader with hand-rolled SigV4
-mod sketchybar_cache; // Snapshot JSON for sketchybar / ambient surfaces
 mod syndication; // Post-publish social distribution (Mastodon, etc.)
 mod syndication_queue; // Scheduled syndication queue with background sender
 mod vault; // Scans your Obsidian vault for markdown files
-mod vault_pulse; // Read-only vault intelligence (never publishes)
 mod vault_watcher; // fs::notify-driven auto-refresh on vault changes
-mod webmention; // IndieWeb webmention sending // Gear inventory hygiene (Last_Used, Location, Scan_3D_URL)
+mod webmention; // IndieWeb webmention sending
 
 // --- DATA STRUCTURES ---
 // These structs define the shape of data we pass between Rust and the Vue frontend.
@@ -195,37 +193,31 @@ fn append_to_file(path: String, content: String) -> Result<(), String> {
 }
 
 // Publish a markdown file to the website (copy + git commit + push).
-// Takes the AppHandle so we can fire a native macOS notification post-success
-// — when Dispatch is in the background, the user gets a system banner with
-// the post title and a "View" interaction.
+// Returning means *pushed*, not live — the macOS "live" notification fires
+// from deploy::wait_for_deploy once the site actually serves the commit.
 #[tauri::command]
-fn publish_file(
-    app: tauri::AppHandle,
+async fn publish_file(
     source_path: String,
-    slug: String,
     target_id: Option<String>,
 ) -> Result<String, String> {
-    // Check if this is a republish (file already exists in website repo)
-    let target = config::resolve_target(target_id.as_deref())?;
-    let is_dispatch = config::get()
-        .map(|c| dispatch::is_dispatch_note(&c.vault.path, &source_path))
-        .unwrap_or(false);
-    let is_republish = if is_dispatch {
-        dispatch::find_published(&target, &slug).0.is_some()
-    } else {
-        vault::find_published_info_for_target(&target, &slug)
-            .0
-            .is_some()
-    };
+    // git + network work: keep it off the UI thread.
+    publish::off_main(move || publish_file_blocking(source_path, target_id)).await
+}
 
-    let url = publish::publish_file(&source_path, &slug, target_id.as_deref())?;
+fn publish_file_blocking(
+    source_path: String,
+    target_id: Option<String>,
+) -> Result<String, String> {
+    // The destination (and slug) is derived from the vault path in one place.
+    let publish::Published {
+        url,
+        slug,
+        republish: is_republish,
+    } = publish::publish_file(&source_path, target_id.as_deref())?;
 
-    // Record in journal — read source file metadata, capture the title for
-    // the notification body so we don't re-read the file later.
-    let mut notif_title: Option<String> = None;
+    // Record in journal — read source file metadata.
     if let Ok(files) = vault::get_recent_files(9999) {
         if let Some(file) = files.iter().find(|f| f.path == source_path) {
-            notif_title = file.title.clone().or_else(|| Some(file.filename.clone()));
             let event = if is_republish { "republish" } else { "publish" };
             let visibility = if file.password.is_some() {
                 "protected"
@@ -248,35 +240,18 @@ fn publish_file(
         }
     }
 
-    // Native macOS Notification Center banner. Stays in the user's
-    // notification history; the body URL is logged but the notification
-    // click action returns focus to Dispatch (the only "app" target).
-    {
-        use tauri_plugin_notification::NotificationExt;
-        let verb = if is_republish { "Republished" } else { "Published" };
-        let title_str = notif_title
-            .as_deref()
-            .map(|t| t.trim().trim_start_matches('#').trim().to_string())
-            .unwrap_or_else(|| slug.clone());
-        let _ = app
-            .notification()
-            .builder()
-            .title(verb)
-            .body(format!("\u{2018}{}\u{2019} is live at {}", title_str, url))
-            .show();
-    }
-
-    // Refresh the ambient cache so sketchybar reflects the new state on its
-    // next tick (~120s by default).
-    std::thread::spawn(sketchybar_cache::update);
+    // No "is live" notification here: a push is not a deploy. The frontend
+    // calls deploy::wait_for_deploy, which notifies once the site serves it.
 
     Ok(url)
 }
 
 // Unpublish a file (move from blog/ to drafts/ in the website repo)
 #[tauri::command]
-fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), String> {
-    publish::unpublish_file(&slug, target_id.as_deref())?;
+async fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), String> {
+    let (s, t) = (slug.clone(), target_id.clone());
+    publish::off_main(move || publish::unpublish_file(&s, t.as_deref())).await?;
+    let slug = publish::bare_slug(&slug)?;
 
     // Record in journal
     let _ = journal::record_event(journal::EventRecord {
@@ -290,8 +265,6 @@ fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), String>
         target_id: target_id.as_deref(),
         visibility: "public",
     });
-
-    std::thread::spawn(sketchybar_cache::update);
 
     Ok(())
 }
@@ -496,24 +469,6 @@ fn convert_to_vue_page(slug: String, hue: u32) -> Result<String, String> {
     Ok(vue_path)
 }
 
-// --- COMPANION COMMANDS ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompanionInfo {
-    pub pin: String,
-    pub url: Option<String>,
-    pub port: u16,
-}
-
-#[tauri::command]
-fn get_companion_info() -> CompanionInfo {
-    CompanionInfo {
-        pin: companion::get_pin(),
-        url: companion::get_local_url(),
-        port: 6420,
-    }
-}
-
 // --- ANALYTICS COMMANDS ---
 
 #[tauri::command]
@@ -599,18 +554,8 @@ async fn send_webmentions(
 // --- JOURNAL COMMANDS ---
 
 #[tauri::command]
-fn get_journal_stats() -> Result<journal::JournalStats, String> {
-    journal::get_stats()
-}
-
-#[tauri::command]
 fn get_journal_entries(limit: Option<usize>) -> Result<Vec<journal::JournalEntry>, String> {
     journal::get_recent_entries(limit.unwrap_or(50))
-}
-
-#[tauri::command]
-fn get_journal_nudge() -> Result<Option<journal::Nudge>, String> {
-    journal::get_nudge()
 }
 
 #[tauri::command]
@@ -622,13 +567,6 @@ fn get_journal_heatmap(days: Option<u32>) -> Result<Vec<(String, u32)>, String> 
 fn backfill_journal() -> Result<u32, String> {
     let target = config::default_target()?;
     journal::backfill_from_git(&target.repo_path, &target.domain)
-}
-
-// --- VAULT PULSE ---
-
-#[tauri::command]
-fn get_vault_pulse() -> Result<vault_pulse::VaultPulse, String> {
-    vault_pulse::scan_vault()
 }
 
 // Tell the preview server which file to display
@@ -1102,10 +1040,6 @@ pub fn run() {
     // --- START PREVIEW SERVER ---
     preview::init_server();
 
-    // --- WARM SKETCHYBAR CACHE ---
-    // Off-thread so a slow first-vault-scan doesn't block app launch.
-    std::thread::spawn(sketchybar_cache::update);
-
     // --- BUILD AND RUN THE APP ---
     // (Open Recent commands defined below the run block.)
     tauri::Builder::default()
@@ -1125,6 +1059,8 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
+        // Not imported by any JS: its injected script routes <a target="_blank">
+        // http(s)/mailto links to the system browser.
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -1147,11 +1083,6 @@ pub fn run() {
             let syndication_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 syndication_queue::run_syndication_scheduler(syndication_handle).await;
-            });
-
-            // Start companion web server
-            tauri::async_runtime::spawn(async {
-                companion::start_server().await;
             });
 
             // Build tray icon with menu
@@ -1190,6 +1121,8 @@ pub fn run() {
             publish_file,
             unpublish_file,
             get_git_status,
+            deploy::get_head_sha,
+            deploy::wait_for_deploy,
             add_tag_to_file,
             get_backlinks,
             check_obsidian_api,
@@ -1218,12 +1151,9 @@ pub fn run() {
             cancel_schedule,
             set_frontmatter,
             send_webmentions,
-            get_journal_stats,
             get_journal_entries,
-            get_journal_nudge,
             backfill_journal,
             get_journal_heatmap,
-            get_vault_pulse,
             check_analytics_status,
             get_post_analytics,
             get_post_sources,
@@ -1231,7 +1161,6 @@ pub fn run() {
             get_post_pageview_series,
             get_site_analytics,
             get_top_posts,
-            get_companion_info,
             get_app_config,
             save_app_config,
             get_config_path,
@@ -1263,19 +1192,24 @@ pub fn run() {
             generate_promo_image,
             generate_og_variants,
             upload_og_image,
-            gear::list_gear,
-            gear::mark_gear_used,
-            gear::update_gear_location,
-            gear::set_gear_scan_url,
-            gear::update_gear_field,
-            gear::gear_pending_changes,
-            gear::commit_gear_changes,
             play_system_sound,
             record_recent_file,
             clear_recent_files,
             set_proxy_icon,
             set_document_dirty,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, _event| {
+            // Dock click with the window hidden (hide-on-close): tao only
+            // reports the event, so bring the main window back ourselves.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                if let Some(w) = _app.get_webview_window("main") {
+                    let _ = w.unminimize();
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+        });
 }

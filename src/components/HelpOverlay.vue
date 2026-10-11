@@ -116,7 +116,7 @@ const emit = defineEmits<{
             <kbd>&#8984;</kbd>
             <kbd>1</kbd>
             &mdash;
-            <kbd>6</kbd>
+            <kbd>5</kbd>
             <span>switch tab</span>
           </div>
         </div>

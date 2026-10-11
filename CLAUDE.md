@@ -18,8 +18,16 @@
 | `blog/` | **Yes** | Intended for publication |
 | `dispatch/` | **Yes** | Standalone journalism → `content/dispatch/<slug>.md`, `/dispatch/<slug>` |
 | `drafts/` | **No** | Private thinking, never publish |
-| `week-notes/` | **No** | Personal reflections |
+| `week-notes/` | **No** | Personal reflections. **Retired from the site** (2026-10, they leaked client screenshots, finances and names) |
 | Everything else | **No** | Private vault content |
+
+**`week-notes/` and `drafts/` are never publishable, at any depth** (including
+`blog/week-notes/`), and neither is any note with frontmatter `type: weeknote`.
+This is enforced in Rust by `src-tauri/src/publish_guard.rs`, which runs first in
+`publish::publish_file`, so neither the UI nor a config can bypass it. Config
+loading also drops these folders from `publishable_dirs` (in memory, with a
+warning; the saved file isn't rewritten). website2 separately fails its build if
+`content/blog/week-notes/` exists. Don't reintroduce a week-notes publish path.
 
 ### Frontmatter → Visibility (after publishing)
 
@@ -117,7 +125,6 @@ No intermediate steps. No "move from drafts." Write where you publish.
 Add `"drafts"` to `excluded_dirs`:
 ```rust
 excluded_dirs: vec![
-    "week-notes".into(),
     "robot-notes".into(),
     "private".into(),
     "templates".into(),

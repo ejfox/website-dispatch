@@ -337,8 +337,7 @@ onMounted(() => {
   scanUsage()
   // Auto-focus the inline container so ↑↓←→ / hjkl reach the gallery
   // immediately. Without this, the user had to click into the grid first
-  // before keys did anything (same class of bug as the gear arrow-key
-  // hijack — pane wasn't actually receiving input).
+  // before keys did anything (the pane wasn't actually receiving input).
   nextTick(() => rootRef.value?.focus())
 })
 </script>

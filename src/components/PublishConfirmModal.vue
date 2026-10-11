@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { PhArrowsClockwise, PhArrowSquareUpRight, PhKeyboard, PhCheck } from '@phosphor-icons/vue'
 import type { MarkdownFile } from '../types'
 
@@ -8,7 +8,6 @@ const props = defineProps<{
   file: MarkdownFile
   slug: string
   targetUrl: string
-  publishContext: string | null
   isRepublish: boolean
 }>()
 
@@ -33,7 +32,16 @@ watch(
   },
 )
 
+// Type-to-confirm must never pass on an empty or missing expected slug:
+// a week-notes/ or drafts/ path yields slug '' and ''.trim() === '' would
+// otherwise enable Publish with nothing typed.
+const slugMatches = computed(() => {
+  const expected = (props.slug ?? '').trim()
+  return expected !== '' && publishConfirmText.value.trim() === expected
+})
+
 function handleConfirm() {
+  if (!slugMatches.value) return
   emit('confirm', props.isRepublish)
   emit('close')
 }
@@ -62,7 +70,6 @@ function handleConfirm() {
           </div>
           <h2 class="pub-modal-title">{{ isRepublish ? 'Republish' : 'Ready to publish?' }}</h2>
           <p class="pub-modal-subtitle">This will push to your live website.</p>
-          <p v-if="publishContext" class="pub-modal-context">{{ publishContext }}</p>
 
           <div class="pub-detail-card">
             <div class="pub-detail-row">
@@ -110,10 +117,10 @@ function handleConfirm() {
             v-model="publishConfirmText"
             :placeholder="slug"
             autofocus
-            @keydown.enter="publishConfirmText.trim() === slug && handleConfirm()"
+            @keydown.enter="slugMatches && handleConfirm()"
           />
           <div class="pub-slug-match" v-if="publishConfirmText.length > 0">
-            <span v-if="publishConfirmText.trim() === slug" class="pub-match-yes">Match!</span>
+            <span v-if="slugMatches" class="pub-match-yes">Match!</span>
             <span v-else class="pub-match-no">{{ publishConfirmText.length }}/{{ slug.length }}</span>
           </div>
         </div>
@@ -134,7 +141,7 @@ function handleConfirm() {
           <button
             v-else
             class="pub-btn-go pub-btn-publish"
-            :disabled="publishConfirmText.trim() !== slug"
+            :disabled="!slugMatches"
             @click="handleConfirm()"
           >
             {{ isRepublish ? 'Republish' : 'Publish' }}
@@ -279,15 +286,6 @@ function handleConfirm() {
   margin: 4px 0 16px;
   font-size: 12px;
   color: var(--text-tertiary);
-}
-
-.pub-modal-context {
-  margin: -10px 0 14px;
-  font-size: 10px;
-  font-family: 'SF Mono', monospace;
-  color: var(--success);
-  opacity: 0.8;
-  letter-spacing: 0.01em;
 }
 
 /* Detail card */

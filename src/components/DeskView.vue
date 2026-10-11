@@ -6,6 +6,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { ask } from '@tauri-apps/plugin-dialog'
 import { useLocalStorage } from '@vueuse/core'
 import type { DeskToday, DeskStory, MarkdownFile } from '../types'
 
@@ -148,9 +149,12 @@ function jobRunning(kind: string, id?: string | null) {
 async function startJob(kind: 'check' | 'build', story: DeskStory) {
   if (jobRunning(kind, story.id)) return
   if (kind === 'build') {
-    const ok = window.confirm(
-      `Build "${story.slug}"?\n\nThis runs the full desk pipeline: it takes a few minutes and uses AI credits.`,
-    )
+    const ok = await ask('This runs the full desk pipeline. It takes a few minutes and uses AI credits.', {
+      title: `Build "${story.slug}"?`,
+      kind: 'warning',
+      okLabel: 'Build',
+      cancelLabel: 'Cancel',
+    })
     if (!ok) return
   }
   delete jobNotes.value[`${kind}:${story.id}`]

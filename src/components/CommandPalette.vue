@@ -13,7 +13,6 @@ import {
   PhListBullets,
   PhSquaresFour,
   PhBookOpen,
-  PhWrench,
   PhPlus,
   PhCommand,
   PhClockCounterClockwise,
@@ -52,7 +51,7 @@ const emit = defineEmits<{
   refresh: []
   showJournal: []
   showHelp: []
-  togglePanel: [panel: 'preview' | 'media' | 'journal' | 'gear']
+  togglePanel: [panel: 'preview' | 'media' | 'journal']
   publish: []
 }>()
 
@@ -199,18 +198,8 @@ const actions = computed<Action[]>(() => {
       icon: PhListBullets,
       enabled: true,
       shortcut: '⌘3',
-      synonyms: ['stats', 'streak', 'history', 'milestones'],
+      synonyms: ['history', 'log', 'heatmap'],
       run: () => emit('togglePanel', 'journal'),
-    },
-    {
-      id: 'panel_gear',
-      label: 'Show Gear Panel',
-      section: 'Actions',
-      icon: PhWrench,
-      enabled: true,
-      shortcut: '⌘4',
-      synonyms: ['inventory', 'equipment'],
-      run: () => emit('togglePanel', 'gear'),
     },
   ]
 })

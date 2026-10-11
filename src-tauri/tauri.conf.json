@@ -15,11 +15,16 @@
     "resources": [
       "../preview-server.mjs"
     ],
-    "targets": "all"
+    "targets": "all",
+    "category": "Productivity",
+    "copyright": "© 2026 EJ Fox",
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
   },
   "productName": "Dispatch",
   "mainBinaryName": "Dispatch",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "identifier": "com.ejfox.dispatch",
   "plugins": {
     "updater": {
@@ -47,6 +52,8 @@
         "title": "Dispatch",
         "width": 700,
         "height": 600,
+        "minWidth": 560,
+        "minHeight": 420,
         "resizable": true,
         "transparent": false,
         "visible": true,

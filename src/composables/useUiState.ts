@@ -145,7 +145,6 @@ export function usePaletteHistory() {
  * exposes a `dragging` flag so the layout can suppress CSS transitions while
  * the user is actively dragging (otherwise the panel rubber-bands).
  *
- * Generalizes the hand-rolled handler that used to live in GearPanel.vue.
  * Uses Pointer events so it works with trackpad + captures the pointer even
  * when it slips outside the thin handle during a fast drag.
  *
@@ -154,7 +153,7 @@ export function usePaletteHistory() {
  *   - axis 'x' resizes width (col-resize), 'y' resizes height (row-resize)
  *   - max may be a number or a getter, for bounds relative to window size
  *   - invert: true when the handle sits on the far edge and dragging *toward*
- *     the panel origin should grow it (GearPanel's bottom-anchored detail pane)
+ *     the panel origin should grow it (e.g. a bottom-anchored detail pane)
  */
 export function useResizable(
   key: string,

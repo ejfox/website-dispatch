@@ -12,8 +12,8 @@ use tauri::{AppHandle, Emitter};
 
 /// Hard floor between `vault-changed` emits. The vault lives on iCloud, which
 /// continuously re-touches synced `.md` files in the background — without this,
-/// every sync tick fired a full ~180-file rescan (get_recent_files) plus a
-/// sketchybar cache rebuild, pegging the CPU (a debug build hit ~167%). One
+/// every sync tick fired a full ~180-file rescan (get_recent_files), pegging
+/// the CPU (a debug build hit ~167%). One
 /// rescan every few seconds is plenty for auto-refresh.
 const MIN_EMIT_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -102,9 +102,6 @@ pub fn start(app: AppHandle, vault_path: String) {
                         events.len()
                     );
                     let _ = app.emit("vault-changed", ());
-                    // Refresh the ambient cache too so sketchybar reflects
-                    // the new state without waiting on its 120s tick.
-                    crate::sketchybar_cache::update();
                 }
                 Err(e) => log::warn!("vault_watcher: debouncer error: {:?}", e),
             }

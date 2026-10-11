@@ -57,8 +57,6 @@ export function useConnectionStatus() {
   const cloudinaryConnected = ref(false)
   const obsidianConnected = ref(false)
   const analyticsConnected = ref(false)
-  const companionUrl = ref<string | null>(null)
-  const companionPin = ref('')
   const gitBranch = ref<string | null>(null)
 
   async function checkAll() {
@@ -86,13 +84,6 @@ export function useConnectionStatus() {
         analyticsConnected.value = false
       })
 
-    invoke('get_companion_info')
-      .then((info: any) => {
-        companionUrl.value = info.url
-        companionPin.value = info.pin
-      })
-      .catch(() => {})
-
     invoke('get_git_status')
       .then((status: any) => {
         if (status?.ok) gitBranch.value = status.branch
@@ -107,8 +98,6 @@ export function useConnectionStatus() {
     cloudinaryConnected,
     obsidianConnected,
     analyticsConnected,
-    companionUrl,
-    companionPin,
     gitBranch,
     checkAll,
   }

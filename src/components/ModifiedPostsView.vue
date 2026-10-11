@@ -54,6 +54,7 @@ function wordDelta(file: MarkdownFile): number {
   return file.word_count - file.published_word_count
 }
 
+// Display only: the backend derives the real destination from file.path.
 function slugFor(file: MarkdownFile): string {
   const baseName = file.filename.replace('.md', '')
   const yearMatch = file.path.match(/\/blog\/(\d{4})\//)
@@ -79,7 +80,6 @@ async function republishOne(file: MarkdownFile) {
   try {
     await invoke('publish_file', {
       sourcePath: file.path,
-      slug: slugFor(file),
       targetId: null,
     })
     toasts.success(`Republished ${file.title || file.filename}`)
@@ -103,7 +103,6 @@ async function republishAll() {
     try {
       await invoke('publish_file', {
         sourcePath: file.path,
-        slug: slugFor(file),
         targetId: null,
       })
       ok++

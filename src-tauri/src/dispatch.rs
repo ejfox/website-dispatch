@@ -11,7 +11,6 @@
 use crate::config::PublishTarget;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 /// Vault folder that marks a note as a Dispatch piece.
 pub const VAULT_DIR: &str = "dispatch";
@@ -91,21 +90,15 @@ pub fn find_published(
     )
 }
 
-fn git(repo: &str, args: &[&str]) -> Result<std::process::Output, String> {
-    Command::new(crate::bin_paths::git())
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .map_err(|e| format!("git {} failed: {}", args.first().unwrap_or(&""), e))
-}
-
-/// Copy the vault note to content/dispatch/<slug>.md, then git add/commit/
-/// pull --rebase/push — same sequence as blog publishing.
+/// Copy the vault note to content/dispatch/<slug>.md, then commit and push
+/// to `origin <target.branch>`: same sequence and safety checks as blog
+/// publishing (publish.rs).
 pub fn publish(source_path: &str, slug: &str, target: &PublishTarget) -> Result<String, String> {
     validate_slug(slug)?;
-    crate::publish::check_git_status(&target.repo_path)?;
-
     let repo = &target.repo_path;
+    crate::publish::check_git_status(repo, &target.branch)?;
+    crate::publish::sync_with_remote(repo, &target.branch)?;
+
     let dest = dest_path(repo, slug);
     let rel = relative_dest(slug);
     if let Some(parent) = Path::new(&dest).parent() {
@@ -114,42 +107,12 @@ pub fn publish(source_path: &str, slug: &str, target: &PublishTarget) -> Result<
     log::warn!("Publishing dispatch {} -> {}", source_path, dest);
     fs::copy(source_path, &dest).map_err(|e| format!("Failed to copy: {}", e))?;
 
-    let add = git(repo, &["add", &rel])?;
-    if !add.status.success() {
-        return Err(format!(
-            "Git add failed: {}",
-            String::from_utf8_lossy(&add.stderr)
-        ));
-    }
-
-    let msg = format!("Publish dispatch: {}", slug);
-    let commit = git(repo, &["commit", "-m", &msg])?;
-    if !commit.status.success() {
-        let out = String::from_utf8_lossy(&commit.stdout);
-        let err = String::from_utf8_lossy(&commit.stderr);
-        if !out.contains("nothing to commit") && !err.contains("nothing to commit") {
-            log::warn!("Git commit output: {} {}", out, err);
-        }
-    }
-
-    let pull = git(repo, &["pull", "--rebase", "--autostash"])?;
-    if !pull.status.success() {
-        let _ = git(repo, &["rebase", "--abort"]);
-        return Err(format!(
-            "Git pull failed: {}\n{}",
-            String::from_utf8_lossy(&pull.stdout),
-            String::from_utf8_lossy(&pull.stderr)
-        ));
-    }
-
-    let push = git(repo, &["push"])?;
-    if !push.status.success() {
-        let err = String::from_utf8_lossy(&push.stderr);
-        if !err.contains("Everything up-to-date") && !err.contains("up to date") {
-            return Err(format!("Git push failed: {}", err));
-        }
-    }
-
+    crate::publish::commit_and_push(
+        repo,
+        &target.branch,
+        &[&rel],
+        &format!("Publish dispatch: {}", slug),
+    )?;
     Ok(public_url(&target.domain, slug))
 }
 
