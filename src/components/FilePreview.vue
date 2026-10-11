@@ -3,6 +3,7 @@ import { ref, watch, computed, nextTick, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { message } from '@tauri-apps/plugin-dialog'
 import { PhCheckCircle } from '@phosphor-icons/vue'
+import { PanelRight } from 'lucide-vue-next'
 import LintReceipt from './LintReceipt.vue'
 import LocalMediaFixer from './LocalMediaFixer.vue'
 import AltTextReviewer from './AltTextReviewer.vue'
@@ -475,6 +476,19 @@ function onDraftPromptKey(e: KeyboardEvent) {
 // show a deploying (pulsing accent) or failed (red) dot. A null deploy on
 // the same path means it was dismissed; a path change just means we moved.
 const deployStatusStore = useDeployStatus()
+// One-line state for the compact bar shown when the inspector is hidden.
+const miniStatus = computed(() => {
+  const phase = currentDeploy.value?.phase
+  if (phase === 'deploying') return { key: 'deploying', word: 'Deploying…' }
+  if (phase === 'failed') return { key: 'broken', word: 'Not live' }
+  if (isScheduled.value) return { key: 'scheduled', word: 'Scheduled' }
+  if (isLive.value)
+    return hasUnpublishedChanges.value
+      ? { key: 'attention', word: 'Changed since live' }
+      : { key: 'live', word: 'Live' }
+  return { key: 'draft', word: 'Not published' }
+})
+
 watch([() => props.file.path, currentDeploy], ([path, d], [oldPath]) => {
   if (d) deployStatusStore.track(path, d)
   else if (path === oldPath) deployStatusStore.clear(path)
@@ -1077,6 +1091,30 @@ async function openPreview() {
 
     <!-- Two columns: the post, and the inspector. Below ~620px the inspector
          becomes an overlay panel (see useInspector / .is-narrow). -->
+    <!-- Inspector hidden (by choice or because the pane is narrow): keep the
+         post's state and its one primary action reachable in a single line. -->
+    <div v-if="!inspector.visible.value" class="insp-mini">
+      <span class="status-dot" :data-status="miniStatus.key" />
+      <span class="insp-mini-word">{{ miniStatus.word }}</span>
+      <span class="insp-mini-spacer" />
+      <UiButton
+        variant="primary"
+        size="small"
+        :disabled="publishing"
+        :label="publishing ? 'Publishing…' : isLive ? 'Update live post…' : file.is_safe ? 'Publish…' : 'See what to fix…'"
+        @click="requestPublish(isLive)"
+      />
+      <UiButton
+        variant="plain"
+        size="small"
+        label="Details"
+        :icon="PanelRight"
+        aria-label="Show Inspector"
+        data-tip="Show Inspector (⌥⌘I)"
+        @click="inspector.toggle()"
+      />
+    </div>
+
     <div ref="splitRef" class="preview-split" :class="{ 'is-narrow': inspector.narrow.value }">
       <!-- ── The post ─────────────────────────────────────────────────────── -->
       <div class="preview">
@@ -1523,6 +1561,23 @@ async function openPreview() {
 }
 
 /* ── Two columns: the post and the inspector ───────────────────────────── */
+.insp-mini {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--gutter);
+  border-bottom: 1px solid var(--separator);
+  flex-shrink: 0;
+}
+.insp-mini-word {
+  font-size: 12px;
+  color: var(--label);
+  white-space: nowrap;
+}
+.insp-mini-spacer {
+  flex: 1;
+}
+
 .preview-split {
   flex: 1;
   display: flex;

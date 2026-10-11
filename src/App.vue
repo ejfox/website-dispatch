@@ -1381,6 +1381,25 @@ onUnmounted(() => {
   padding: 0 8px;
   border-bottom: 1px solid var(--border);
   overflow: hidden;
+  /* Tabs collapse to icons when the bar is tight (see @container below). */
+  container-type: inline-size;
+  container-name: panel-tabs;
+}
+
+/* Not enough room for six labelled tabs: show icons only. Names stay in the
+   hover hints (data-tip) and for VoiceOver (visually hidden, not removed). */
+@container panel-tabs (max-width: 560px) {
+  .panel-tabs button[data-tab] > span:not(.tab-badge) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .panel-tabs button[data-tab] {
+    padding: 4px 7px;
+  }
 }
 
 .panel-tabs button {
