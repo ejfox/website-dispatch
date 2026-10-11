@@ -58,7 +58,8 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
             continue;
         }
 
-        // Skip week-notes nested inside blog/ (stray copies) — week-notes/ is its own publishable dir
+        // Skip week-notes nested inside blog/ (stray copies). Week notes are retired from the
+        // site and never publishable (publish_guard.rs refuses them at publish time).
         if path_str.contains("/blog/week-notes/") {
             continue;
         }

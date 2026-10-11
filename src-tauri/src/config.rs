@@ -130,12 +130,8 @@ impl Default for AppConfig {
                     "attachments".into(),
                     "drafts".into(),
                 ],
-                publishable_dirs: vec![
-                    "blog".into(),
-                    "dispatch".into(),
-                    "drafts".into(),
-                    "week-notes".into(),
-                ],
+                // Never week-notes/ or drafts/ — see publish_guard.rs.
+                publishable_dirs: vec!["blog".into(), "dispatch".into()],
             },
             publish_targets: vec![PublishTarget {
                 name: "Website".into(),
@@ -189,24 +185,57 @@ fn config_path() -> PathBuf {
 }
 
 fn load_or_create() -> AppConfig {
-    let path = config_path();
-    if path.exists() {
-        match fs::read_to_string(&path) {
-            Ok(json) => match serde_json::from_str::<AppConfig>(&json) {
-                Ok(mut config) => {
-                    if migrate_legacy_cloudinary(&mut config) {
-                        let _ = save_config(&config);
-                    }
-                    return config;
-                }
-                Err(e) => log::warn!("Config parse error, using defaults: {}", e),
-            },
-            Err(e) => log::warn!("Config read error, using defaults: {}", e),
-        }
+    if let Some(config) = load_from(&config_path()) {
+        return config;
     }
     let config = AppConfig::default();
     let _ = save_config(&config);
     config
+}
+
+/// Read and parse a saved config. Never-publishable dirs are dropped in
+/// memory only; the file on disk is not rewritten for that.
+fn load_from(path: &std::path::Path) -> Option<AppConfig> {
+    if !path.exists() {
+        return None;
+    }
+    match fs::read_to_string(path) {
+        Ok(json) => match serde_json::from_str::<AppConfig>(&json) {
+            Ok(mut config) => {
+                if migrate_legacy_cloudinary(&mut config) {
+                    let _ = save_config(&config);
+                }
+                drop_never_publishable_dirs(&mut config);
+                Some(config)
+            }
+            Err(e) => {
+                log::warn!("Config parse error, using defaults: {}", e);
+                None
+            }
+        },
+        Err(e) => {
+            log::warn!("Config read error, using defaults: {}", e);
+            None
+        }
+    }
+}
+
+/// Remove `week-notes`/`drafts` (at any depth) from `publishable_dirs`,
+/// whatever an older saved config says. Returns the dropped entries.
+fn drop_never_publishable_dirs(config: &mut AppConfig) -> Vec<String> {
+    let (dropped, kept): (Vec<String>, Vec<String>) = config
+        .vault
+        .publishable_dirs
+        .drain(..)
+        .partition(|d| crate::publish_guard::is_never_publishable_dir(d));
+    config.vault.publishable_dirs = kept;
+    if !dropped.is_empty() {
+        log::warn!(
+            "Ignoring never-publishable dirs in config publishable_dirs: {:?} (week notes are retired; drafts/ is private)",
+            dropped
+        );
+    }
+    dropped
 }
 
 /// Carry the deprecated top-level `cloudinary_cloud_name` forward into
@@ -257,7 +286,8 @@ pub fn get() -> Result<AppConfig, String> {
     Ok(guard.clone())
 }
 
-pub fn update(config: AppConfig) -> Result<(), String> {
+pub fn update(mut config: AppConfig) -> Result<(), String> {
+    drop_never_publishable_dirs(&mut config);
     save_config(&config)?;
     let rw = CONFIG
         .get()
@@ -345,6 +375,42 @@ mod tests {
                 "drafts"
             ]
         );
+    }
+
+    #[test]
+    fn test_defaults_never_publish_week_notes_or_drafts() {
+        let config = AppConfig::default();
+        assert_eq!(config.vault.publishable_dirs, vec!["blog", "dispatch"]);
+    }
+
+    #[test]
+    fn test_loaded_config_drops_never_publishable_dirs() {
+        // Shape of the live config saved before week notes were retired.
+        let json = r#"{
+            "version": 1,
+            "vault": { "path": "/tmp", "name": "test", "excluded_dirs": ["drafts"],
+                       "publishable_dirs": ["blog", "drafts", "week-notes", "blog/week-notes", "dispatch"] },
+            "publish_targets": [],
+            "editors": [],
+            "default_editor": "iA Writer"
+        }"#;
+        let dir = std::env::temp_dir().join("dispatch-test-config-weeknotes");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        fs::write(&path, json).unwrap();
+
+        let config = load_from(&path).unwrap();
+        assert_eq!(config.vault.publishable_dirs, vec!["blog", "dispatch"]);
+        // excluded_dirs is untouched
+        assert_eq!(config.vault.excluded_dirs, vec!["drafts"]);
+        // The user's file is not rewritten
+        assert_eq!(fs::read_to_string(&path).unwrap(), json);
+        let _ = fs::remove_dir_all(&dir);
+
+        let mut config: AppConfig = serde_json::from_str(json).unwrap();
+        let dropped = drop_never_publishable_dirs(&mut config);
+        assert_eq!(dropped, vec!["drafts", "week-notes", "blog/week-notes"]);
     }
 
     #[test]

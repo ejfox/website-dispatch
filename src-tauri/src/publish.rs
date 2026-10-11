@@ -148,6 +148,8 @@ pub fn publish_file(
     slug: &str,
     target_id: Option<&str>,
 ) -> Result<String, String> {
+    // Hard refusal first: week-notes/, drafts/, `type: weeknote`, empty slug.
+    crate::publish_guard::refuse_unpublishable(source_path, slug)?;
     let app_config = config::get()?;
     let target = config::resolve_target(target_id)?;
     let normalized_path = source_path.replace('\\', "/");
