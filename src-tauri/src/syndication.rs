@@ -541,7 +541,7 @@ mod og_tests {
 
     #[test]
     fn hung_og_script_times_out_instead_of_spinning_forever() {
-        let repo = fake_repo("hang", "sleep 30\n");
+        let repo = fake_repo("hang", "exec sleep 30\n");
         let start = Instant::now();
         let err = generate_og_variants_in(&repo, "", Path::new(SH), "2019/x", 0, Duration::from_millis(300))
             .unwrap_err();
