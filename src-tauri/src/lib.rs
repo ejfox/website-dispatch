@@ -928,18 +928,27 @@ fn generate_promo_image(title: String, url: String) -> Result<String, String> {
 }
 
 // Generate 4 OG image variants for a post
+//
+// async + spawn_blocking: a sync command runs on the main thread, so the
+// node render froze the whole window (beachball) for as long as it ran.
 #[tauri::command]
-fn generate_og_variants(
+async fn generate_og_variants(
     slug: String,
     batch: Option<u32>,
 ) -> Result<syndication::OgImageVariants, String> {
-    syndication::generate_og_variants(&slug, batch.unwrap_or(0))
+    tauri::async_runtime::spawn_blocking(move || {
+        syndication::generate_og_variants(&slug, batch.unwrap_or(0))
+    })
+    .await
+    .map_err(|e| format!("OG render task failed: {}", e))?
 }
 
 // Upload a picked OG image variant to Cloudinary
 #[tauri::command]
-fn upload_og_image(file_path: String, slug: String) -> Result<String, String> {
-    syndication::upload_og_image(&file_path, &slug)
+async fn upload_og_image(file_path: String, slug: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || syndication::upload_og_image(&file_path, &slug))
+        .await
+        .map_err(|e| format!("OG upload task failed: {}", e))?
 }
 
 // List all folders in Cloudinary (for folder picker UI)

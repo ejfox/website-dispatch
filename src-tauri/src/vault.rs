@@ -378,6 +378,16 @@ fn content_differs(source: &str, published: &str) -> bool {
     normalize_content(source) != normalize_content(published)
 }
 
+/// Strip YAML scalar quotes. Single quotes were left on, so
+/// `date: '2019-09-20T21:19:39-04:00'` reached the UI as `'2019-…'` and
+/// rendered as "Invalid Date". A single-quoted scalar escapes `'` as `''`.
+fn unquote_scalar(v: &str) -> String {
+    if v.len() >= 2 && v.starts_with('\'') && v.ends_with('\'') {
+        return v[1..v.len() - 1].replace("''", "'");
+    }
+    v.trim_matches('"').to_string()
+}
+
 pub(crate) fn parse_frontmatter(content: &str) -> (HashMap<String, String>, String) {
     let mut frontmatter = HashMap::new();
     let mut body = content.to_string();
@@ -393,7 +403,7 @@ pub(crate) fn parse_frontmatter(content: &str) -> (HashMap<String, String>, Stri
                 let line = lines[i];
                 if let Some((key, value)) = line.split_once(':') {
                     let key = key.trim().to_string();
-                    let value = value.trim().trim_matches('"').to_string();
+                    let value = unquote_scalar(value.trim());
 
                     // Handle YAML block scalar indicators (>-, >, |-, |)
                     if value == ">-" || value == ">" || value == "|-" || value == "|" {
@@ -991,6 +1001,17 @@ mod tests {
         let warnings =
             check_privacy("This week I worked on the website redesign and wrote some code.");
         assert!(warnings.is_empty(), "Should be clean: {:?}", warnings);
+    }
+
+    #[test]
+    fn single_quoted_frontmatter_values_are_unquoted() {
+        let content = "---\ndate: '2019-09-20T21:19:39-04:00'\ntitle: 'It''s here'\ndek: \"Double\"\nnote: it's fine\n---\n# T\n";
+        let (fm, _) = parse_frontmatter(content);
+        assert_eq!(fm.get("date").unwrap(), "2019-09-20T21:19:39-04:00");
+        assert_eq!(fm.get("title").unwrap(), "It's here");
+        assert_eq!(fm.get("dek").unwrap(), "Double");
+        assert_eq!(fm.get("note").unwrap(), "it's fine");
+        assert!(parse_iso_date(fm.get("date").unwrap()).is_some());
     }
 
     #[test]

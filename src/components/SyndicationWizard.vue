@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { parseDate } from '../utils/formatting'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { PhCheck, PhX, PhClock, PhPaperPlaneTilt, PhArrowRight, PhArrowLeft } from '@phosphor-icons/vue'
@@ -207,7 +208,9 @@ function getScheduledAt(platform: string): string | null {
 function formatSchedule(platform: string): string {
   const at = getScheduledAt(platform)
   if (!at) return 'Manual'
-  const diff = new Date(at).getTime() - Date.now()
+  const when = parseDate(at)
+  if (!when) return 'Manual'
+  const diff = when.getTime() - Date.now()
   if (diff < 60000) return 'Now'
   if (diff < 3600000) return `In ${Math.round(diff / 60000)}m`
   if (diff < 86400000) return `In ${Math.round(diff / 3600000)}h`
