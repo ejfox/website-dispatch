@@ -199,26 +199,26 @@ fn append_to_file(path: String, content: String) -> Result<(), String> {
 // — when Dispatch is in the background, the user gets a system banner with
 // the post title and a "View" interaction.
 #[tauri::command]
-fn publish_file(
+async fn publish_file(
     app: tauri::AppHandle,
     source_path: String,
-    slug: String,
     target_id: Option<String>,
 ) -> Result<String, String> {
-    // Check if this is a republish (file already exists in website repo)
-    let target = config::resolve_target(target_id.as_deref())?;
-    let is_dispatch = config::get()
-        .map(|c| dispatch::is_dispatch_note(&c.vault.path, &source_path))
-        .unwrap_or(false);
-    let is_republish = if is_dispatch {
-        dispatch::find_published(&target, &slug).0.is_some()
-    } else {
-        vault::find_published_info_for_target(&target, &slug)
-            .0
-            .is_some()
-    };
+    // git + network work: keep it off the UI thread.
+    publish::off_main(move || publish_file_blocking(app, source_path, target_id)).await
+}
 
-    let url = publish::publish_file(&source_path, &slug, target_id.as_deref())?;
+fn publish_file_blocking(
+    app: tauri::AppHandle,
+    source_path: String,
+    target_id: Option<String>,
+) -> Result<String, String> {
+    // The destination (and slug) is derived from the vault path in one place.
+    let publish::Published {
+        url,
+        slug,
+        republish: is_republish,
+    } = publish::publish_file(&source_path, target_id.as_deref())?;
 
     // Record in journal — read source file metadata, capture the title for
     // the notification body so we don't re-read the file later.
@@ -262,7 +262,10 @@ fn publish_file(
             .notification()
             .builder()
             .title(verb)
-            .body(format!("\u{2018}{}\u{2019} is live at {}", title_str, url))
+            .body(format!(
+                "\u{2018}{}\u{2019} pushed, deploying to {}",
+                title_str, url
+            ))
             .show();
     }
 
@@ -275,8 +278,10 @@ fn publish_file(
 
 // Unpublish a file (move from blog/ to drafts/ in the website repo)
 #[tauri::command]
-fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), String> {
-    publish::unpublish_file(&slug, target_id.as_deref())?;
+async fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), String> {
+    let (s, t) = (slug.clone(), target_id.clone());
+    publish::off_main(move || publish::unpublish_file(&s, t.as_deref())).await?;
+    let slug = publish::bare_slug(&slug)?;
 
     // Record in journal
     let _ = journal::record_event(journal::EventRecord {

@@ -328,7 +328,6 @@ const {
   onSyndicationQueued,
   onAltTextApplied,
 } = usePublishing({
-  getSlug: () => slug.value,
   getFilePath: () => props.file.path,
   getFileIsSafe: () => props.file.is_safe,
   getActiveTargetId,

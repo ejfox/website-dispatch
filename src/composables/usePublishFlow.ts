@@ -15,7 +15,6 @@ function playSound(name: string) {
 }
 
 export function usePublishing(options: {
-  getSlug: () => string
   getFilePath: () => string
   getFileIsSafe: () => boolean
   getActiveTargetId: () => string | undefined
@@ -91,7 +90,6 @@ export function usePublishing(options: {
 
       const url = await invoke<string>('publish_file', {
         sourcePath: options.getFilePath(),
-        slug: options.getSlug(),
         targetId: options.getActiveTargetId() || null,
       })
       justPublished.value = url
