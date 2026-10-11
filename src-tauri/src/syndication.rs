@@ -229,28 +229,14 @@ pub struct OgImageVariants {
     pub preview_html: String,
 }
 
+/// A healthy render takes ~4s. Past this the script is wedged (a stuck read,
+/// a native module spinning); kill it and say so instead of hanging forever.
+pub const OG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
 /// Generate 4 OG image variants by calling the Node script in the website repo.
 /// Returns file paths to the generated PNGs.
 pub fn generate_og_variants(slug: &str, batch: u32) -> Result<OgImageVariants, String> {
     let target = crate::config::default_target()?;
-    let repo_path = &target.repo_path;
-    let script = format!("{}/scripts/og-image/index.mjs", repo_path);
-
-    // Check script exists
-    if !std::path::Path::new(&script).exists() {
-        return Err(format!("OG script not found at {}", script));
-    }
-
-    // The batch number offsets the variant seeds so rerolls produce new images
-    // We pass it by modifying the slug: "2025/post:batch3"
-    let batch_slug = if batch > 0 {
-        format!("{}:batch{}", slug, batch)
-    } else {
-        slug.to_string()
-    };
-
-    // Call: node scripts/og-image/index.mjs --slug {slug}
-    // This generates 4 variants to data/og-previews/{slug}/
     // DISPATCH_VAULT_PATH lets the OG extractor fall back to the user's
     // Obsidian vault when a draft hasn't been synced into the website repo
     // yet — picking OG art before the first publish is a normal flow.
@@ -258,40 +244,77 @@ pub fn generate_og_variants(slug: &str, batch: u32) -> Result<OgImageVariants, S
         .ok()
         .map(|c| c.vault.path)
         .unwrap_or_default();
-    let mut cmd = std::process::Command::new(crate::bin_paths::node());
+    generate_og_variants_in(
+        &target.repo_path,
+        &vault_path,
+        crate::bin_paths::node(),
+        slug,
+        batch,
+        OG_TIMEOUT,
+    )
+}
+
+/// Config-free core of `generate_og_variants`, so the failure modes are
+/// testable: a missing script, a failing script, a hung script and a script
+/// that exits 0 without writing any images must all come back as errors.
+pub(crate) fn generate_og_variants_in(
+    repo_path: &str,
+    vault_path: &str,
+    node: &std::path::Path,
+    slug: &str,
+    batch: u32,
+    timeout: std::time::Duration,
+) -> Result<OgImageVariants, String> {
+    let script = format!("{}/scripts/og-image/index.mjs", repo_path);
+    if !std::path::Path::new(&script).exists() {
+        return Err(format!("OG script not found at {}", script));
+    }
+
+    // The batch number offsets the variant seeds so rerolls produce new
+    // images. It travels as a slug suffix: "2025/post:batch3".
+    let batch_slug = if batch > 0 {
+        format!("{}:batch{}", slug, batch)
+    } else {
+        slug.to_string()
+    };
+
+    // node scripts/og-image/index.mjs --slug {slug}
+    // writes 4 variants to data/og-previews/{slug}/
+    let mut cmd = std::process::Command::new(node);
     cmd.arg(&script)
         .arg("--slug")
         .arg(&batch_slug)
         .current_dir(repo_path);
     if !vault_path.is_empty() {
-        cmd.env("DISPATCH_VAULT_PATH", &vault_path);
+        cmd.env("DISPATCH_VAULT_PATH", vault_path);
     }
-    let output = cmd
-        .output()
-        .map_err(|e| format!("Failed to run OG script: {}", e))?;
+    let output = crate::publish::run_with_timeout(cmd, timeout)
+        .map_err(|e| format!("OG script {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("OG script failed: {}", stderr));
+        return Err(format!("OG script failed: {}", stderr.trim()));
     }
 
-    // Find the generated files
     let safe_slug = slug.replace('/', "-");
     let preview_dir = format!("{}/data/og-previews/{}", repo_path, safe_slug);
-    let mut paths = Vec::new();
-    for i in 0..4 {
-        let path = format!("{}/variant-{}.png", preview_dir, i);
-        if std::path::Path::new(&path).exists() {
-            paths.push(path);
-        }
+    let paths: Vec<String> = (0..4)
+        .map(|i| format!("{}/variant-{}.png", preview_dir, i))
+        .filter(|p| std::path::Path::new(p).exists())
+        .collect();
+    // Exiting 0 with nothing on disk used to return an empty set, which the
+    // picker rendered as a header with no images and no error.
+    if paths.is_empty() {
+        return Err(format!(
+            "OG script finished but wrote no images to {}",
+            preview_dir
+        ));
     }
-
-    let preview_html = format!("{}/preview.html", preview_dir);
 
     Ok(OgImageVariants {
         slug: slug.to_string(),
         paths,
-        preview_html,
+        preview_html: format!("{}/preview.html", preview_dir),
     })
 }
 
@@ -492,4 +515,74 @@ pub fn syndicate_post(post: &PostContent) -> Vec<SyndicationResult> {
     // Future: check BLUESKY_*, LINKEDIN_*, etc.
 
     results
+}
+
+#[cfg(test)]
+mod og_tests {
+    use super::*;
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    /// A throwaway website repo whose "OG script" is a shell script; tests run
+    /// it with /bin/sh standing in for node.
+    fn fake_repo(name: &str, script: &str) -> String {
+        let dir = std::env::temp_dir().join(format!(
+            "dispatch-og-{}-{}",
+            name,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("scripts/og-image")).unwrap();
+        std::fs::write(dir.join("scripts/og-image/index.mjs"), script).unwrap();
+        dir.to_string_lossy().to_string()
+    }
+
+    const SH: &str = "/bin/sh";
+
+    #[test]
+    fn hung_og_script_times_out_instead_of_spinning_forever() {
+        let repo = fake_repo("hang", "sleep 30\n");
+        let start = Instant::now();
+        let err = generate_og_variants_in(&repo, "", Path::new(SH), "2019/x", 0, Duration::from_millis(300))
+            .unwrap_err();
+        assert!(err.contains("timed out"), "{}", err);
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn og_script_that_writes_nothing_is_an_error() {
+        let repo = fake_repo("empty", "exit 0\n");
+        let err = generate_og_variants_in(&repo, "", Path::new(SH), "2019/x", 0, Duration::from_secs(10))
+            .unwrap_err();
+        assert!(err.contains("wrote no images"), "{}", err);
+    }
+
+    #[test]
+    fn failing_og_script_reports_stderr() {
+        let repo = fake_repo("fail", "echo 'no post named that' >&2\nexit 1\n");
+        let err = generate_og_variants_in(&repo, "", Path::new(SH), "2019/x", 0, Duration::from_secs(10))
+            .unwrap_err();
+        assert!(err.contains("no post named that"), "{}", err);
+    }
+
+    #[test]
+    fn missing_og_script_is_an_error() {
+        let err = generate_og_variants_in("/nonexistent-repo", "", Path::new(SH), "2019/x", 0, Duration::from_secs(1))
+            .unwrap_err();
+        assert!(err.contains("not found"), "{}", err);
+    }
+
+    #[test]
+    fn og_variants_found_and_batch_passed_as_slug_suffix() {
+        // Writes the 4 PNGs and records the --slug it was given.
+        let repo = fake_repo(
+            "ok",
+            "d=data/og-previews/2019-x; mkdir -p $d; for i in 0 1 2 3; do : > $d/variant-$i.png; done; echo \"$2\" > $d/slug.txt\n",
+        );
+        let v = generate_og_variants_in(&repo, "", Path::new(SH), "2019/x", 2, Duration::from_secs(10)).unwrap();
+        assert_eq!(v.paths.len(), 4);
+        assert!(v.paths[0].ends_with("data/og-previews/2019-x/variant-0.png"));
+        let seen = std::fs::read_to_string(format!("{}/data/og-previews/2019-x/slug.txt", repo)).unwrap();
+        assert_eq!(seen.trim(), "2019/x:batch2");
+    }
 }

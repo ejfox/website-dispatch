@@ -14,7 +14,7 @@ const LOCAL_TIMEOUT: Duration = Duration::from_secs(30);
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Run a command, killing it if it outlives `timeout`.
-fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output, String> {
+pub(crate) fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output, String> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
