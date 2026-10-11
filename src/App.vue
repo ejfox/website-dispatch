@@ -630,6 +630,7 @@ onMounted(async () => {
     compactMode.value = !compactMode.value
   }))
   track(listen('menu-search', () => openSearch()))
+  track(listen('menu-settings', () => (showSettings.value = true)))
 
   // Open Recent: payload is the absolute file path. If the file is in the
   // current scan, select it; otherwise the path is stale (deleted/moved) —

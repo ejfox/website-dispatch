@@ -16,6 +16,8 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         &[
             &PredefinedMenuItem::about(handle, Some("About Dispatch"), None)?,
             &PredefinedMenuItem::separator(handle)?,
+            &MenuItem::with_id(handle, "settings", "Settings\u{2026}", true, Some("CmdOrCtrl+,"))?,
+            &PredefinedMenuItem::separator(handle)?,
             &PredefinedMenuItem::services(handle, None)?,
             &PredefinedMenuItem::separator(handle)?,
             &PredefinedMenuItem::hide(handle, None)?,
@@ -381,6 +383,12 @@ pub fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) 
         "panel_gear",
         "show_help",
     ];
+    if id == "settings" {
+        // The window may be hidden (hide-on-close); Settings lives in it.
+        show_main_window(app);
+        let _ = app.emit("menu-settings", ());
+        return;
+    }
     if passthrough.contains(&id) {
         let _ = app.emit(&format!("menu-{}", id.replace('_', "-")), ());
         return;

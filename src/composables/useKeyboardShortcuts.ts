@@ -41,7 +41,7 @@ export function useKeyboardShortcuts(options: {
    * n, i, r, m, /, etc.) must NOT fire, otherwise typing in the alt-text
    * editor or syndication wizard accidentally triggers nav actions.
    *
-   * Modified shortcuts (⌘K, ⌘,, ⌘Enter, Escape) still go through.
+   * Modified shortcuts (⌘K, ⌘Enter, Escape) still go through.
    */
   function isTypingTarget(e: KeyboardEvent): boolean {
     const t = e.target as HTMLElement | null
@@ -63,12 +63,7 @@ export function useKeyboardShortcuts(options: {
       return
     }
 
-    // ⌘, opens Settings (macOS convention).
-    if ((e.metaKey || e.ctrlKey) && e.key === ',') {
-      e.preventDefault()
-      options.showSettings.value = !options.showSettings.value
-      return
-    }
+    // ⌘, (Settings) is owned by the native app menu — see menu.rs.
 
     // ⌘0 toggles the sidebar.
     if ((e.metaKey || e.ctrlKey) && e.key === '0') {
