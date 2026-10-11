@@ -1261,6 +1261,18 @@ pub fn run() {
             set_proxy_icon,
             set_document_dirty,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, _event| {
+            // Dock click with the window hidden (hide-on-close): tao only
+            // reports the event, so bring the main window back ourselves.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                if let Some(w) = _app.get_webview_window("main") {
+                    let _ = w.unminimize();
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+        });
 }

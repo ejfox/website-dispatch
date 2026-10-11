@@ -1,5 +1,5 @@
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
 
 use super::preview;
@@ -15,6 +15,8 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         true,
         &[
             &PredefinedMenuItem::about(handle, Some("About Dispatch"), None)?,
+            &PredefinedMenuItem::separator(handle)?,
+            &MenuItem::with_id(handle, "settings", "Settings\u{2026}", true, Some("CmdOrCtrl+,"))?,
             &PredefinedMenuItem::separator(handle)?,
             &PredefinedMenuItem::services(handle, None)?,
             &PredefinedMenuItem::separator(handle)?,
@@ -276,46 +278,80 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
     Ok(menu)
 }
 
-/// Build the system tray icon with its menu.
-pub fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    let open_i = MenuItem::with_id(app, "open", "Open Dispatch", true, None::<&str>)?;
-    let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open_i, &quit_i])?;
+const TRAY_ID: &str = "main";
 
-    // DIAGNOSTIC: try the dedicated tray.png as a template first, but fall
-    // back to the colored app icon if anything goes sideways. The fallback
-    // guarantees *some* visible icon while we figure out which path works.
-    let mut tray_builder = TrayIconBuilder::new();
-    if let Some(window_icon) = app.default_window_icon() {
-        tray_builder = tray_builder.icon(window_icon.clone());
+/// The menu bar extra's menu. Rebuilt with the File menu whenever the recents
+/// change (muda menus aren't mutable in place). Ids are `tray_*` so the
+/// app-level `handle_menu_event`, which also sees these clicks, ignores them.
+fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::with_items(
+        app,
+        &[
+            &MenuItem::with_id(app, "tray_open", "Open Dispatch", true, None::<&str>)?,
+            &MenuItem::with_id(app, "tray_new_post", "New Post", true, None::<&str>)?,
+        ],
+    )?;
+
+    let recents = read_recents(app);
+    if !recents.is_empty() {
+        menu.append(&PredefinedMenuItem::separator(app)?)?;
+        menu.append(&MenuItem::new(app, "Recent", false, None::<&str>)?)?;
+        for path in recents.iter().take(5) {
+            let name = std::path::Path::new(path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(path);
+            menu.append(&MenuItem::with_id(
+                app,
+                format!("tray_recent:{}", path),
+                name,
+                true,
+                None::<&str>,
+            )?)?;
+        }
     }
-    tray_builder
+
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+    menu.append(&MenuItem::with_id(app, "tray_quit", "Quit Dispatch", true, None::<&str>)?)?;
+    Ok(menu)
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// Build the menu bar extra: a monochrome template image (so macOS tints it
+/// for light/dark and the menu bar's own appearance) and a menu that does work.
+pub fn build_tray(app: &tauri::App) -> tauri::Result<()> {
+    let menu = build_tray_menu(app.handle())?;
+
+    TrayIconBuilder::with_id(TRAY_ID)
+        .icon(tauri::include_image!("icons/tray.png"))
+        .icon_as_template(true)
+        .tooltip("Dispatch")
         .menu(&menu)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "open" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+        .on_menu_event(|app, event| {
+            let id = event.id.as_ref();
+            if let Some(path) = id.strip_prefix("tray_recent:") {
+                let _ = app.emit("menu-open-recent", path.to_string());
+                show_main_window(app);
+                return;
             }
-            "quit" => {
-                preview::stop_server();
-                app.exit(0);
-            }
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
+            match id {
+                "tray_open" => show_main_window(app),
+                "tray_new_post" => {
+                    let _ = app.emit("menu-new-post", ());
+                    show_main_window(app);
                 }
+                "tray_quit" => {
+                    preview::stop_server();
+                    app.exit(0);
+                }
+                _ => {}
             }
         })
         .build(app)?;
@@ -347,6 +383,12 @@ pub fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) 
         "panel_gear",
         "show_help",
     ];
+    if id == "settings" {
+        // The window may be hidden (hide-on-close); Settings lives in it.
+        show_main_window(app);
+        let _ = app.emit("menu-settings", ());
+        return;
+    }
     if passthrough.contains(&id) {
         let _ = app.emit(&format!("menu-{}", id.replace('_', "-")), ());
         return;
@@ -437,6 +479,9 @@ pub fn clear_recents(app: &tauri::AppHandle) {
 fn rebuild_menu(app: &tauri::AppHandle) {
     if let Ok(menu) = build_app_menu(app) {
         let _ = app.set_menu(menu);
+    }
+    if let (Some(tray), Ok(menu)) = (app.tray_by_id(TRAY_ID), build_tray_menu(app)) {
+        let _ = tray.set_menu(Some(menu));
     }
 }
 

@@ -196,7 +196,10 @@ const modifiedCount = computed(
 watch(
   modifiedCount,
   (n) => {
-    getCurrentWindow().setBadgeCount(n > 0 ? n : undefined).catch(() => {})
+    // Needs core:window:allow-set-badge-count (core:default is read-only).
+    getCurrentWindow()
+      .setBadgeCount(n > 0 ? n : undefined)
+      .catch((e) => console.warn('dock badge failed', e))
   },
   { immediate: true },
 )
@@ -630,6 +633,7 @@ onMounted(async () => {
     compactMode.value = !compactMode.value
   }))
   track(listen('menu-search', () => openSearch()))
+  track(listen('menu-settings', () => (showSettings.value = true)))
 
   // Open Recent: payload is the absolute file path. If the file is in the
   // current scan, select it; otherwise the path is stale (deleted/moved) —

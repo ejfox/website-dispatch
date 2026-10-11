@@ -9,6 +9,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
+    "core:window:allow-set-badge-count",
     "fs:allow-read-file",
     "fs:allow-write-file",
     "fs:allow-read-dir",
