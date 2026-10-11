@@ -14,7 +14,6 @@ A Tauri desktop app for publishing Obsidian notes to your website. Keyboard-driv
 - Scheduled publishing with frontmatter `publish_at`
 - Visibility controls: public, unlisted, password-protected
 - Cloudinary media library with drag-and-drop upload
-- Companion web server for mobile access
 - Umami analytics integration per post
 - Configurable publish targets, editors, and vault paths via Settings UI
 
@@ -130,7 +129,6 @@ src-tauri/src/
 ├── publish.rs     # Git publish/unpublish/schedule
 ├── cloudinary.rs  # Cloudinary CDN integration
 ├── asset_usage.rs # Track media usage across posts
-├── companion.rs   # Companion web server (mobile)
 ├── analytics.rs   # Umami analytics
 ├── preview.rs     # Local preview server
 └── obsidian.rs    # Obsidian REST API (backlinks)

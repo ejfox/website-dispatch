@@ -21,7 +21,6 @@ import {
   PhSquaresFour,
   PhCircleWavy,
   PhChartBar,
-  PhDeviceMobile,
   PhFolder,
   PhTextAa,
   PhGitBranch,
@@ -267,7 +266,7 @@ async function onPieceStarted(notePath: string) {
 }
 
 // Connection status (auto-checks on creation)
-const { cloudinaryConnected, obsidianConnected, analyticsConnected, companionUrl, companionPin, gitBranch } =
+const { cloudinaryConnected, obsidianConnected, analyticsConnected, gitBranch } =
   useConnectionStatus()
 
 // Settings modal
@@ -495,26 +494,6 @@ async function showAnalyticsMenu(e: MouseEvent) {
     await MenuItem.new({ text: 'Analytics Settings…', action: () => (showSettings.value = true) }),
   )
   const menu = await Menu.new({ items: items_ })
-  await menu.popup()
-}
-
-async function showCompanionMenu(e: MouseEvent) {
-  e.preventDefault()
-  if (!companionUrl.value) return
-  const url = companionUrl.value
-  const pin = companionPin.value || ''
-  const menu = await Menu.new({
-    items: [
-      await MenuItem.new({ text: 'Open Companion in Browser', action: () => window.open(url, '_blank') }),
-      await PredefinedMenuItem.new({ item: 'Separator' }),
-      await MenuItem.new({ text: 'Copy Companion URL', action: () => navigator.clipboard.writeText(url) }),
-      await MenuItem.new({ text: `Copy PIN (${pin})`, action: () => navigator.clipboard.writeText(pin) }),
-      await MenuItem.new({
-        text: 'Copy URL + PIN',
-        action: () => navigator.clipboard.writeText(`${url} (PIN: ${pin})`),
-      }),
-    ],
-  })
   await menu.popup()
 }
 
@@ -1192,15 +1171,6 @@ onUnmounted(() => {
         >
           <PhChartBar :size="10" :weight="analyticsConnected ? 'fill' : 'light'" />
           analytics
-        </span>
-        <span
-          v-if="companionUrl"
-          class="status-item connected"
-          :data-tip="`Companion connected · PIN: ${companionPin} · right-click for options`"
-          @contextmenu="showCompanionMenu"
-        >
-          <PhDeviceMobile :size="10" weight="fill" />
-          {{ companionUrl.replace('http://', '') }}
         </span>
         <span class="status-divider"></span>
         <span class="status-item muted">v{{ appVersion }}</span>

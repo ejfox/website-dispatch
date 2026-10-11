@@ -19,7 +19,6 @@ mod asset_usage; // Tracks which Cloudinary images are used in which posts
 mod bin_paths; // Login-shell-resolved paths to node/git
 mod bluesky; // Bluesky AT Protocol XRPC client + post/facet/embed builders
 mod cloudinary; // Uploads images/videos to Cloudinary CDN
-mod companion; // Companion web UI server for mobile access
 pub mod config; // App configuration (vault path, publish targets, editors)
 mod deploy; // Post-push deploy confirmation via the site's /api/healthcheck
 mod desk; // The Desk: chart-desk daily feed via the `desk` CLI
@@ -468,24 +467,6 @@ fn convert_to_vue_page(slug: String, hue: u32) -> Result<String, String> {
     fs::write(&vue_path, template).map_err(|e| format!("Failed to write crowned post: {}", e))?;
 
     Ok(vue_path)
-}
-
-// --- COMPANION COMMANDS ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompanionInfo {
-    pub pin: String,
-    pub url: Option<String>,
-    pub port: u16,
-}
-
-#[tauri::command]
-fn get_companion_info() -> CompanionInfo {
-    CompanionInfo {
-        pin: companion::get_pin(),
-        url: companion::get_local_url(),
-        port: 6420,
-    }
 }
 
 // --- ANALYTICS COMMANDS ---
@@ -1101,11 +1082,6 @@ pub fn run() {
                 syndication_queue::run_syndication_scheduler(syndication_handle).await;
             });
 
-            // Start companion web server
-            tauri::async_runtime::spawn(async {
-                companion::start_server().await;
-            });
-
             // Build tray icon with menu
             menu::build_tray(app)?;
 
@@ -1182,7 +1158,6 @@ pub fn run() {
             get_post_pageview_series,
             get_site_analytics,
             get_top_posts,
-            get_companion_info,
             get_app_config,
             save_app_config,
             get_config_path,
