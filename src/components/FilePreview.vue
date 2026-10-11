@@ -312,6 +312,8 @@ const {
   publishing,
   justPublished,
   justPublishedGlow,
+  currentDeploy,
+  dismissDeploy,
   showSuccess,
   successMessage,
   isMilestoneToast,
@@ -337,10 +339,12 @@ const {
   onPublished: () => emit('published'),
   // Auto-fire webmentions after publish/republish. Bridgy Fed forwarding
   // is opt-in via Settings → Connections (default off).
-  onPublishSuccess: (url: string) => {
+  getTitle: () => props.file.title || null,
+  onPublishSuccess: (url: string) => afterPublish(url),
+  // Webmentions wait for the deploy to be confirmed live (page answers 200).
+  onLive: (url: string) => {
     const bridgyFed = appConfig.value?.webmentions_bridgy_fed === true
-    autoTriggerOnPublish(bridgyFed)
-    afterPublish(url)
+    autoTriggerOnPublish(bridgyFed, url)
   },
 })
 
@@ -1091,6 +1095,8 @@ async function openPreview() {
       :visibility-label="visibilityLabel"
       :publishing="publishing"
       :file-path="file.path"
+      :deploy="currentDeploy"
+      @dismiss-deploy="dismissDeploy(slug)"
       @copy-url="copyUrl"
       @copy-url-password="copyUrlAndPassword"
       @republish="publish(true)"
