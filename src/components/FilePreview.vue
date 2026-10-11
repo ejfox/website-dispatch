@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, nextTick, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { message } from '@tauri-apps/plugin-dialog'
 import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhTrophy, PhCaretDown } from '@phosphor-icons/vue'
 import LintReceipt from './LintReceipt.vue'
 import LocalMediaFixer from './LocalMediaFixer.vue'
@@ -1005,7 +1006,7 @@ async function schedulePublish() {
     showCopyFeedback('Scheduled!')
     emit('published')
   } catch (e) {
-    alert(`Schedule failed: ${e}`)
+    await message(String(e), { title: 'Couldn’t schedule', kind: 'error' })
   }
 }
 
@@ -1015,7 +1016,7 @@ async function cancelSchedule() {
     showCopyFeedback('Schedule cancelled')
     emit('published')
   } catch (e) {
-    alert(`Cancel failed: ${e}`)
+    await message(String(e), { title: 'Couldn’t cancel the schedule', kind: 'error' })
   }
 }
 

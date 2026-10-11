@@ -260,9 +260,10 @@ async function buildMoveMenuItems(it: Gear): Promise<(MenuItem | PredefinedMenuI
   out.push(
     await MenuItem.new({
       text: 'New container…',
-      action: async () => {
-        const v = window.prompt('New container name:')?.trim()
-        if (v) await setGearField(it.name, 'parent_container', v, `moved to ${v}`)
+      // wry has no WKUIDelegate text-input panel, so window.prompt() returns
+      // null. Both callers select `it` first; open the inline container field.
+      action: () => {
+        if (selected.value?.name === it.name) beginEdit('parent_container', '')
       },
     }),
   )

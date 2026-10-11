@@ -3,6 +3,7 @@
 
 import { ref, computed, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { ask, message } from '@tauri-apps/plugin-dialog'
 import { useToasts } from './useUiState'
 import type { WebmentionReport } from '../types'
 
@@ -250,7 +251,7 @@ export function usePostActions(options: {
         5000,
       )
     } catch (e) {
-      alert(`Convert to Vue page failed: ${e}`)
+      await message(String(e), { title: 'Couldn’t convert to a Vue page', kind: 'error' })
     }
     converting.value = false
   }
@@ -287,7 +288,7 @@ export function usePostActions(options: {
         options.showSuccessToast(`Notified ${report.sent} site${report.sent === 1 ? '' : 's'}`)
       }
     } catch (e) {
-      if (!opts.silent) alert(`Webmention error: ${e}`)
+      if (!opts.silent) await message(String(e), { title: 'Couldn’t send webmentions', kind: 'error' })
       console.warn('webmention send failed', e)
     }
     sendingWebmentions.value = false
@@ -305,15 +306,22 @@ export function usePostActions(options: {
 
   async function unpublish() {
     if (!options.isLive() || !options.slug.value || unpublishing.value) return
-    const confirmText = `Unpublish "${options.slug.value}" and move it back to drafts?`
-    if (!confirm(confirmText)) return
+    // Native NSAlert: wry implements no WKUIDelegate confirm panel, so a
+    // webview confirm() silently returns false and Unpublish never ran.
+    const ok = await ask(`"${options.slug.value}" will come off the site and move back to drafts.`, {
+      title: 'Unpublish this post?',
+      kind: 'warning',
+      okLabel: 'Unpublish',
+      cancelLabel: 'Cancel',
+    })
+    if (!ok) return
     unpublishing.value = true
     try {
       await invoke('unpublish_file', { slug: options.slug.value, targetId: options.getActiveTargetId() || null })
       options.showSuccessToast('Unpublished — moved to drafts')
       setTimeout(() => options.onRefresh(), 500)
     } catch (e) {
-      alert(`Failed: ${e}`)
+      await message(String(e), { title: 'Couldn’t unpublish', kind: 'error' })
     }
     unpublishing.value = false
   }
