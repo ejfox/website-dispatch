@@ -49,7 +49,7 @@ import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
 import { useAppConfig, useConnectionStatus } from './composables/useVaultData'
 import { checkForUpdate } from './composables/useAutoUpdate'
 import { useMenuActions } from './composables/useMenuActions'
-import { CHANGED_LABEL, CHANGED_HINT, NOT_PUBLISHED_LABEL } from './utils/vocab'
+import { CHANGED_LABEL, CHANGED_TAB, CHANGED_HINT, NOT_PUBLISHED_LABEL } from './utils/vocab'
 
 const toasts = useToasts()
 
@@ -1027,9 +1027,9 @@ onUnmounted(() => {
             <BookOpen :size="13" />
             <span>Journal</span>
           </button>
-          <button data-tab="modified" :class="{ active: rightTab === 'modified' }" :data-tip="`${CHANGED_HINT} (⌘4)`" @click="rightTab = 'modified'">
+          <button data-tab="modified" :class="{ active: rightTab === 'modified' }" :data-tip="`${CHANGED_LABEL}: ${CHANGED_HINT} (⌘4)`" @click="rightTab = 'modified'">
             <Pencil :size="13" />
-            <span>{{ CHANGED_LABEL }}</span>
+            <span>{{ CHANGED_TAB }}</span>
             <span v-if="modifiedCount > 0" class="tab-badge">{{ modifiedCount }}</span>
           </button>
           <button data-tab="activity" :class="{ active: rightTab === 'activity' }" data-tip="See recent edits, publishes and social posts together (⌘5)" @click="rightTab = 'activity'">

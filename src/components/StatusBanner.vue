@@ -11,6 +11,7 @@ import {
 } from '@phosphor-icons/vue'
 import { formatScheduledTime } from '../utils/formatting'
 import PublishDiffPanel from './PublishDiffPanel.vue'
+import UiButton from './ui/UiButton.vue'
 import type { DeployState } from '../composables/usePublishFlow'
 
 const props = defineProps<{
@@ -75,25 +76,25 @@ watch(
     </span>
     <span class="deploy-msg">{{ deploy.message }}</span>
     <a :href="deploy.runUrl" target="_blank">View run</a>
-    <button @click="$emit('dismiss-deploy')">Dismiss</button>
+    <UiButton size="small" label="Dismiss" @click="$emit('dismiss-deploy')" />
   </div>
   <div v-else-if="isLive && hasUnpublishedChanges">
     <div class="banner modified">
       <span class="banner-text" :data-tip="CHANGED_HINT">{{ CHANGED_LABEL.toUpperCase() }}</span>
       <span v-if="visibilityLabel" class="visibility-badge">{{ visibilityLabel }}</span>
       <span class="modified-msg">{{ CHANGED_HINT }}</span>
-      <button
+      <UiButton
+        size="small"
+        variant="plain"
+        :icon="PhCaretDown"
         class="see-changes"
         :class="{ open: diffOpen }"
-        @click="diffOpen = !diffOpen"
+        :label="diffOpen ? 'Hide changes' : 'See changes'"
         :data-tip="diffOpen ? 'Hide diff' : 'Show what changed since last publish'"
-      >
-        <PhCaretDown :size="9" weight="bold" class="see-caret" />
-        {{ diffOpen ? 'Hide changes' : 'See changes' }}
-      </button>
-      <button class="republish-btn" @click="$emit('republish')" :disabled="publishing">
-        {{ publishing ? '...' : 'Republish' }}
-      </button>
+        @click="diffOpen = !diffOpen"
+      />
+      <!-- Secondary here: the action area below holds the screen's one primary. -->
+      <UiButton size="small" :disabled="publishing" :label="publishing ? '…' : 'Republish'" @click="$emit('republish')" />
     </div>
     <PublishDiffPanel :file-path="filePath" :open="diffOpen" @close="diffOpen = false" />
   </div>
@@ -103,8 +104,8 @@ watch(
       PROTECTED
     </span>
     <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
-    <button @click="$emit('copy-url-password')" data-tip="Copy URL + password to share">Copy + Pass</button>
-    <button @click="$emit('copy-url')" data-tip="Copy URL only">Copy URL</button>
+    <UiButton size="small" label="Copy + Pass" data-tip="Copy URL + password to share" @click="$emit('copy-url-password')" />
+    <UiButton size="small" label="Copy URL" data-tip="Copy URL only" @click="$emit('copy-url')" />
   </div>
   <div v-else-if="isLive && isUnlisted" class="banner unlisted">
     <span class="banner-text">
@@ -112,7 +113,7 @@ watch(
       UNLISTED
     </span>
     <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
-    <button @click="$emit('copy-url')" data-tip="Share this link — not indexed anywhere">Copy</button>
+    <UiButton size="small" label="Copy" data-tip="Share this link — not indexed anywhere" @click="$emit('copy-url')" />
   </div>
   <div v-else-if="isLive" class="banner live">
     <span class="banner-text">
@@ -121,7 +122,7 @@ watch(
     </span>
     <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
     <a v-if="deploy?.phase === 'live'" :href="liveUrl!" target="_blank" class="open-link">Open</a>
-    <button @click="$emit('copy-url')">Copy</button>
+    <UiButton size="small" label="Copy" @click="$emit('copy-url')" />
   </div>
   <div v-else-if="isScheduled" class="banner scheduled">
     <span class="banner-text">
@@ -129,7 +130,7 @@ watch(
       PUBLISHES LATER
     </span>
     <span data-tip="Dispatch publishes it then, if Dispatch is running">{{ formatScheduledTime(publishAt!) }}</span>
-    <button @click="$emit('cancel-schedule')" data-tip="Don’t publish it later">Cancel</button>
+    <UiButton size="small" label="Cancel" data-tip="Don’t publish it later" @click="$emit('cancel-schedule')" />
   </div>
   <div v-else-if="!isSafe" class="banner warn">
     {{ warnings.join(' · ') }}
@@ -168,11 +169,11 @@ watch(
    green, and the eye/lock glyph stays neutral. */
 .banner {
   --st: transparent;
-  padding: 6px 16px 6px 13px;
+  padding: var(--space-1) var(--gutter) var(--space-1) 13px;
   font-size: 11px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   transition: background 0.2s ease;
   color: var(--label);
   background: color-mix(in srgb, var(--st) 12%, transparent);
@@ -199,22 +200,6 @@ watch(
   text-decoration: underline;
 }
 
-/* Secondary buttons inside a banner are neutral. The one primary action
-   (Republish) is accent. */
-.banner button {
-  background: var(--fill-2);
-  border: none;
-  color: var(--label);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 10px;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.12s;
-}
-.banner button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--label) 18%, transparent);
-}
 
 .banner.live,
 .banner.unlisted,
@@ -233,10 +218,6 @@ watch(
 .banner.unlisted .banner-text svg,
 .banner.protected .banner-text svg {
   color: var(--label-2);
-}
-.banner.unlisted button,
-.banner.protected button {
-  margin-left: 4px;
 }
 
 /* DEPLOYING — pushed, waiting on GitHub Actions. Neutral banner; the only
@@ -275,27 +256,11 @@ watch(
   color: var(--label-2);
   font-weight: 400;
 }
-.banner.modified button {
-  padding: 3px 9px;
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.banner.modified .see-changes .see-caret {
+.banner.modified .see-changes :deep(.ui-btn-icon) {
   transition: transform 0.15s;
 }
-.banner.modified .see-changes.open .see-caret {
+.banner.modified .see-changes.open :deep(.ui-btn-icon) {
   transform: rotate(180deg);
-}
-/* The screen's primary action: accent, with system accent-text. */
-.banner.modified .republish-btn {
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 600;
-}
-.banner.modified .republish-btn:hover:not(:disabled) {
-  filter: brightness(1.1);
 }
 
 .banner.ready {

@@ -5,6 +5,9 @@
 /** A live post whose vault copy no longer matches the site. (Internally:
  *  the `Modified since publish` warning. That string is a key; don't show it.) */
 export const CHANGED_LABEL = 'Changed since live'
+// The tab strip is tight at the 560px minimum window: the tab says less and
+// its tooltip says the rest.
+export const CHANGED_TAB = 'Changed'
 // The list pill is short so titles keep their room; its tooltip says the rest.
 export const CHANGED_PILL = 'CHANGED'
 export const CHANGED_HINT = 'Your vault copy differs from what’s on ejfox.com'

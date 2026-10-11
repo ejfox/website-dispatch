@@ -12,6 +12,7 @@ import OgImagePicker from './OgImagePicker.vue'
 import StatusBanner from './StatusBanner.vue'
 import MetadataPanel from './MetadataPanel.vue'
 import ActionToolbar from './ActionToolbar.vue'
+import UiButton from './ui/UiButton.vue'
 import PublishConfirmModal from './PublishConfirmModal.vue'
 import WebmentionStatus from './WebmentionStatus.vue'
 import ResizeHandle from './ResizeHandle.vue'
@@ -1133,8 +1134,8 @@ async function openPreview() {
       <span v-else-if="file.image_count > 0" class="ps-item ok">alt text complete</span>
       <span v-if="localImageCount > 0" class="ps-item local">{{ localImageCount }} to host</span>
       <span class="ps-spacer" />
-      <button v-if="localImageCount > 0" class="ps-btn primary" @click="showMediaFixer = true">Upload</button>
-      <button v-if="missingAltTextCount > 0" class="ps-btn" @click="showAltTextReviewer = true">Describe</button>
+      <UiButton v-if="localImageCount > 0" size="small" label="Upload" @click="showMediaFixer = true" />
+      <UiButton v-if="missingAltTextCount > 0" size="small" label="Describe" @click="showAltTextReviewer = true" />
     </div>
 
     <!-- Analytics strip — visible up top whenever the post is live. Shows
@@ -1173,24 +1174,14 @@ async function openPreview() {
         <span class="stat-period">last 30d</span>
       </template>
     </div>
-    <!-- Where the traffic came from (utm_source), and tagged links to share. -->
-    <div v-if="isLive && liveUrl" class="share-strip">
-      <span v-if="postSources.length" class="sources" data-tip="Visits by utm_source, last 30 days">
+    <!-- Where the traffic came from (utm_source). The tagged share links
+         live in the action area's "Copy link" menu. -->
+    <div v-if="isLive && liveUrl && postSources.length" class="share-strip">
+      <span class="sources" data-tip="Visits by utm_source, last 30 days">
         <span v-for="s in postSources.slice(0, 5)" :key="s.x" class="source">
           {{ s.x }} <strong>{{ fmtCount(s.y) }}</strong>
         </span>
       </span>
-      <span class="share-spacer"></span>
-      <button class="share-btn" data-tip="Copies the link tagged utm_source=x" @click="copyShareLink('x', 'social')">
-        Copy link for X
-      </button>
-      <button
-        class="share-btn"
-        data-tip="Copies the link tagged utm_source=newsletter"
-        @click="copyShareLink('newsletter', 'email')"
-      >
-        Copy link for newsletter
-      </button>
     </div>
 
     <!-- Info / Metadata -->
@@ -1228,9 +1219,7 @@ async function openPreview() {
           <span v-if="missingAltTextCount > 0" class="step-pill">step 1 of 2</span>
         </span>
         <span class="count" :class="{ warning: localImageCount > 0 }">{{ localImageCount + localVideoCount }}</span>
-        <button v-if="localImageCount > 0" @click.stop="showMediaFixer = true" class="section-btn primary">
-          Upload to Cloudinary
-        </button>
+        <UiButton v-if="localImageCount > 0" size="small" class="section-action" label="Upload to Cloudinary" @click.stop="showMediaFixer = true" />
       </div>
       <div class="media-section-hint">
         <template v-if="localImageCount > 0 && localVideoCount > 0">
@@ -1261,14 +1250,14 @@ async function openPreview() {
           </span>
           <span class="count" :class="{ warning: localImageCount === 0 }">{{ missingAltTextCount }}</span>
         </button>
-        <button
+        <UiButton
+          size="small"
+          class="section-action"
+          :variant="localImageCount > 0 ? 'plain' : 'secondary'"
+          label="Describe"
+          :title="localImageCount > 0 ? 'Open describer (will prompt to upload local images first)' : undefined"
           @click.stop="showAltTextReviewer = true"
-          class="section-btn"
-          :class="localImageCount > 0 ? 'ghost' : 'primary'"
-          :title="localImageCount > 0 ? 'Open describer (will prompt to upload local images first)' : ''"
-        >
-          Describe
-        </button>
+        />
       </div>
       <div v-if="!altTextCollapsed" class="media-section-hint">
         <template v-if="localImageCount > 0">
@@ -1367,6 +1356,7 @@ async function openPreview() {
         @open-preview="openPreview"
         @select-target="selectTarget"
         @show-syndication="showSyndicationWizard = true"
+        @copy-share-link="copyShareLink"
         @convert-to-vue-page="convertToVuePage"
         @unpublish="unpublish"
         @open-publish-confirm="requestPublish"
@@ -1382,8 +1372,9 @@ async function openPreview() {
           class="schedule-input"
           :min="new Date().toISOString().slice(0, 16)"
         />
-        <button @click="schedulePublish" :disabled="!scheduleDate" class="btn accent">Publish at this time</button>
-        <button @click="showSchedulePicker = false" class="btn">Cancel</button>
+        <!-- Secondary: the toolbar's primary is still on screen. -->
+        <UiButton size="small" :disabled="!scheduleDate" label="Publish at this time" @click="schedulePublish" />
+        <UiButton size="small" variant="plain" label="Cancel" @click="showSchedulePicker = false" />
       </div>
     </div>
     </div>
@@ -1424,10 +1415,10 @@ async function openPreview() {
           Its frontmatter says <code>draft: true</code>. Remove that and continue to publish?
         </div>
         <div class="draft-actions">
-          <button class="btn" @click="showDraftPrompt = false">Not yet <kbd>esc</kbd></button>
-          <button class="btn accent" :disabled="clearingDraft" @click="clearDraftAndContinue">
+          <UiButton variant="plain" @click="showDraftPrompt = false">Not yet <kbd>esc</kbd></UiButton>
+          <UiButton variant="primary" :disabled="clearingDraft" @click="clearDraftAndContinue">
             {{ clearingDraft ? 'Clearing…' : 'Remove draft & publish' }} <kbd>⏎</kbd>
-          </button>
+          </UiButton>
         </div>
       </div>
     </div>
@@ -1633,8 +1624,8 @@ async function openPreview() {
 .schedule-picker {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--gutter);
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border);
 }
@@ -1897,24 +1888,6 @@ async function openPreview() {
 .photo-summary .ps-spacer {
   flex: 1;
 }
-.photo-summary .ps-btn {
-  padding: 2px 8px;
-  font-size: 10.5px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-.photo-summary .ps-btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-.photo-summary .ps-btn:hover {
-  filter: brightness(1.1);
-}
-
 /* Contact-sheet gallery */
 .photo-gallery {
   display: grid;
@@ -1973,6 +1946,11 @@ async function openPreview() {
   transform: rotate(-90deg);
 }
 
+/* Section action (Upload to Cloudinary / Describe) sits at the row's right edge. */
+.section-action {
+  margin-left: auto;
+}
+
 .media-section-hint {
   font-size: 10px;
   color: var(--text-tertiary);
@@ -1996,82 +1974,6 @@ async function openPreview() {
   color: var(--text-tertiary);
   opacity: 0.7;
 }
-
-/* Inline section buttons (Upload to Cloudinary / Describe). Primary uses
-   the macOS accent; ghost is a subtle secondary for "you can do this but
-   it's not the recommended next step right now." */
-.section-btn {
-  margin-left: auto;
-  padding: 3px 10px;
-  font-size: 10px;
-  font-weight: 500;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.15s;
-  white-space: nowrap;
-}
-.section-btn.primary {
-  background: var(--accent);
-  color: var(--accent-contrast);
-}
-.section-btn.primary:hover {
-  background: var(--accent-strong);
-}
-.section-btn.ghost {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-}
-.section-btn.ghost:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-
-/* Schedule Picker Buttons — same macOS push-button language as
-   ActionToolbar's .btn. Color-mix darken on hover, no lift, no
-   brightness filter. */
-.btn {
-  padding: 5px 12px;
-  border: none;
-  border-radius: 5px;
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  text-decoration: none;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  transition: background 0.12s ease, color 0.12s ease;
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.btn:hover {
-  background: color-mix(in srgb, var(--bg-tertiary) 85%, var(--label));
-}
-.btn:active {
-  background: color-mix(in srgb, var(--bg-tertiary) 78%, var(--label));
-}
-/* The dialog's primary action: accent fill, system accent-text. */
-.btn.accent {
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 600;
-}
-.btn.accent:hover:not(:disabled) {
-  background: var(--accent);
-  filter: brightness(1.1);
-}
-.btn:disabled {
-  background: var(--bg-tertiary);
-  color: var(--text-tertiary);
-  cursor: not-allowed;
-  filter: none;
-}
-
 /* Content Divider */
 .content-divider {
   padding: 4px 16px;
@@ -2428,24 +2330,6 @@ async function openPreview() {
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
-.share-spacer {
-  flex: 1;
-}
-.share-btn {
-  font: inherit;
-  font-size: 11px;
-  padding: 3px 9px;
-  border-radius: 6px;
-  border: 1px solid var(--border-light);
-  background: var(--hover-bg);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.share-btn:hover {
-  color: var(--text-primary);
-  background: var(--active-bg);
-}
-
 /* Draft gate */
 .draft-overlay {
   position: fixed;
@@ -2479,8 +2363,8 @@ async function openPreview() {
 .draft-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 16px;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 .draft-actions kbd {
   font-size: 9px;
