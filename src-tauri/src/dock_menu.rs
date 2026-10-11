@@ -76,7 +76,6 @@ mod imp {
                 let _ = h.emit("menu-new-post", ());
                 bring_to_front();
             }
-            2 => bring_to_front(),
             3 => {
                 let _ = h.emit("menu-search", ());
                 bring_to_front();
@@ -113,7 +112,6 @@ mod imp {
 
         menu.addItem(&make_item("New Post", 1));
         menu.addItem(&make_item("Open Search\u{2026}", 3));
-        menu.addItem(&make_item("Show Dispatch", 2));
 
         // Recent Files — pulled live at build time.
         let recents = crate::menu::read_recents(app);
