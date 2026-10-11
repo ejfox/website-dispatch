@@ -7,6 +7,7 @@ import { listen } from '@tauri-apps/api/event'
 import { ask, message } from '@tauri-apps/plugin-dialog'
 import { useToasts } from './useUiState'
 import type { WebmentionReport } from '../types'
+import type { ReviewMode } from '../utils/publishReview'
 
 // ── Publishing lifecycle ────────────────────────────────────────────────────
 
@@ -53,8 +54,9 @@ export function usePublishing(options: {
    *  if omitted, no auto-fire happens. */
   onPublishSuccess?: (url: string) => void
   /** Called once the deploy is confirmed and the post URL answers 200.
-   *  Webmentions belong here — the page has to exist before discovery. */
-  onLive?: (url: string) => void
+   *  Webmentions belong here — the page has to exist before discovery.
+   *  `webmentions` is the review sheet's toggle for this publish. */
+  onLive?: (url: string, opts: { webmentions: boolean }) => void
   /** Post title, for the "is live" macOS notification. */
   getTitle?: () => string | null
 }) {
@@ -64,10 +66,10 @@ export function usePublishing(options: {
   const showSuccess = ref(false)
   const successMessage = ref('')
   const showPublishConfirm = ref(false)
-  const publishConfirmStep = ref<1 | 2>(1)
-  const publishConfirmChecked = ref(false)
-  const publishConfirmText = ref('')
   const publishConfirmRepublish = ref(false)
+  /** `unlisted`: the sheet for the Unlisted button, which writes
+   *  `unlisted: true` before publishing. */
+  const publishConfirmMode = ref<ReviewMode>('publish')
   const showSyndicationWizard = ref(false)
   const showAltTextReviewer = ref(false)
 
@@ -78,11 +80,10 @@ export function usePublishing(options: {
 
   const toasts = useToasts()
 
-  async function openPublishConfirm(isRepublish = false) {
+  /** Every publish and republish goes through the review sheet. */
+  function openPublishConfirm(isRepublish = false, mode: ReviewMode = 'publish') {
     publishConfirmRepublish.value = isRepublish
-    publishConfirmStep.value = 1
-    publishConfirmChecked.value = false
-    publishConfirmText.value = ''
+    publishConfirmMode.value = mode
     showPublishConfirm.value = true
   }
 
@@ -90,7 +91,7 @@ export function usePublishing(options: {
     showPublishConfirm.value = false
   }
 
-  async function publish(isRepublish = false) {
+  async function publish(isRepublish = false, opts: { webmentions?: boolean } = {}) {
     // In-flight guard: publishing commits + pushes, so a second call while the
     // first is still running would publish (and git-commit) the post twice.
     // The confirm button/Enter can both fire in the same burst before the modal
@@ -117,14 +118,20 @@ export function usePublishing(options: {
       }
 
       // Don't await: the deploy takes minutes and shouldn't lock the UI.
-      void watchDeploy(options.getFilePath(), url, options.getActiveTargetId(), isRepublish)
+      void watchDeploy(options.getFilePath(), url, options.getActiveTargetId(), isRepublish, opts.webmentions ?? true)
     } catch (e) {
       toasts.error('Publish failed', String(e))
     }
     publishing.value = false
   }
 
-  async function watchDeploy(slug: string, url: string, targetId: string | undefined, isRepublish: boolean) {
+  async function watchDeploy(
+    slug: string,
+    url: string,
+    targetId: string | undefined,
+    isRepublish: boolean,
+    webmentions: boolean,
+  ) {
     let sha: string
     try {
       sha = await invoke<string>('get_head_sha', { targetId: targetId || null })
@@ -201,7 +208,7 @@ export function usePublishing(options: {
           justPublishedGlow.value = false
         }, 1500)
       }
-      options.onLive?.(url)
+      options.onLive?.(url, { webmentions })
     } else {
       d.phase = 'failed'
       toasts.error('Deploy not confirmed', result.message)
@@ -212,14 +219,17 @@ export function usePublishing(options: {
     delete deploys.value[slug]
   }
 
-  async function publishUnlisted() {
-    if (!options.getFileIsSafe()) return
+  /** Confirmed from the review sheet in `unlisted` mode: write
+   *  `unlisted: true`, then publish. */
+  async function publishUnlisted(isRepublish = false, opts: { webmentions?: boolean } = {}) {
+    if (!isRepublish && !options.getFileIsSafe()) return
     try {
       await invoke('set_frontmatter', { path: options.getFilePath(), key: 'unlisted', value: 'true' })
-      await publish(false)
     } catch (e) {
       toasts.error('Failed to set unlisted', String(e))
+      return
     }
+    await publish(isRepublish, opts)
   }
 
   function showSuccessToast(msg: string, duration = 3000) {
@@ -250,10 +260,8 @@ export function usePublishing(options: {
     showSuccess,
     successMessage,
     showPublishConfirm,
-    publishConfirmStep,
-    publishConfirmChecked,
-    publishConfirmText,
     publishConfirmRepublish,
+    publishConfirmMode,
     showSyndicationWizard,
     showAltTextReviewer,
     openPublishConfirm,

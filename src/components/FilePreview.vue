@@ -41,6 +41,7 @@ import { useLocalStorage } from '@vueuse/core'
 import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics, DeskToday } from '../types'
 import { useTagSuggestions } from '../composables/useTagSuggestions'
 import { usePublishing, usePostActions } from '../composables/usePublishFlow'
+import type { ReviewMode } from '../utils/publishReview'
 import { useAppConfig, useGitStatus } from '../composables/useVaultData'
 
 const props = defineProps<{ file: MarkdownFile }>()
@@ -318,7 +319,7 @@ const {
   showSuccess,
   successMessage,
   showPublishConfirm,
-  publishConfirmRepublish,
+  publishConfirmMode,
   showSyndicationWizard,
   showAltTextReviewer,
   openPublishConfirm,
@@ -339,8 +340,10 @@ const {
   // is opt-in via Settings → Connections (default off).
   getTitle: () => props.file.title || slug.value || null,
   onPublishSuccess: (url: string) => afterPublish(url),
-  // Webmentions wait for the deploy to be confirmed live (page answers 200).
-  onLive: (url: string) => {
+  // Webmentions wait for the deploy to be confirmed live (page answers 200),
+  // and only if the review sheet's toggle was left on.
+  onLive: (url: string, { webmentions }) => {
+    if (!webmentions) return
     const bridgyFed = appConfig.value?.webmentions_bridgy_fed === true
     autoTriggerOnPublish(bridgyFed, url)
   },
@@ -427,15 +430,19 @@ function onWizardClosed() {
 // ── Draft gate + alt-text prep before publishing ───────────────────────────
 const showDraftPrompt = ref(false)
 const draftPromptRepublish = ref(false)
+const draftPromptMode = ref<ReviewMode>('publish')
 const clearingDraft = ref(false)
 
-function requestPublish(isRepublish = false) {
+// Every way in (toolbar, MODIFIED banner, Unlisted button, ⌘↩, palette,
+// Modified tab) lands here, then on the review sheet.
+function requestPublish(isRepublish = false, mode: ReviewMode = 'publish') {
   if (props.file.draft) {
     draftPromptRepublish.value = isRepublish
+    draftPromptMode.value = mode
     showDraftPrompt.value = true
     return
   }
-  openPublishConfirm(isRepublish)
+  openPublishConfirm(isRepublish, mode)
 }
 
 async function clearDraftAndContinue() {
@@ -444,7 +451,7 @@ async function clearDraftAndContinue() {
     await invoke('remove_draft', { path: props.file.path })
     showDraftPrompt.value = false
     emit('published') // refresh the list so the DRAFT badge goes away
-    openPublishConfirm(draftPromptRepublish.value)
+    openPublishConfirm(draftPromptRepublish.value, draftPromptMode.value)
   } catch (e) {
     toasts.error("Couldn't clear draft", String(e))
   }
@@ -466,7 +473,7 @@ watch(showDraftPrompt, (open) => {
 
 // Dispatch pieces need image_alt with image (website contract). Generate and
 // save it before publishing rather than blocking.
-async function publishWithPrep(isRepublish: boolean) {
+async function publishWithPrep(isRepublish: boolean, opts: { webmentions: boolean }, mode: ReviewMode) {
   if (props.file.content_type === 'dispatch') {
     try {
       const alt = await invoke<string | null>('ensure_image_alt', { path: props.file.path })
@@ -481,7 +488,7 @@ async function publishWithPrep(isRepublish: boolean) {
           label: 'Retry',
           run: () => {
             toasts.dismiss(id)
-            publishWithPrep(isRepublish)
+            publishWithPrep(isRepublish, opts, mode)
           },
         },
         ttl: 0,
@@ -489,7 +496,8 @@ async function publishWithPrep(isRepublish: boolean) {
       return
     }
   }
-  await publish(isRepublish)
+  if (mode === 'unlisted') await publishUnlisted(isRepublish, opts)
+  else await publish(isRepublish, opts)
 }
 
 // Tag suggestions composable
@@ -869,22 +877,6 @@ const slug = computed(() => {
   return props.file.path.includes('/blog/') ? baseName : ''
 })
 
-const targetUrl = computed(() => {
-  const targets = publishTargets.value
-  const target = targets.find((t) => t.id === selectedTargetId.value) || targets.find((t) => t.is_default) || targets[0]
-  const domain = target
-    ? (appConfig.value as any)?.publish_targets
-        ?.find((t: any) => t.id === target.id)
-        ?.domain?.replace(/^https?:\/\//, '') || 'ejfox.com'
-    : 'ejfox.com'
-  // Dispatch pieces live at /dispatch/<slug> (no year folder).
-  if (props.file.content_type === 'dispatch') {
-    return `${domain}/dispatch/${props.file.filename.replace(/\.md$/, '')}`
-  }
-  // slug already includes year (e.g. "2013/the-magazine-..."), so just append.
-  return `${domain}/blog/${slug.value}`
-})
-
 const isLive = computed(() => !!props.file.published_url || !!justPublished.value)
 const liveUrl = computed(() => props.file.published_url || justPublished.value)
 const hasUnpublishedChanges = computed(() => props.file.warnings.includes('Modified since publish'))
@@ -1096,7 +1088,7 @@ async function openPreview() {
       @dismiss-deploy="dismissDeploy(slug)"
       @copy-url="copyUrl"
       @copy-url-password="copyUrlAndPassword"
-      @republish="publish(true)"
+      @republish="requestPublish(true)"
       @cancel-schedule="cancelSchedule"
     />
 
@@ -1369,7 +1361,7 @@ async function openPreview() {
         @convert-to-vue-page="convertToVuePage"
         @unpublish="unpublish"
         @open-publish-confirm="requestPublish"
-        @publish-unlisted="publishUnlisted"
+        @publish-unlisted="requestPublish(false, 'unlisted')"
         @toggle-schedule="showSchedulePicker = !showSchedulePicker"
       />
 
@@ -1436,11 +1428,10 @@ async function openPreview() {
     <PublishConfirmModal
       :show="showPublishConfirm"
       :file="file"
-      :slug="slug"
-      :target-url="targetUrl"
-      :is-republish="publishConfirmRepublish"
+      :target-id="getActiveTargetId() ?? null"
+      :mode="publishConfirmMode"
       @close="closePublishConfirm"
-      @confirm="(isRepublish: boolean) => publishWithPrep(isRepublish)"
+      @confirm="(o) => publishWithPrep(o.isUpdate, { webmentions: o.webmentions }, publishConfirmMode)"
     />
 
     <!-- Content divider — plain tracked-caps label, no decorative glyph.

@@ -378,7 +378,7 @@ fn content_differs(source: &str, published: &str) -> bool {
     normalize_content(source) != normalize_content(published)
 }
 
-fn parse_frontmatter(content: &str) -> (HashMap<String, String>, String) {
+pub(crate) fn parse_frontmatter(content: &str) -> (HashMap<String, String>, String) {
     let mut frontmatter = HashMap::new();
     let mut body = content.to_string();
 
@@ -426,7 +426,7 @@ fn parse_frontmatter(content: &str) -> (HashMap<String, String>, String) {
     (frontmatter, body)
 }
 
-fn extract_h1_title(body: &str) -> Option<String> {
+pub(crate) fn extract_h1_title(body: &str) -> Option<String> {
     // Find first heading (# or ##)
     body.lines()
         .find(|line| {

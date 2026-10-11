@@ -120,11 +120,11 @@ defineEmits<{
         </button>
         <button
           @click="$emit('open-publish-confirm', false)"
-          :disabled="!isSafe || publishing"
+          :disabled="publishing"
           class="btn accent publish-btn"
-          :class="{ disabled: !isSafe, full: !isSafe || isScheduled }"
+          :class="{ unsafe: !isSafe, full: !isSafe || isScheduled }"
         >
-          <span>{{ publishing ? 'Publishing...' : isSafe ? 'Publish' : 'Fix issues to publish' }}</span>
+          <span>{{ publishing ? 'Publishing...' : isSafe ? 'Publish' : 'See what to fix' }}</span>
           <kbd v-if="isSafe && !publishing" class="shortcut-hint">
             <Command :size="10" />
             &crarr;
@@ -257,6 +257,12 @@ defineEmits<{
 
 .publish-btn:hover:not(:disabled) {
   background: var(--accent-strong) !important;
+}
+
+.publish-btn.unsafe {
+  /* Lint issues: still clickable, the review sheet lists them. */
+  background: var(--bg-tertiary) !important;
+  color: var(--text-secondary) !important;
 }
 
 .publish-btn:disabled {
