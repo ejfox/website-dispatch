@@ -3,6 +3,7 @@
 // sheet can't drift from the pipeline. Ghost's confirm step is the model:
 // one sentence that states the consequence, then a button that repeats it.
 
+import { parseDate } from './formatting'
 import type { PublishPreview, WhenField } from '../types'
 
 export type ReviewMode = 'publish' | 'unlisted'
@@ -54,7 +55,8 @@ export function plainUrl(url: string): string {
 /** "Tue, Oct 14, 9:00 AM EDT" in this Mac's zone, or the raw value when the
  *  frontmatter gave no zone. */
 export function formatWhen(w: WhenField): string {
-  if (!w.utc) return `"${w.raw}" (no time zone given, so the server's clock decides)`
+  const when = parseDate(w.utc)
+  if (!when) return `"${w.raw}" (no time zone given, so the server's clock decides)`
   return new Intl.DateTimeFormat(undefined, {
     weekday: 'short',
     month: 'short',
@@ -62,7 +64,7 @@ export function formatWhen(w: WhenField): string {
     hour: 'numeric',
     minute: '2-digit',
     timeZoneName: 'short',
-  }).format(new Date(w.utc))
+  }).format(when)
 }
 
 function minutes(secs: number): number {

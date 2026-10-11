@@ -3,6 +3,7 @@
 // Data comes from the `desk` CLI (Rust runs it off the UI thread). The last
 // good snapshot is cached so the view paints instantly on launch, then
 // refreshes in the background.
+import { parseDate } from '../utils/formatting'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -73,7 +74,7 @@ const slotLabel = computed(() => {
   return `making slot opens ${d.slot.start}`
 })
 function dayLetter(iso: string) {
-  return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: 'narrow' })
+  return parseDate(iso)?.toLocaleDateString(undefined, { weekday: 'narrow' }) ?? ''
 }
 
 // Before 6:45 the desk hasn't been stocked yet.

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { parseEpochSeconds } from '../utils/formatting'
 import { ref, computed, watch } from 'vue'
 import { perfTrace } from '../utils/perfTrace'
 import { useOverflowMenu } from '../composables/useOverflowMenu'
@@ -94,8 +95,9 @@ const filteredFiles = computed(() => {
         const bRecent = b.published_date || b.modified
         return bRecent - aRecent
       case 'created':
-        const aDate = a.date ? new Date(a.date).getTime() / 1000 : a.created
-        const bDate = b.date ? new Date(b.date).getTime() / 1000 : b.created
+        // An unparseable date falls back to created; NaN would scramble the sort.
+        const aDate = parseEpochSeconds(a.date) ?? a.created
+        const bDate = parseEpochSeconds(b.date) ?? b.created
         return bDate - aDate
       case 'title':
         return formatTitle(a).localeCompare(formatTitle(b))

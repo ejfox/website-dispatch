@@ -81,7 +81,7 @@ defineEmits<{
       </span>
       <span class="date-sep">&middot;</span>
       <span class="info-chip">
-        {{ file.date ? formatDate(file.date) : formatDateCompact(file.created) }}
+        {{ formatDate(file.date) || formatDateCompact(file.created) }}
       </span>
     </div>
 
