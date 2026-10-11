@@ -6,10 +6,6 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   FileText,
-  Search,
-  RefreshCw,
-  Settings,
-  Plus,
   Eye,
   Image as LucideImage,
   Activity,
@@ -29,7 +25,12 @@ import {
   PhFileText,
   PhWarningCircle,
   PhNewspaper,
+  PhPlus,
+  PhMagnifyingGlass,
+  PhArrowsClockwise,
+  PhGear,
 } from '@phosphor-icons/vue'
+import UiButton from './components/ui/UiButton.vue'
 import FileList from './components/FileList.vue'
 import DeskView from './components/DeskView.vue'
 import ResizeHandle from './components/ResizeHandle.vue'
@@ -943,10 +944,13 @@ onUnmounted(() => {
               }}.md
             </span>
             <div class="new-post-actions">
-              <button @click="closeNewPost" class="np-btn">Cancel</button>
-              <button @click="createNewPost" class="np-btn accent" :disabled="!newPostTitle.trim() || newPostCreating">
-                {{ newPostCreating ? 'Creating...' : 'Create & Open' }}
-              </button>
+              <UiButton variant="plain" label="Cancel" @click="closeNewPost" />
+              <UiButton
+                variant="primary"
+                :disabled="!newPostTitle.trim() || newPostCreating"
+                :label="newPostCreating ? 'Creating...' : 'Create & Open'"
+                @click="createNewPost"
+              />
             </div>
           </div>
         </div>
@@ -963,18 +967,18 @@ onUnmounted(() => {
         <div v-if="titlebarSubtitle" class="titlebar-subtitle">{{ titlebarSubtitle }}</div>
       </div>
       <div class="titlebar-btns">
-        <button @click="openNewPost" class="titlebar-btn" data-tip="Create a new post (⌘N)" aria-label="New post">
-          <Plus :size="16" />
-        </button>
-        <button @click="openSearch" class="titlebar-btn" data-tip="Find a post or run a command (⌘K)" aria-label="Search posts and commands">
-          <Search :size="16" />
-        </button>
-        <button @click="loadFiles" class="titlebar-btn" :class="{ spinning: loading }" data-tip="Rescan the vault now (⌘R)" aria-label="Refresh">
-          <RefreshCw :size="16" />
-        </button>
-        <button @click="showSettings = true" class="titlebar-btn" data-tip="Open settings (⌘,)" aria-label="Settings">
-          <Settings :size="16" />
-        </button>
+        <UiButton variant="plain" :icon="PhPlus" data-tip="Create a new post (⌘N)" aria-label="New post" @click="openNewPost" />
+        <UiButton variant="plain" :icon="PhMagnifyingGlass" data-tip="Find a post or run a command (⌘K)" aria-label="Search posts and commands" @click="openSearch" />
+        <UiButton
+          variant="plain"
+          :icon="PhArrowsClockwise"
+          class="titlebar-btn"
+          :class="{ spinning: loading }"
+          data-tip="Rescan the vault now (⌘R)"
+          aria-label="Refresh"
+          @click="loadFiles"
+        />
+        <UiButton variant="plain" :icon="PhGear" data-tip="Open settings (⌘,)" aria-label="Settings" @click="showSettings = true" />
       </div>
     </header>
 
@@ -1165,16 +1169,16 @@ onUnmounted(() => {
         </span>
       </div>
       <div class="status-right">
-        <button
-          @click="compactMode = !compactMode"
+        <UiButton
+          variant="plain"
+          size="small"
+          :icon="compactMode ? PhRows : PhSquaresFour"
           class="status-btn"
           :class="{ active: compactMode }"
           :data-tip="compactMode ? 'Show roomy rows (⌘⇧C)' : 'Show compact rows (⌘⇧C)'"
           :aria-label="compactMode ? 'Show roomy rows' : 'Show compact rows'"
-        >
-          <PhRows v-if="compactMode" :size="11" weight="bold" />
-          <PhSquaresFour v-else :size="11" weight="bold" />
-        </button>
+          @click="compactMode = !compactMode"
+        />
         <span class="status-divider"></span>
         <span
           class="status-item"
@@ -1442,41 +1446,9 @@ onUnmounted(() => {
   -webkit-app-region: no-drag;
   display: flex;
   /* Apple's NSToolbar trailing item spacing is ~4px. */
-  gap: 4px;
+  gap: var(--space-1);
   flex-shrink: 0;
   align-items: center;
-}
-
-.titlebar-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  /* NSToolbar-ish sizing — 30px hit target, 16px glyph (was a too-cute
-     26/13). Matches Finder/Mail's titlebar buttons. */
-  width: 30px;
-  height: 30px;
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--transition-fast);
-  -webkit-app-region: no-drag;
-}
-
-.titlebar-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.titlebar-btn:active {
-  /* macOS push-buttons darken on press, not shrink. */
-  background: color-mix(in srgb, var(--bg-tertiary) 80%, black);
-}
-
-.titlebar-btn.active {
-  color: var(--text-primary);
-  background: var(--hover-bg);
 }
 
 .titlebar-btn.spinning :deep(svg) {
@@ -1599,25 +1571,8 @@ onUnmounted(() => {
   opacity: 0.4;
 }
 
-.status-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 0 2px;
-  display: flex;
-  align-items: center;
-  transition: all var(--transition-fast);
-  border-radius: 3px;
-}
-
-.status-btn:hover {
-  background: var(--hover-bg);
-  color: var(--text-secondary);
-}
-
 .status-btn.active {
-  color: var(--text-primary);
+  color: var(--label);
 }
 
 /* Keep tooltips from overflowing left edge */
@@ -1673,41 +1628,8 @@ onUnmounted(() => {
 
 .new-post-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--space-2);
   flex-shrink: 0;
-}
-
-.np-btn {
-  padding: 5px 12px;
-  font-size: 11px;
-  font-weight: 500;
-  border: 1px solid var(--border-light);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.np-btn:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-
-.np-btn.accent {
-  /* Translucent accent fill, so the label stays --label (not white). */
-  background: var(--selection-bg);
-  color: var(--label);
-  border-color: transparent;
-}
-
-.np-btn.accent:hover {
-  background: color-mix(in srgb, var(--selection-bg) 88%, var(--label));
-}
-
-.np-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 
 /* Native macOS window unfocused dimming */

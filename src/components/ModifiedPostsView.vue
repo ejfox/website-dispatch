@@ -10,6 +10,7 @@ import {
   PhArrowFatLineDown,
   PhPencilSimple,
 } from '@phosphor-icons/vue'
+import UiButton from './ui/UiButton.vue'
 import PublishDiffPanel from './PublishDiffPanel.vue'
 import BulkRepublishSheet from './BulkRepublishSheet.vue'
 import type { MarkdownFile } from '../types'
@@ -132,14 +133,14 @@ function formatAge(ts: number): string {
           <option value="biggest-delta">Biggest delta</option>
           <option value="oldest-publish">Oldest publish</option>
         </select>
-        <button
+        <!-- This view's one primary action. -->
+        <UiButton
           v-if="modifiedFiles.length > 0"
-          class="bulk-btn"
+          variant="primary"
           :disabled="bulkPublishing"
+          :label="bulkPublishing ? 'Republishing…' : `Republish all (${modifiedFiles.length})`"
           @click="showBulkConfirm = true"
-        >
-          {{ bulkPublishing ? 'Republishing…' : `Republish all (${modifiedFiles.length})` }}
-        </button>
+        />
       </div>
     </div>
 
@@ -185,29 +186,27 @@ function formatAge(ts: number): string {
             </div>
           </div>
           <div class="row-actions">
-            <button class="row-btn ghost" @click="toggleDiff(file)" data-no-drag>
-              <PhCaretDown
-                :size="10"
-                weight="bold"
-                class="caret"
-                :class="{ open: expandedDiffs.has(file.path) }"
-              />
-              {{ expandedDiffs.has(file.path) ? 'Hide diff' : 'Diff' }}
-            </button>
-            <a
+            <UiButton
+              variant="plain"
+              size="small"
+              :icon="PhCaretDown"
+              class="diff-btn"
+              :class="{ open: expandedDiffs.has(file.path) }"
+              :label="expandedDiffs.has(file.path) ? 'Hide diff' : 'Diff'"
+              data-no-drag
+              @click="toggleDiff(file)"
+            />
+            <UiButton
               v-if="file.published_url"
               :href="file.published_url"
-              target="_blank"
-              class="row-btn ghost icon-only"
+              variant="plain"
+              size="small"
+              :icon="PhArrowSquareUpRight"
+              aria-label="View live"
               data-tip="View live"
               data-no-drag
-            >
-              <PhArrowSquareUpRight :size="11" weight="bold" />
-            </a>
-            <button class="row-btn primary" @click="emit('review-file', file)" data-no-drag>
-              <PhArrowsClockwise :size="11" weight="bold" />
-              Republish
-            </button>
+            />
+            <UiButton size="small" :icon="PhArrowsClockwise" label="Republish" data-no-drag @click="emit('review-file', file)" />
           </div>
         </div>
         <PublishDiffPanel
@@ -274,27 +273,6 @@ function formatAge(ts: number): string {
   border-radius: 4px;
   font-family: inherit;
   cursor: pointer;
-}
-
-.bulk-btn {
-  padding: 4px 10px;
-  font-size: 10px;
-  font-weight: 500;
-  /* Bulk republish is this view's primary action: accent. */
-  background: var(--accent);
-  color: var(--on-accent);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: inherit;
-}
-.bulk-btn:hover:not(:disabled) {
-  background: var(--accent);
-  filter: brightness(1.1);
-}
-.bulk-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .empty-state {
@@ -408,51 +386,14 @@ function formatAge(ts: number): string {
 .row-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
-.row-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 9px;
-  font-size: 10px;
-  font-weight: 500;
-  border-radius: 4px;
-  cursor: pointer;
-  border: none;
-  font-family: inherit;
-  text-decoration: none;
-  transition: background 0.12s;
-}
-.row-btn.icon-only {
-  padding: 4px 6px;
-}
-.row-btn.ghost {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-}
-.row-btn.ghost:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-.row-btn.primary {
-  background: var(--accent);
-  color: var(--accent-contrast);
-}
-.row-btn.primary:hover:not(:disabled) {
-  background: var(--accent-strong);
-}
-.row-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.row-btn .caret {
+.diff-btn :deep(.ui-btn-icon) {
   transition: transform 0.15s;
 }
-.row-btn .caret.open {
+.diff-btn.open :deep(.ui-btn-icon) {
   transform: rotate(180deg);
 }
 </style>

@@ -20,6 +20,7 @@ import {
   PhBroadcast,
   PhClockCounterClockwise,
 } from '@phosphor-icons/vue'
+import UiButton from './ui/UiButton.vue'
 import type { MarkdownFile } from '../types'
 import { useAppConfig } from '../composables/useVaultData'
 import { CHANGED_LABEL, CHANGED_PILL, CHANGED_HINT, NOT_PUBLISHED_LABEL } from '../utils/vocab'
@@ -496,13 +497,13 @@ async function startWindowDrag(e: MouseEvent) {
           <code>{{ vaultPathShort }}</code>. Wrong folder?
         </div>
       </template>
-      <button class="list-empty-btn" @click="emit('open-settings')">Choose vault folder…</button>
+      <UiButton size="small" class="list-empty-btn" label="Choose vault folder…" @click="emit('open-settings')" />
     </div>
 
     <!-- A filter hid everything. -->
     <div v-else-if="filteredFiles.length === 0" class="list-empty">
       <div class="list-empty-sub">{{ emptyFilterText }}</div>
-      <button class="list-empty-btn" @click="filter = 'all'; showWeeknotes = true">Show all</button>
+      <UiButton size="small" class="list-empty-btn" label="Show all" @click="filter = 'all'; showWeeknotes = true" />
     </div>
 
     <div v-else class="list">
@@ -836,8 +837,7 @@ async function startWindowDrag(e: MouseEvent) {
   font-size: 10px;
 }
 .list-empty-btn {
-  margin-top: 4px;
-  font-size: 11px;
+  margin-top: var(--space-1);
 }
 
 .loading {

@@ -9,6 +9,8 @@ import { listen } from '@tauri-apps/api/event'
 import { ask } from '@tauri-apps/plugin-dialog'
 import { useLocalStorage } from '@vueuse/core'
 import type { DeskToday, DeskStory, MarkdownFile } from '../types'
+import { PhArrowsCounterClockwise } from '@phosphor-icons/vue'
+import UiButton from './ui/UiButton.vue'
 
 const props = defineProps<{ files: MarkdownFile[] }>()
 const emit = defineEmits<{ started: [notePath: string] }>()
@@ -253,7 +255,7 @@ onUnmounted(() => {
       <div class="slot" :class="{ open: desk?.slot.open && !desk?.shipped_today, done: desk?.shipped_today }">
         {{ slotLabel }}
       </div>
-      <button class="refresh" :class="{ spinning: loading }" data-tip="Reload today’s desk" aria-label="Reload the desk" @click="load">↻</button>
+      <UiButton variant="plain" size="small" :icon="PhArrowsCounterClockwise" class="refresh" :class="{ spinning: loading }" data-tip="Reload today’s desk" aria-label="Reload the desk" @click="load" />
     </header>
 
     <!-- No desk command: teach the setup instead of showing an error -->
@@ -270,17 +272,17 @@ onUnmounted(() => {
         Or point <code>DISPATCH_DESK_BIN</code> at it. Everything else in Dispatch works without it, and
         Settings › Vault › Open to can start you on another tab.
       </p>
-      <button class="btn" @click="load">Check again</button>
+      <UiButton size="small" label="Check again" @click="load" />
     </div>
 
     <!-- Couldn't read the desk -->
     <div v-else-if="loadError && !desk" class="notice bad">
       <div>{{ loadError }}</div>
-      <button class="btn" @click="load">Try again</button>
+      <UiButton size="small" label="Try again" @click="load" />
     </div>
     <div v-else-if="loadError" class="notice subtle">
       Showing the last desk snapshot — {{ loadError }}
-      <button class="link-btn" @click="load">Retry</button>
+      <UiButton variant="plain" size="small" label="Retry" @click="load" />
     </div>
 
     <div v-if="!desk && loading" class="skeleton">
@@ -302,12 +304,8 @@ onUnmounted(() => {
         {{ livePiece.published_url?.replace(/^https?:\/\//, '') }}
       </div>
       <div class="live-actions">
-        <button class="btn" @click="copyShare('x', 'social')">
-          {{ copied === 'x' ? 'Copied' : 'Copy link for X' }}
-        </button>
-        <button class="btn" @click="copyShare('newsletter', 'email')">
-          {{ copied === 'newsletter' ? 'Copied' : 'Copy link for newsletter' }}
-        </button>
+        <UiButton size="small" :label="copied === 'x' ? 'Copied' : 'Copy link for X'" @click="copyShare('x', 'social')" />
+        <UiButton size="small" :label="copied === 'newsletter' ? 'Copied' : 'Copy link for newsletter'" @click="copyShare('newsletter', 'email')" />
       </div>
     </div>
 
@@ -347,23 +345,24 @@ onUnmounted(() => {
       </div>
 
       <div class="actions">
-        <button class="btn primary big" :disabled="starting" @click="startPiece">
+        <!-- The Desk's one primary action. -->
+        <UiButton variant="primary" :disabled="starting" @click="startPiece">
           {{ starting ? 'Starting…' : 'Start piece' }} <kbd>⏎</kbd>
-        </button>
-        <button class="btn" :disabled="!bench.chart_html" @click="openPath(bench.chart_html)">Sketch <kbd>s</kbd></button>
-        <button
-          class="btn"
+        </UiButton>
+        <UiButton size="small" :disabled="!bench.chart_html" @click="openPath(bench.chart_html)">Sketch <kbd>s</kbd></UiButton>
+        <UiButton
+          size="small"
           :disabled="!bench.can_check || jobRunning('check', bench.id)"
           @click="startJob('check', bench)"
         >
           {{ jobRunning('check', bench.id) ? 'Checking…' : 'Fact-check my version' }} <kbd>x</kbd>
-        </button>
-        <button class="btn" @click="openPath(bench.dir)">Folder <kbd>f</kbd></button>
+        </UiButton>
+        <UiButton size="small" @click="openPath(bench.dir)">Folder <kbd>f</kbd></UiButton>
       </div>
 
       <div v-if="actionError" class="notice bad">
         <div>{{ actionError.message }}</div>
-        <button class="btn" @click="actionError.retry()">Try again</button>
+        <UiButton size="small" label="Try again" @click="actionError.retry()" />
       </div>
 
       <div v-if="jobRunning('check', bench.id)" class="notice busy">
@@ -424,14 +423,13 @@ onUnmounted(() => {
             {{ jobNotes['build:' + s.id].text }}
           </div>
         </div>
-        <button
+        <UiButton
           v-if="s.can_build"
-          class="btn"
+          size="small"
           :disabled="jobRunning('build', s.id)"
+          :label="jobRunning('build', s.id) ? 'Building…' : 'Build'"
           @click="startJob('build', s)"
-        >
-          {{ jobRunning('build', s.id) ? 'Building…' : 'Build' }}
-        </button>
+        />
       </div>
     </section>
   </div>
@@ -568,19 +566,8 @@ onUnmounted(() => {
   position: absolute;
   top: 0;
   right: 0;
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  font-size: 16px;
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 6px;
 }
-.refresh:hover {
-  color: var(--text-primary);
-  background: var(--hover-bg);
-}
-.refresh.spinning {
+.refresh.spinning :deep(svg) {
   animation: spin 0.9s linear infinite;
 }
 @keyframes spin {
@@ -717,43 +704,9 @@ onUnmounted(() => {
 }
 .actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
   align-items: center;
-}
-.btn {
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 7px;
-  border: 1px solid var(--border-light);
-  background: var(--hover-bg);
-  color: var(--text-primary);
-  cursor: pointer;
-}
-.btn:hover:not(:disabled) {
-  background: var(--active-bg);
-}
-.btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-contrast);
-}
-.btn.primary:hover:not(:disabled) {
-  background: var(--accent-strong);
-}
-.btn.big {
-  font-size: 13.5px;
-  font-weight: 650;
-  padding: 8px 16px;
 }
 kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -764,18 +717,6 @@ kbd {
   border: 1px solid var(--kbd-border);
   color: inherit;
   opacity: 0.8;
-}
-.btn.primary kbd {
-  background: color-mix(in srgb, var(--on-accent) 20%, transparent);
-  border-color: color-mix(in srgb, var(--on-accent) 30%, transparent);
-}
-.link-btn {
-  background: none;
-  border: none;
-  color: var(--accent);
-  cursor: pointer;
-  font: inherit;
-  padding: 0 4px;
 }
 
 /* Notices */

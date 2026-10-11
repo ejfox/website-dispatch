@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { PhArrowsClockwise } from '@phosphor-icons/vue'
+import UiButton from '../ui/UiButton.vue'
 interface UsageScanResult {
   usage_map: {
     by_asset: Record<string, unknown[]>
@@ -61,9 +63,7 @@ const unusedCountLabel = () => {
     <div class="sidebar-footer">
       <div v-if="usageData" class="usage-stats">
         <span>{{ usageData.usage_map.total_posts }} posts scanned</span>
-        <button @click="emit('rescan')" :disabled="loadingUsage" class="rescan-btn" data-tip="Rescan posts to see which assets they use" aria-label="Rescan asset usage">
-          {{ loadingUsage ? '...' : '↻' }}
-        </button>
+        <UiButton size="small" variant="plain" :icon="PhArrowsClockwise" :disabled="loadingUsage" aria-label="Rescan asset usage" data-tip="Rescan posts to see which assets they use" @click="emit('rescan')" />
       </div>
     </div>
   </div>
@@ -154,17 +154,5 @@ const unusedCountLabel = () => {
   justify-content: space-between;
   font-size: 9px;
   color: var(--text-tertiary);
-}
-
-.rescan-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.rescan-btn:hover {
-  color: var(--text-primary);
 }
 </style>

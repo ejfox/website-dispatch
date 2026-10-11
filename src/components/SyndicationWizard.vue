@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { PhCheck, PhX, PhClock, PhPaperPlaneTilt, PhArrowRight, PhArrowLeft } from '@phosphor-icons/vue'
 import OgImagePicker from './OgImagePicker.vue'
+import UiButton from './ui/UiButton.vue'
 
 interface NewQueueItem {
   post_slug: string
@@ -313,7 +314,7 @@ function openUrl(url: string) {
         <PhPaperPlaneTilt :size="16" weight="fill" class="header-icon" />
         <h2>Syndicate</h2>
         <span class="step-indicator">{{ step < 6 ? `Step ${step} of 5` : 'Done' }}</span>
-        <button class="close-btn" @click="$emit('close')" data-tip="Close" aria-label="Close"><PhX :size="14" weight="bold" /></button>
+        <UiButton variant="plain" :icon="PhX" aria-label="Close" data-tip="Close" @click="$emit('close')" />
       </div>
 
       <!-- Error -->
@@ -475,43 +476,39 @@ function openUrl(url: string) {
 
       <!-- Footer -->
       <div class="modal-footer">
-        <button v-if="step > 1 && step < 6" class="btn secondary" @click="step--">
-          <PhArrowLeft :size="12" />
-          Back
-        </button>
+        <UiButton v-if="step > 1 && step < 6" :icon="PhArrowLeft" label="Back" @click="step--" />
         <div class="footer-spacer"></div>
-        <button
+        <UiButton
           v-if="step < 5"
-          class="btn primary"
+          variant="primary"
           :disabled="step === 1 && selectedPlatforms.length === 0"
           @click="step++"
         >
           Next
-          <PhArrowRight :size="12" />
-        </button>
+          <PhArrowRight :size="14" weight="bold" aria-hidden="true" />
+        </UiButton>
         <template v-else-if="step === 5">
-          <button
+          <UiButton
             v-if="canPostNow"
-            class="btn secondary"
             :disabled="posting || selectedPlatforms.length === 0"
+            label="Dry run"
             data-tip="Build every payload without sending anything"
             @click="postNow(true)"
-          >
-            Dry run
-          </button>
-          <button class="btn secondary" :disabled="queuing || posting" @click="queueAll">
-            {{ queuing ? 'Queuing...' : `Queue ${selectedPlatforms.length}` }}
-          </button>
-          <button
+          />
+          <UiButton
+            :disabled="queuing || posting"
+            :label="queuing ? 'Queuing…' : `Queue ${selectedPlatforms.length}`"
+            @click="queueAll"
+          />
+          <UiButton
             v-if="canPostNow"
-            class="btn primary"
+            variant="primary"
             :disabled="posting || selectedPlatforms.length === 0"
+            :label="posting ? 'Posting…' : 'Post now'"
             @click="postNow(false)"
-          >
-            {{ posting ? 'Posting...' : 'Post now' }}
-          </button>
+          />
         </template>
-        <button v-else class="btn primary" @click="$emit('close')">Done</button>
+        <UiButton v-else variant="primary" label="Done" @click="$emit('close')" />
       </div>
     </div>
   </div>
@@ -560,19 +557,6 @@ function openUrl(url: string) {
 .step-indicator {
   font-size: 10px;
   color: var(--text-tertiary);
-}
-.close-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: flex;
-}
-.close-btn:hover {
-  color: var(--text-primary);
-  background: var(--fill);
 }
 .error-banner {
   padding: 8px 16px;
@@ -905,42 +889,13 @@ function openUrl(url: string) {
 
 /* Footer */
 .modal-footer {
-  padding: 12px 16px;
+  padding: var(--space-3) var(--gutter);
   border-top: 1px solid var(--separator);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .footer-spacer {
   flex: 1;
-}
-.btn {
-  padding: 6px 14px;
-  font-size: 11px;
-  font-weight: 500;
-  border-radius: 6px;
-  cursor: pointer;
-  border: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.btn.secondary {
-  background: var(--fill);
-  color: var(--text-secondary);
-}
-.btn.secondary:hover {
-  background: var(--hover-bg);
-}
-.btn.primary {
-  background: var(--accent);
-  color: var(--on-accent);
-}
-.btn.primary:hover {
-  background: var(--accent-strong);
-}
-.btn.primary:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 </style>

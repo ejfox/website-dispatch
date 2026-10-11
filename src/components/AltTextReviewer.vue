@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import UiButton from './ui/UiButton.vue'
 import { PhCheck, PhX, PhPencilSimple, PhSparkle, PhCloudArrowUp, PhFilmSlate } from '@phosphor-icons/vue'
 
 interface AltTextSuggestion {
@@ -156,9 +157,7 @@ generate()
         <PhSparkle :size="16" weight="fill" class="header-icon" />
         <h2>Alt Text Review</h2>
         <span class="header-count">{{ props.count }} images</span>
-        <button class="close-btn" @click="$emit('close')" data-tip="Close without applying" aria-label="Close">
-          <PhX :size="14" weight="bold" />
-        </button>
+        <UiButton variant="plain" :icon="PhX" aria-label="Close" data-tip="Close without applying" @click="$emit('close')" />
       </div>
 
       <!-- Error -->
@@ -188,9 +187,7 @@ generate()
             {{ reviewCount }} needs review
           </span>
           <span v-if="skippedCount > 0" class="summary-chip skipped">{{ skippedCount }} skipped</span>
-          <button v-if="acceptedCount < suggestions.length" class="accept-all-btn" @click="acceptAll">
-            Accept all
-          </button>
+          <UiButton v-if="acceptedCount < suggestions.length" size="small" class="accept-all-btn" label="Accept all" @click="acceptAll" />
         </div>
 
         <!-- Review list -->
@@ -241,18 +238,22 @@ generate()
 
             <!-- Actions -->
             <div class="review-actions">
-              <button
+              <UiButton
+                size="small"
+                :icon="PhCheck"
                 class="action-btn accept"
                 :class="{ active: accepted.has(item.originalIdx) }"
-                @click="toggleAccept(item.originalIdx)"
                 :data-tip="accepted.has(item.originalIdx) ? 'Undo accept' : 'Accept this description'"
                 :aria-label="accepted.has(item.originalIdx) ? 'Undo accept' : 'Accept this description'"
-              >
-                <PhCheck :size="14" weight="bold" />
-              </button>
-              <button class="action-btn edit" @click="startEdit(item.originalIdx)" data-tip="Edit this description" aria-label="Edit this description">
-                <PhPencilSimple :size="12" weight="bold" />
-              </button>
+                @click="toggleAccept(item.originalIdx)"
+              />
+              <UiButton
+                size="small"
+                :icon="PhPencilSimple"
+                aria-label="Edit this description"
+                data-tip="Edit this description"
+                @click="startEdit(item.originalIdx)"
+              />
             </div>
           </div>
         </div>
@@ -284,10 +285,7 @@ generate()
         </ul>
 
         <div class="empty-actions" v-if="(localImageCount ?? 0) > 0">
-          <button class="btn primary" @click="emit('open-local-fixer')">
-            <PhCloudArrowUp :size="14" weight="bold" />
-            Upload {{ localImageCount }} to Cloudinary
-          </button>
+          <UiButton :icon="PhCloudArrowUp" :label="`Upload ${localImageCount} to Cloudinary`" @click="emit('open-local-fixer')" />
           <span class="empty-hint">Then come back and run Describe again.</span>
         </div>
       </div>
@@ -298,15 +296,14 @@ generate()
           {{ acceptedCount }}/{{ suggestions.length }} accepted
         </div>
         <div class="footer-actions">
-          <button class="btn secondary" @click="$emit('close')">Cancel</button>
-          <button
+          <UiButton variant="plain" label="Cancel" @click="$emit('close')" />
+          <UiButton
             v-if="suggestions.length > 0"
-            class="btn primary"
+            variant="primary"
             :disabled="acceptedCount === 0 || applying"
+            :label="applying ? 'Applying…' : `Apply ${acceptedCount} to file`"
             @click="applyAccepted"
-          >
-            {{ applying ? 'Applying...' : `Apply ${acceptedCount} to file` }}
-          </button>
+          />
         </div>
       </div>
     </div>
@@ -365,21 +362,6 @@ generate()
   font-size: 11px;
   color: var(--text-tertiary);
 }
-
-.close-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: flex;
-}
-.close-btn:hover {
-  color: var(--text-primary);
-  background: var(--hover-bg);
-}
-
 /* Error */
 .error-banner {
   padding: 8px 16px;
@@ -480,17 +462,6 @@ generate()
 
 .accept-all-btn {
   margin-left: auto;
-  font-size: 10px;
-  padding: 2px 10px;
-  background: none;
-  border: 1px solid var(--border-light);
-  color: var(--text-secondary);
-  border-radius: 10px;
-  cursor: pointer;
-}
-.accept-all-btn:hover {
-  border-color: var(--label-3);
-  color: var(--text-primary);
 }
 
 /* Review list */
@@ -630,34 +601,11 @@ generate()
   align-self: center;
 }
 
-.action-btn {
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--border-light);
-  border-radius: 6px;
-  background: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-}
-
-.action-btn:hover {
-  border-color: var(--label-3);
-  color: var(--text-secondary);
-}
-
+/* An accepted description keeps its check lit in the live green. */
 .action-btn.accept.active {
   background: var(--tint-live);
   border-color: color-mix(in srgb, var(--status-live) 40%, transparent);
   color: var(--success);
-}
-
-.action-btn.edit:hover {
-  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
-  color: var(--accent);
 }
 
 /* Empty state */
@@ -720,11 +668,6 @@ generate()
   gap: 6px;
   margin-top: 4px;
 }
-.empty-actions .btn.primary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
 .empty-hint {
   font-size: 10px;
   color: var(--text-tertiary);
@@ -732,7 +675,7 @@ generate()
 
 /* Footer */
 .modal-footer {
-  padding: 12px 16px;
+  padding: var(--space-3) var(--gutter);
   border-top: 1px solid var(--separator);
   display: flex;
   align-items: center;
@@ -746,46 +689,7 @@ generate()
 
 .footer-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
-/* Shared button system — primary uses the macOS accent, secondary is the
-   subtle Cancel/Close style. Matches the one in LocalMediaFixer so the two
-   modals feel like the same product surface. */
-.btn {
-  padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 6px;
-  cursor: pointer;
-  border: none;
-  transition: background 0.15s;
-  font-family: inherit;
-}
-.btn.secondary {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-}
-.btn.secondary:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-.btn.primary {
-  background: var(--accent);
-  color: var(--accent-contrast);
-}
-.btn.primary:hover {
-  background: var(--accent-strong);
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.btn:disabled:hover {
-  background: var(--accent);
-}
-.btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 </style>

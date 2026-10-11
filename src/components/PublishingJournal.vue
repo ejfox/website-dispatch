@@ -43,6 +43,7 @@ async function showHeatmapCellMenu(cell: { date: string; count: number }, e: Mou
 }
 
 import { PhBroadcast, PhArrowCounterClockwise, PhTrash } from '@phosphor-icons/vue'
+import UiButton from './ui/UiButton.vue'
 
 interface JournalEntry {
   id: number
@@ -208,7 +209,7 @@ onMounted(async () => {
       <div class="section-label">Recent activity</div>
       <div v-if="entries.length === 0" class="empty-log">
         <p>No publishing activity yet.</p>
-        <button v-if="!backfilling" @click="doBackfill" class="backfill-btn">Import from git history</button>
+        <UiButton v-if="!backfilling" size="small" class="backfill-btn" label="Import from git history" @click="doBackfill" />
         <span v-else class="backfill-loading">Importing...</span>
       </div>
       <div v-else class="activity-log">
@@ -381,18 +382,7 @@ onMounted(async () => {
 }
 
 .backfill-btn {
-  margin-top: 8px;
-  padding: 5px 12px;
-  font-size: 10px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.backfill-btn:hover {
-  background: var(--hover-bg);
+  margin-top: var(--space-2);
 }
 
 .backfill-loading {

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { PhX } from '@phosphor-icons/vue'
+import UiButton from '../ui/UiButton.vue'
 interface CloudinaryAsset {
   public_id: string
   secure_url: string
@@ -37,7 +39,7 @@ const emit = defineEmits<{
     <div v-if="show && asset" class="detail-panel">
       <div class="detail-header">
         <h3>{{ asset.public_id.split('/').pop() }}</h3>
-        <button @click="emit('close')" class="close-btn" data-tip="Close details" aria-label="Close details">✕</button>
+        <UiButton variant="plain" :icon="PhX" aria-label="Close details" data-tip="Close details" @click="emit('close')" />
       </div>
 
       <div class="detail-preview">
@@ -68,8 +70,8 @@ const emit = defineEmits<{
       </div>
 
       <div class="detail-actions">
-        <button @click="emit('copyMarkdown', asset)" class="action-btn primary">Copy Markdown</button>
-        <button @click="emit('copyUrl', asset)" class="action-btn">Copy URL</button>
+        <UiButton size="small" label="Copy Markdown" @click="emit('copyMarkdown', asset)" />
+        <UiButton size="small" label="Copy URL" @click="emit('copyUrl', asset)" />
       </div>
 
       <div class="detail-usage">
@@ -130,20 +132,6 @@ const emit = defineEmits<{
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-.close-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  font-size: 14px;
-  padding: 4px 8px;
-}
-
-.close-btn:hover {
-  color: var(--text-primary);
-}
-
 .detail-preview {
   background: var(--under-page);
   padding: 12px;
@@ -175,39 +163,15 @@ const emit = defineEmits<{
 }
 
 .detail-actions {
-  padding: 12px;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-1);
   border-bottom: 1px solid var(--separator);
 }
-
-.action-btn {
+.detail-actions :deep(.ui-btn) {
   width: 100%;
-  padding: 8px;
-  font-size: 11px;
-  background: var(--fill);
-  border: none;
-  border-radius: 5px;
-  color: var(--text-primary);
-  cursor: pointer;
 }
-
-.action-btn:hover {
-  background: var(--fill-2);
-}
-
-.action-btn.primary {
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 500;
-}
-
-.action-btn.primary:hover {
-  background: var(--accent);
-  filter: brightness(1.1);
-}
-
 .detail-usage {
   flex: 1;
   overflow-y: auto;

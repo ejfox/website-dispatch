@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
+import UiButton from '../ui/UiButton.vue'
 
 interface CloudinaryAsset {
   public_id: string
@@ -101,9 +102,7 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
   </div>
 
   <div v-if="nextCursor && !showUnusedOnly" class="load-more">
-    <button @click="emit('loadMore')" :disabled="loading">
-      {{ loading ? '...' : 'Load More' }}
-    </button>
+    <UiButton size="small" :disabled="loading" :label="loading ? '…' : 'Load More'" @click="emit('loadMore')" />
   </div>
 
   <div class="modal-footer">
@@ -228,24 +227,9 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
 }
 
 .load-more {
-  padding: 8px;
+  padding: var(--space-2);
   text-align: center;
 }
-
-.load-more button {
-  padding: 6px 20px;
-  font-size: 11px;
-  background: var(--fill-2);
-  border: 1px solid var(--border-light);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.load-more button:hover {
-  background: var(--fill-2);
-}
-
 .modal-footer {
   padding: 8px 12px;
   border-top: 1px solid var(--separator);

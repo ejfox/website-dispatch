@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { PhX } from '@phosphor-icons/vue'
+import UiButton from './ui/UiButton.vue'
 
 interface LocalMediaRef {
   original_text: string
@@ -152,13 +154,7 @@ function getStatusClass(result: MediaFixResult): string {
           <template v-else>Upload results</template>
         </h2>
         <span v-if="!justApplied" class="count">{{ localMedia.length }} files</span>
-        <button class="close-btn" @click="$emit('close')" data-tip="Close" aria-label="Close">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-            <path
-              d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"
-            />
-          </svg>
-        </button>
+        <UiButton variant="plain" :icon="PhX" class="close-btn" aria-label="Close" data-tip="Close" @click="$emit('close')" />
       </div>
 
       <div v-if="!uploading && !justApplied && results.length === 0" class="intro-blurb">
@@ -232,8 +228,8 @@ function getStatusClass(result: MediaFixResult): string {
         <code>{{ filePath }}</code>
         <p>{{ fixesToApply.length }} reference{{ fixesToApply.length === 1 ? '' : 's' }} will be replaced with Cloudinary URLs.</p>
         <div class="confirm-actions">
-          <button class="btn secondary" :disabled="applying" @click="showConfirmApply = false">Cancel</button>
-          <button class="btn primary" :disabled="applying" @click="applyFixes">{{ applying ? 'Applying…' : 'Apply changes' }}</button>
+          <UiButton variant="plain" :disabled="applying" label="Cancel" @click="showConfirmApply = false" />
+          <UiButton variant="primary" :disabled="applying" :label="applying ? 'Applying…' : 'Apply changes'" @click="applyFixes" />
         </div>
       </div>
 
@@ -246,25 +242,24 @@ function getStatusClass(result: MediaFixResult): string {
 
       <div class="modal-footer">
         <template v-if="justApplied">
-          <button class="btn secondary" @click="$emit('close')">Close</button>
-          <button class="btn primary" @click="$emit('open-alt-text')">Describe images →</button>
+          <UiButton variant="plain" label="Close" @click="$emit('close')" />
+          <UiButton variant="primary" label="Describe images →" @click="$emit('open-alt-text')" />
         </template>
         <template v-else-if="results.length === 0">
-          <button class="btn secondary" @click="$emit('close')">Cancel</button>
-          <button
-            class="btn primary"
-            @click="uploadAll"
+          <UiButton variant="plain" label="Cancel" @click="$emit('close')" />
+          <UiButton
+            variant="primary"
             :disabled="uploading || localMedia.every((m) => !m.resolved_path)"
-          >
-            {{ uploading ? 'Uploading…' : `Upload ${localMedia.filter((m) => m.resolved_path).length} to Cloudinary` }}
-          </button>
+            :label="uploading ? 'Uploading…' : `Upload ${localMedia.filter((m) => m.resolved_path).length} to Cloudinary`"
+            @click="uploadAll"
+          />
         </template>
         <template v-else-if="successCount > 0">
-          <button class="btn secondary" @click="copyFixedContent">Copy to clipboard</button>
-          <button class="btn primary" @click="showConfirmApply = true">Apply to source file</button>
+          <UiButton label="Copy to clipboard" @click="copyFixedContent" />
+          <UiButton variant="primary" label="Apply to source file" @click="showConfirmApply = true" />
         </template>
         <template v-else>
-          <button class="btn secondary" @click="$emit('close')">Close</button>
+          <UiButton variant="plain" label="Close" @click="$emit('close')" />
         </template>
       </div>
     </div>
@@ -332,17 +327,6 @@ function getStatusClass(result: MediaFixResult): string {
 
 .close-btn {
   margin-left: auto;
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-}
-
-.close-btn:hover {
-  background: var(--fill-2);
-  color: var(--text-primary);
 }
 
 .error-banner {
@@ -580,49 +564,11 @@ function getStatusClass(result: MediaFixResult): string {
 }
 
 .modal-footer {
-  padding: 12px 16px;
+  padding: var(--space-3) var(--gutter);
   border-top: 1px solid var(--border);
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   justify-content: flex-end;
 }
 
-/* Shared button system — primary uses the macOS accent; secondary is the
-   subtle "Cancel" / "Close" style. Applied to all confirm + footer buttons. */
-.btn {
-  padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 6px;
-  cursor: pointer;
-  border: none;
-  transition: background 0.15s;
-  font-family: inherit;
-}
-.btn.secondary {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-}
-.btn.secondary:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-.btn.primary {
-  background: var(--accent);
-  color: var(--accent-contrast);
-}
-.btn.primary:hover {
-  background: var(--accent-strong);
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.btn:disabled:hover {
-  background: var(--accent);
-}
-.btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 </style>

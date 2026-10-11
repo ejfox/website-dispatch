@@ -6,6 +6,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { MarkdownFile, PublishPreview } from '../types'
 import { listJoin, networkName, plainUrl } from '../utils/publishReview'
+import UiButton from './ui/UiButton.vue'
 
 const props = defineProps<{ show: boolean; files: MarkdownFile[] }>()
 const emit = defineEmits<{ close: []; confirm: [paths: string[]] }>()
@@ -153,14 +154,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKey, true))
         </div>
 
         <div class="pub-modal-footer">
-          <button class="pub-btn-cancel" @click="$emit('close')">
+          <UiButton variant="plain" @click="$emit('close')">
             {{ ready.length ? 'Cancel' : 'Close' }}
             <kbd>esc</kbd>
-          </button>
-          <button v-if="!loading && ready.length" class="pub-btn-go" :disabled="submitting" @click="submit">
+          </UiButton>
+          <UiButton v-if="!loading && ready.length" variant="primary" :disabled="submitting" @click="submit">
             Update {{ ready.length }} post{{ ready.length === 1 ? '' : 's' }}
             <kbd>⌘↩</kbd>
-          </button>
+          </UiButton>
         </div>
       </div>
     </div>
@@ -237,69 +238,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKey, true))
 }
 
 .pub-modal-footer {
-  padding: 12px 20px;
+  padding: var(--space-3) 20px;
   border-top: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-
-.pub-btn-cancel {
-  padding: 8px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  background: transparent;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border-radius: 8px;
-}
-
-.pub-btn-cancel:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-}
-
-kbd {
-  font-size: 9px;
-  padding: 1px 4px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font-family: 'SF Mono', monospace;
-  color: var(--text-tertiary);
-}
-
-.pub-btn-go {
-  padding: 8px 18px;
-  font-size: 12px;
-  font-weight: 600;
-  background: var(--success);
-  color: #000;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.pub-btn-go kbd {
-  background: rgba(0, 0, 0, 0.12);
-  border-color: rgba(0, 0, 0, 0.18);
-  color: rgba(0, 0, 0, 0.7);
-}
-
-.pub-btn-go:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--success) 88%, white);
-}
-
-.pub-btn-go:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
 }
 
 .pub-modal-enter-active,

@@ -5,6 +5,8 @@ import MediaLibrarySidebar from './MediaLibrarySidebar.vue'
 import MediaLibraryGrid from './MediaLibraryGrid.vue'
 import MediaLibraryDetail from './MediaLibraryDetail.vue'
 import ResizeHandle from '../ResizeHandle.vue'
+import UiButton from '../ui/UiButton.vue'
+import { PhX } from '@phosphor-icons/vue'
 import { useResizable } from '../../composables/useUiState'
 
 // Resizable splits for the three panes. Widths flow to children via CSS vars
@@ -388,7 +390,7 @@ onMounted(() => {
             <button :class="{ active: resourceType === 'image' }" @click="resourceType = 'image'">Images</button>
             <button :class="{ active: resourceType === 'video' }" @click="resourceType = 'video'">Videos</button>
           </div>
-          <button v-if="!inline" class="close-btn" @click="$emit('close')" data-tip="Close the media library" aria-label="Close">✕</button>
+          <UiButton v-if="!inline" variant="plain" :icon="PhX" aria-label="Close" data-tip="Close the media library" @click="$emit('close')" />
         </div>
 
         <div class="search-bar">
@@ -550,20 +552,6 @@ onMounted(() => {
   background: var(--fill-2);
   color: var(--text-primary);
 }
-
-.close-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  font-size: 14px;
-  padding: 4px 8px;
-}
-
-.close-btn:hover {
-  color: var(--text-primary);
-}
-
 .search-bar {
   padding: 8px 12px;
   border-bottom: 1px solid var(--separator);

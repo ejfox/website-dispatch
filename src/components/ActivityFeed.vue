@@ -9,6 +9,7 @@ import {
   PhBroadcast,
   PhArrowsCounterClockwise,
 } from '@phosphor-icons/vue'
+import UiButton from './ui/UiButton.vue'
 import type { MarkdownFile } from '../types'
 
 /**
@@ -235,9 +236,7 @@ function handleClick(e: ActivityEvent) {
   <div class="activity-feed">
     <div class="activity-header">
       <h2>Activity</h2>
-      <button class="refresh-btn" :class="{ spinning: loading }" @click="loadActivity" data-tip="Reload the activity feed" aria-label="Reload activity">
-        <PhArrowsCounterClockwise :size="12" weight="bold" />
-      </button>
+      <UiButton variant="plain" size="small" :icon="PhArrowsCounterClockwise" class="refresh-btn" :class="{ spinning: loading }" data-tip="Reload the activity feed" aria-label="Reload activity" @click="loadActivity" />
     </div>
 
     <div class="activity-filters">
@@ -310,20 +309,7 @@ function handleClick(e: ActivityEvent) {
   flex: 1;
 }
 
-.refresh-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: inline-flex;
-}
-.refresh-btn:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-.refresh-btn.spinning svg {
+.refresh-btn.spinning :deep(svg) {
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin {

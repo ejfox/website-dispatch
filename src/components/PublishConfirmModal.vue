@@ -9,6 +9,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { MarkdownFile, PublishPreview } from '../types'
 import { composeReview, type ReviewMode } from '../utils/publishReview'
+import UiButton from './ui/UiButton.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -30,7 +31,7 @@ const loadError = ref<string | null>(null)
 const preview = ref<PublishPreview | null>(null)
 const sendWebmentions = ref(true)
 const submitting = ref(false)
-const primaryBtn = ref<HTMLButtonElement | null>(null)
+const primaryBtn = ref<InstanceType<typeof UiButton> | null>(null)
 
 const review = computed(() =>
   preview.value
@@ -174,20 +175,20 @@ onUnmounted(() => {
         </div>
 
         <div class="pub-modal-footer">
-          <button class="pub-btn-cancel" @click="$emit('close')">
+          <UiButton variant="plain" @click="$emit('close')">
             {{ review?.blocker || loadError ? 'Close' : 'Cancel' }}
             <kbd>esc</kbd>
-          </button>
-          <button
+          </UiButton>
+          <UiButton
             v-if="review && !review.blocker"
             ref="primaryBtn"
-            class="pub-btn-go"
+            variant="primary"
             :disabled="!canSubmit"
             @click="submit"
           >
             {{ review.primaryLabel }}
             <kbd>⌘↩</kbd>
-          </button>
+          </UiButton>
         </div>
       </div>
     </div>
@@ -318,75 +319,11 @@ onUnmounted(() => {
 
 /* Footer */
 .pub-modal-footer {
-  padding: 12px 20px;
+  padding: var(--space-3) 20px;
   border-top: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-
-.pub-btn-cancel {
-  padding: 8px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  background: transparent;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border-radius: 8px;
-  transition: all 0.15s ease;
-}
-
-.pub-btn-cancel:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-}
-
-kbd {
-  font-size: 9px;
-  padding: 1px 4px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font-family: 'SF Mono', monospace;
-  color: var(--text-tertiary);
-}
-
-.pub-btn-go {
-  padding: 8px 18px;
-  font-size: 12px;
-  font-weight: 600;
-  background: var(--accent);
-  color: var(--on-accent);
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transition: background 0.2s ease-out;
-}
-
-.pub-btn-go kbd {
-  background: color-mix(in srgb, var(--on-accent) 16%, transparent);
-  border-color: color-mix(in srgb, var(--on-accent) 24%, transparent);
-  color: var(--on-accent);
-}
-
-.pub-btn-go:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 88%, white);
-}
-
-.pub-btn-go:active:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 80%, black);
-}
-
-.pub-btn-go:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
 }
 
 /* Sheet-style transition: scrim fades, the sheet slides down from above the

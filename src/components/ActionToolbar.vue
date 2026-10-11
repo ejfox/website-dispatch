@@ -11,7 +11,6 @@
  * ([Publish later…] [Unlisted…]) and the primary is Publish… / See what to fix….
  * Row 2 wraps at narrow widths; the primary keeps the right edge.
  */
-import { Command } from 'lucide-vue-next'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { LogicalPosition } from '@tauri-apps/api/dpi'
 import {
@@ -177,7 +176,7 @@ async function showMoreMenu(e: MouseEvent) {
           @click="emit('open-publish-confirm', false)"
         >
           {{ publishing ? 'Publishing…' : isSafe ? 'Publish…' : 'See what to fix…' }}
-          <kbd v-if="isSafe && !publishing"><Command :size="10" />&crarr;</kbd>
+          <kbd v-if="isSafe && !publishing">⌘&crarr;</kbd>
         </UiButton>
       </template>
     </div>

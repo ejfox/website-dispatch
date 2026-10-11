@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { PhBroadcast, PhCheck, PhWarningCircle } from '@phosphor-icons/vue'
 import type { WebmentionReport } from '../types'
+import UiButton from './ui/UiButton.vue'
 
 /**
  * Compact status chip + click-to-expand details for the webmentions sent
@@ -55,15 +56,15 @@ const expanded = ref(false)
       </span>
     </button>
 
-    <button
+    <UiButton
       v-if="report && (report.errors > 0 || report.sent === 0)"
+      size="small"
       class="wm-resend"
-      @click="$emit('resend')"
       :disabled="sending"
+      label="Resend"
       data-tip="Retry sending webmentions"
-    >
-      Resend
-    </button>
+      @click="$emit('resend')"
+    />
 
     <!-- Expandable detail row: shows where each notification went -->
     <div v-if="expanded && report" class="wm-detail">
@@ -144,22 +145,6 @@ const expanded = ref(false)
 
 .wm-resend {
   margin-left: auto;
-  padding: 2px 8px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  font-size: 10px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: inherit;
-}
-.wm-resend:hover:not(:disabled) {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-.wm-resend:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* Expanded detail */

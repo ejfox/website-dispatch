@@ -16,7 +16,7 @@
  * Labels never wrap: they truncate with an ellipsis and get a title tooltip
  * (unless a `data-tip` HUD tooltip is already on the element).
  */
-import { computed, useAttrs, useSlots, watchEffect, type Component } from 'vue'
+import { computed, ref, useAttrs, useSlots, watchEffect, type Component } from 'vue'
 import { PhCaretDown } from '@phosphor-icons/vue'
 
 defineOptions({ inheritAttrs: false })
@@ -61,6 +61,9 @@ if (import.meta.env.DEV) {
   })
 }
 
+const root = ref<HTMLElement | null>(null)
+defineExpose({ focus: () => root.value?.focus(), el: root })
+
 function onClick(e: MouseEvent) {
   if (props.disabled) {
     e.preventDefault()
@@ -73,6 +76,7 @@ function onClick(e: MouseEvent) {
 <template>
   <component
     :is="href ? 'a' : 'button'"
+    ref="root"
     v-bind="attrs"
     class="ui-btn"
     :class="[
