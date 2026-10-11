@@ -1,16 +1,19 @@
 <script setup lang="ts">
-import { CHANGED_LABEL, CHANGED_HINT } from '../utils/vocab'
-import { ref, watch } from 'vue'
-import {
-  PhLockSimple,
-  PhEye,
-  PhCheckCircle,
-  PhClock,
-  PhCaretDown,
-  PhWarningCircle,
-} from '@phosphor-icons/vue'
+/**
+ * The inspector's Status section: a state dot, one word, and (when live) the
+ * URL on one truncated line with a copy button. No tinted wash, no colored
+ * bar — the dot carries the color, the same tokens the file list uses.
+ *
+ *   ● Live · Changed since live · Deploying… 1m20s · Not live (failed, with
+ *   "View run") · Scheduled for … · Not published
+ *
+ * Diff toggling is owned by the parent (`diffOpen` + `toggle-diff`) because
+ * the diff itself renders above the post, where there's room for it.
+ */
+import { computed } from 'vue'
+import { CHANGED_LABEL, CHANGED_HINT, NOT_PUBLISHED_LABEL } from '../utils/vocab'
+import { PhCopy, PhLockSimple } from '@phosphor-icons/vue'
 import { formatScheduledTime } from '../utils/formatting'
-import PublishDiffPanel from './PublishDiffPanel.vue'
 import UiButton from './ui/UiButton.vue'
 import type { DeployState } from '../composables/usePublishFlow'
 
@@ -26,10 +29,12 @@ const props = defineProps<{
   publishAt: string | null
   visibilityLabel: string | null
   publishing: boolean
-  /** Path to the markdown file — needed to fetch the diff. */
+  /** Path to the markdown file (identifies the post for the diff). */
   filePath: string
   /** Post-push deploy tracking for this post (null when none in flight). */
   deploy?: DeployState | null
+  /** Whether the parent is showing the since-last-publish diff. */
+  diffOpen?: boolean
 }>()
 
 defineEmits<{
@@ -38,251 +43,172 @@ defineEmits<{
   republish: []
   'cancel-schedule': []
   'dismiss-deploy': []
+  'toggle-diff': []
 }>()
 
 function fmtElapsed(secs: number) {
   return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, '0')}s`
 }
 
-const diffOpen = ref(false)
+type Dot = 'live' | 'attention' | 'broken' | 'scheduled' | 'draft' | 'deploying'
 
-// Reset the panel state when the user switches to a different file so the
-// next "modified" file doesn't open with stale diff state.
-watch(
-  () => props.filePath,
-  () => {
-    diffOpen.value = false
-  },
-)
+const state = computed<{ dot: Dot; word: string; hint?: string }>(() => {
+  const d = props.deploy
+  if (d?.phase === 'deploying') {
+    const elapsed = d.elapsedSecs ? ` ${fmtElapsed(d.elapsedSecs)}` : ''
+    return { dot: 'deploying', word: `Deploying…${elapsed}` }
+  }
+  if (d?.phase === 'failed') return { dot: 'broken', word: 'Not live' }
+  if (props.isLive && props.hasUnpublishedChanges) return { dot: 'attention', word: CHANGED_LABEL, hint: CHANGED_HINT }
+  if (props.isLive) return { dot: 'live', word: 'Live' }
+  if (props.isScheduled) return { dot: 'scheduled', word: `Scheduled for ${formatScheduledTime(props.publishAt)}` }
+  return { dot: 'draft', word: NOT_PUBLISHED_LABEL }
+})
+
+// The URL reads better without its scheme; the full thing is in the title.
+const displayUrl = computed(() => (props.liveUrl || '').replace(/^https?:\/\//, ''))
 </script>
 
 <template>
-  <!-- Pushed, not yet serving: quiet and persistent until the site confirms. -->
-  <div v-if="deploy?.phase === 'deploying'" class="banner deploying">
-    <span class="banner-text">
-      <span class="status-dot" data-status="deploying" aria-hidden="true"></span>
-      DEPLOYING…
-    </span>
-    <span class="deploy-msg">
-      pushed {{ deploy.sha.slice(0, 7) }}
-      <template v-if="deploy.elapsedSecs">· {{ fmtElapsed(deploy.elapsedSecs) }}</template>
-    </span>
-    <a :href="deploy.runUrl" target="_blank">Actions</a>
-  </div>
-  <div v-else-if="deploy?.phase === 'failed'" class="banner deploy-failed">
-    <span class="banner-text">
-      <PhWarningCircle :size="13" weight="bold" />
-      NOT LIVE
-    </span>
-    <span class="deploy-msg">{{ deploy.message }}</span>
-    <a :href="deploy.runUrl" target="_blank">View run</a>
-    <UiButton size="small" label="Dismiss" @click="$emit('dismiss-deploy')" />
-  </div>
-  <div v-else-if="isLive && hasUnpublishedChanges">
-    <div class="banner modified">
-      <span class="banner-text" :data-tip="CHANGED_HINT">{{ CHANGED_LABEL.toUpperCase() }}</span>
-      <span v-if="visibilityLabel" class="visibility-badge">{{ visibilityLabel }}</span>
-      <span class="modified-msg">{{ CHANGED_HINT }}</span>
+  <div class="status">
+    <div class="status-line">
+      <span class="status-dot" :data-status="state.dot" aria-hidden="true"></span>
+      <span class="status-word" :class="{ wraps: state.dot === 'scheduled' }" :title="state.hint">
+        {{ state.word }}
+      </span>
+      <a v-if="deploy?.phase === 'failed'" :href="deploy.runUrl" target="_blank" rel="noopener" class="status-link">
+        View run
+      </a>
+      <UiButton
+        v-if="deploy?.phase === 'failed'"
+        size="small"
+        variant="plain"
+        label="Dismiss"
+        @click="$emit('dismiss-deploy')"
+      />
+    </div>
+
+    <!-- Pushed, not yet serving: which commit, and where to watch it. -->
+    <div v-if="deploy?.phase === 'deploying'" class="insp-note status-note">
+      pushed {{ deploy.sha.slice(0, 7) }} ·
+      <a :href="deploy.runUrl" target="_blank" rel="noopener">Actions</a>
+    </div>
+    <div v-else-if="deploy?.phase === 'failed'" class="insp-note status-note">{{ deploy.message }}</div>
+
+    <!-- Scheduled: the time is on the status line; this undoes it. -->
+    <div v-if="isScheduled && !isLive" class="status-line">
       <UiButton
         size="small"
         variant="plain"
-        :icon="PhCaretDown"
-        class="see-changes"
-        :class="{ open: diffOpen }"
-        :label="diffOpen ? 'Hide changes' : 'See changes'"
-        :data-tip="diffOpen ? 'Hide diff' : 'Show what changed since last publish'"
-        @click="diffOpen = !diffOpen"
+        class="status-plain"
+        label="Cancel"
+        title="Don’t publish it later"
+        @click="$emit('cancel-schedule')"
       />
-      <!-- Secondary here: the action area below holds the screen's one primary. -->
-      <UiButton size="small" :disabled="publishing" :label="publishing ? '…' : 'Republish'" @click="$emit('republish')" />
     </div>
-    <PublishDiffPanel :file-path="filePath" :open="diffOpen" @close="diffOpen = false" />
-  </div>
-  <div v-else-if="isLive && isPasswordProtected" class="banner protected">
-    <span class="banner-text">
-      <PhLockSimple :size="13" weight="bold" />
-      PROTECTED
-    </span>
-    <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
-    <UiButton size="small" label="Copy + Pass" data-tip="Copy URL + password to share" @click="$emit('copy-url-password')" />
-    <UiButton size="small" label="Copy URL" data-tip="Copy URL only" @click="$emit('copy-url')" />
-  </div>
-  <div v-else-if="isLive && isUnlisted" class="banner unlisted">
-    <span class="banner-text">
-      <PhEye :size="13" weight="bold" />
-      UNLISTED
-    </span>
-    <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
-    <UiButton size="small" label="Copy" data-tip="Share this link — not indexed anywhere" @click="$emit('copy-url')" />
-  </div>
-  <div v-else-if="isLive" class="banner live">
-    <span class="banner-text">
-      <PhCheckCircle :size="13" weight="fill" />
-      {{ deploy?.phase === 'live' ? 'LIVE ✓' : 'LIVE' }}
-    </span>
-    <a :href="liveUrl!" target="_blank">{{ liveUrl }}</a>
-    <a v-if="deploy?.phase === 'live'" :href="liveUrl!" target="_blank" class="open-link">Open</a>
-    <UiButton size="small" label="Copy" @click="$emit('copy-url')" />
-  </div>
-  <div v-else-if="isScheduled" class="banner scheduled">
-    <span class="banner-text">
-      <PhClock :size="13" weight="bold" />
-      PUBLISHES LATER
-    </span>
-    <span data-tip="Dispatch publishes it then, if Dispatch is running">{{ formatScheduledTime(publishAt!) }}</span>
-    <UiButton size="small" label="Cancel" data-tip="Don’t publish it later" @click="$emit('cancel-schedule')" />
-  </div>
-  <div v-else-if="!isSafe" class="banner warn">
-    {{ warnings.join(' · ') }}
-  </div>
-  <div v-else-if="isPasswordProtected" class="banner ready protected-ready">
-    <span class="visibility-badge">
-      <PhLockSimple :size="12" weight="bold" />
-      PASSWORD
-    </span>
-    <span class="visibility-hint">Link + password required to view</span>
-  </div>
-  <div v-else-if="isUnlisted" class="banner ready unlisted-ready">
-    <span class="visibility-badge">
-      <PhEye :size="12" weight="bold" />
-      UNLISTED
-    </span>
-    <span class="visibility-hint">Link only — won't appear in listings or feeds</span>
-  </div>
-  <div v-else class="banner ready public-ready">
-    <span class="visibility-badge">
-      <PhCheckCircle :size="10" weight="fill" />
-      PUBLIC
-    </span>
-    <span class="visibility-hint">Will appear in listings, feeds, and search</span>
+
+    <div v-if="isLive && liveUrl" class="status-url">
+      <a :href="liveUrl" target="_blank" rel="noopener" class="status-url-text" :title="liveUrl">{{ displayUrl }}</a>
+      <UiButton size="small" variant="plain" :icon="PhCopy" aria-label="Copy link" @click="$emit('copy-url')" />
+      <UiButton
+        v-if="isPasswordProtected"
+        size="small"
+        variant="plain"
+        :icon="PhLockSimple"
+        aria-label="Copy link and password"
+        @click="$emit('copy-url-password')"
+      />
+    </div>
+
+    <!-- The vault copy differs from the site: offer the diff. The republish
+         itself is the primary action right below. -->
+    <div v-if="isLive && hasUnpublishedChanges" class="status-line">
+      <UiButton
+        size="small"
+        variant="plain"
+        class="see-changes status-plain"
+        :label="diffOpen ? 'Hide changes' : 'See changes'"
+        :title="diffOpen ? 'Hide the diff' : 'Show what changed since the last publish'"
+        @click="$emit('toggle-diff')"
+      />
+    </div>
   </div>
 </template>
 
 <style scoped>
-/* Status banners — one recipe for every state: a 3px stripe and a 12%
-   tint in the state's status color, the glyph in that color, and the text
-   in neutral labels (status hues fail contrast as small text). Set --st per
-   state and everything else follows.
-     live (incl. unlisted/password) green · modified orange · failed and
-     blocked red · scheduled purple · deploying neutral + pulsing accent dot
-   Unlisted/password are visibility, not status: those banners are live
-   green, and the eye/lock glyph stays neutral. */
-.banner {
-  --st: transparent;
-  padding: var(--space-1) var(--gutter) var(--space-1) 13px;
-  font-size: 11px;
+.status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.status-line {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  transition: background 0.2s ease;
-  color: var(--label);
-  background: color-mix(in srgb, var(--st) 12%, transparent);
-  border-left: 3px solid var(--st);
+  min-height: 22px;
+  min-width: 0;
 }
 
-.banner-text {
-  display: flex;
-  align-items: center;
-  gap: 5px;
+.status-word {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  line-height: 16px;
+  color: var(--label);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.banner-text svg {
-  color: var(--st);
+/* "Scheduled for Oct 14, 2026 at 9:00 AM" is the status: let it wrap. */
+.status-word.wraps {
+  white-space: normal;
 }
 
-.banner a {
+.status-link,
+.status-note a {
   color: var(--label-2);
   text-decoration: none;
+  font-size: 11px;
+  flex-shrink: 0;
 }
-.banner a:hover {
+.status-link:hover,
+.status-note a:hover {
   color: var(--label);
   text-decoration: underline;
 }
 
-
-.banner.live,
-.banner.unlisted,
-.banner.protected {
-  --st: var(--status-live);
-}
-.banner.live a,
-.banner.unlisted a,
-.banner.protected a {
-  flex: 1;
-}
-.banner.live a.open-link {
-  flex: 0;
-  color: var(--accent);
-}
-.banner.unlisted .banner-text svg,
-.banner.protected .banner-text svg {
-  color: var(--label-2);
-}
-
-/* DEPLOYING — pushed, waiting on GitHub Actions. Neutral banner; the only
-   color is the pulsing accent dot (static under reduced motion). */
-.banner.deploying {
-  --st: var(--label-3);
-  color: var(--label-2);
-}
-.banner.deploying .banner-text {
-  color: var(--label);
-}
-.banner.deploying .deploy-msg,
-.banner.deploy-failed .deploy-msg {
-  flex: 1;
+.status-note {
   font-variant-numeric: tabular-nums;
-  color: var(--label-2);
-}
-.banner.deploy-failed {
-  --st: var(--status-broken);
+  overflow-wrap: anywhere;
 }
 
-.banner.scheduled {
-  --st: var(--status-scheduled);
-}
-
-/* Not safe to publish (privacy lint) — broken. */
-.banner.warn {
-  --st: var(--status-broken);
-}
-
-.banner.modified {
-  --st: var(--status-attention);
-}
-.banner.modified .modified-msg {
-  flex: 1;
-  color: var(--label-2);
-  font-weight: 400;
-}
-.banner.modified .see-changes :deep(.ui-btn-icon) {
-  transition: transform 0.15s;
-}
-.banner.modified .see-changes.open :deep(.ui-btn-icon) {
-  transform: rotate(180deg);
-}
-
-.banner.ready {
-  background: var(--fill);
-  color: var(--label-2);
-}
-
-.visibility-badge {
-  font-size: 8px;
-  font-weight: 700;
-  padding: 2px 5px;
-  border-radius: 3px;
-  background: var(--fill-2);
-  color: var(--label-2);
-  display: inline-flex;
+.status-url {
+  display: flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.status-url-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  color: var(--label-2);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status-url-text:hover {
+  color: var(--label);
+  text-decoration: underline;
 }
 
-.visibility-hint {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  margin-left: auto;
+/* A plain small button's text sits flush with the dot and the URL. */
+.status-plain {
+  margin-left: calc(-1 * var(--space-2));
 }
 </style>

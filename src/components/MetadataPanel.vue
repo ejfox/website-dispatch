@@ -1,17 +1,14 @@
 <script setup lang="ts">
-import {
-  PhTag,
-  PhCalendarBlank,
-  PhFolder,
-  PhCircleWavy,
-  PhGitBranch,
-  PhChartBar,
-  PhGlobe,
-  PhLockSimple,
-  PhEye,
-} from '@phosphor-icons/vue'
+/**
+ * The post's own facts, as key/value rows in the inspector's Details
+ * section: words, date, folder, visibility, tags (right-click for options)
+ * and suggested tags, then whatever rows the parent slots in, then a small
+ * disclosure for the rarely-needed rows (created/edited/published,
+ * Obsidian, git).
+ */
+import { PhCaretDown } from '@phosphor-icons/vue'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
-import type { MarkdownFile, GitStatus, PostAnalytics } from '../types'
+import type { MarkdownFile, GitStatus } from '../types'
 import { formatDate, formatAgeShort, formatDateCompact } from '../utils/formatting'
 import { useAppConfig } from '../composables/useVaultData'
 
@@ -49,8 +46,6 @@ defineProps<{
   file: MarkdownFile
   obsidianConnected: boolean
   gitStatus: GitStatus | null
-  postStats: PostAnalytics | null
-  loadingStats: boolean
   suggestedTags: string[]
   availableTags: Record<string, number>
   addingTag: boolean
@@ -68,110 +63,35 @@ defineEmits<{
 
 <template>
   <div class="info">
-    <!-- Summary bar (always visible, clickable). Native idiom — just the
-         values separated by middots; no leading label-icons. Mail does the
-         same in its message info strip: "2 attachments · 4 KB" reads as
-         pure information, no decorative glyphs. -->
-    <div class="info-summary" @click="$emit('toggle-metadata')">
-      <span class="info-toggle" :class="{ expanded: metadataExpanded }">&#9654;</span>
-      <span class="info-chip">{{ file.word_count.toLocaleString() }} words</span>
-      <span v-if="file.tags.length" class="date-sep">&middot;</span>
-      <span v-if="file.tags.length" class="info-chip">
-        {{ file.tags.length }} {{ file.tags.length === 1 ? 'tag' : 'tags' }}
-      </span>
-      <span class="date-sep">&middot;</span>
-      <span class="info-chip">
-        {{ formatDate(file.date) || formatDateCompact(file.created) }}
+    <div class="insp-kv">
+      <span class="insp-key">Words</span>
+      <span class="insp-val">{{ file.word_count.toLocaleString() }}</span>
+    </div>
+    <div class="insp-kv">
+      <span class="insp-key">Date</span>
+      <span class="insp-val">{{ formatDate(file.date) || formatDateCompact(file.created) }}</span>
+    </div>
+    <div v-if="file.content_type === 'weeknote'" class="insp-kv">
+      <span class="insp-key">Type</span>
+      <span class="insp-val">Week Note</span>
+    </div>
+    <div class="insp-kv">
+      <span class="insp-key">Folder</span>
+      <span class="insp-val is-mono is-muted is-oneline" :title="`${file.source_dir || '.'}/${file.filename}`">
+        {{ file.source_dir || '.' }}/{{ file.filename }}
       </span>
     </div>
-
-    <!-- Detail rows (collapsed by default) -->
-    <div v-show="metadataExpanded" class="info-detail">
-      <div v-if="file.content_type === 'weeknote'" class="row">
-        <span class="label">Type</span>
-        <span class="weeknote-type">Week Note</span>
-      </div>
-      <div class="row">
-        <span class="label">
-          <PhFolder :size="10" weight="duotone" />
-          Source
-        </span>
-        <code>{{ file.source_dir || '.' }}/{{ file.filename }}</code>
-      </div>
-      <div class="row">
-        <span class="label">
-          <PhCalendarBlank :size="10" weight="duotone" />
-          Dates
-        </span>
-        <span class="dates-compact">
-          <span>c: {{ formatAgeShort(file.created) }}</span>
-          <span class="date-sep">&middot;</span>
-          <span :class="{ 'modified-highlight': hasUnpublishedChanges }">e: {{ formatAgeShort(file.modified) }}</span>
-          <template v-if="file.published_date">
-            <span class="date-sep">&middot;</span>
-            <span class="published">p: {{ formatAgeShort(file.published_date) }}</span>
-          </template>
-        </span>
-      </div>
-      <div class="row">
-        <span class="label">
-          <PhCircleWavy :size="10" weight="duotone" />
-          Obsidian
-        </span>
-        <span :class="obsidianConnected ? 'connected' : 'disconnected'">
-          {{ obsidianConnected ? 'connected' : 'not connected' }}
-        </span>
-      </div>
-      <div class="row">
-        <span class="label">
-          <PhGitBranch :size="10" weight="duotone" />
-          Git
-        </span>
-        <span v-if="!gitStatus">checking...</span>
-        <span v-else-if="gitStatus.ok" class="connected">
-          {{ gitStatus.branch }}
-        </span>
-        <span v-else class="git-warning" :title="gitStatus.error || ''">
-          {{ gitStatus.error }}
-        </span>
-      </div>
-      <div v-if="postStats || loadingStats" class="row">
-        <span class="label">
-          <PhChartBar :size="10" weight="duotone" />
-          Analytics
-        </span>
-        <span v-if="loadingStats" class="muted">loading...</span>
-        <span v-else-if="postStats" class="analytics-inline">
-          {{ postStats.pageviews }} views &middot; {{ postStats.visitors }} visitors
-          <template v-if="postStats.totaltime > 0">
-            &middot; {{ Math.round(postStats.totaltime / Math.max(postStats.visits, 1)) }}s avg
-          </template>
-        </span>
-      </div>
-      <div class="row">
-        <span class="label">
-          <PhGlobe :size="10" weight="duotone" />
-          Visibility
-        </span>
-        <span v-if="isPasswordProtected" class="protected-text" :title="`Password: ${file.password}`">
-          <PhLockSimple :size="11" weight="bold" />
-          Protected
-        </span>
-        <span v-else-if="isUnlisted" class="unlisted-text">
-          <PhEye :size="11" weight="bold" />
-          Unlisted
-        </span>
-        <span v-else class="public-text">Public</span>
-      </div>
+    <div class="insp-kv">
+      <span class="insp-key">Visibility</span>
+      <!-- Visibility is not a status: neutral ink. -->
+      <span v-if="isPasswordProtected" class="insp-val" :title="`Password: ${file.password}`">Password</span>
+      <span v-else-if="isUnlisted" class="insp-val">Unlisted</span>
+      <span v-else class="insp-val">Public</span>
     </div>
 
-    <!-- Always visible: actionable metadata -->
-    <div v-if="file.tags.length" class="row">
-      <span class="label">
-        <PhTag :size="10" weight="duotone" />
-        Tags
-      </span>
-      <span class="tags-list">
+    <div v-if="file.tags.length" class="insp-kv">
+      <span class="insp-key">Tags</span>
+      <span class="insp-val tags-list">
         <span
           v-for="(tag, idx) in file.tags"
           :key="tag"
@@ -183,12 +103,9 @@ defineEmits<{
         </span>
       </span>
     </div>
-    <div v-if="suggestedTags.length > 0" class="row suggested-tags-row">
-      <span class="label">
-        <PhTag :size="10" weight="duotone" />
-        Suggest
-      </span>
-      <div class="suggested-tags">
+    <div v-if="suggestedTags.length > 0" class="insp-kv suggested-tags-row">
+      <span class="insp-key">Suggest</span>
+      <div class="insp-val suggested-tags">
         <button
           v-for="tag in suggestedTags"
           :key="tag"
@@ -204,144 +121,92 @@ defineEmits<{
         </button>
       </div>
     </div>
+
+    <!-- The parent's rows (media, analytics, backlinks) go here so the
+         disclosure below stays the last thing in Details. -->
+    <slot />
+
+    <!-- The rarely-needed rows, behind a disclosure. -->
+    <button class="info-more" :aria-expanded="metadataExpanded" @click="$emit('toggle-metadata')">
+      <PhCaretDown :size="9" weight="bold" class="caret" :class="{ collapsed: !metadataExpanded }" />
+      {{ metadataExpanded ? 'Fewer details' : 'More details' }}
+    </button>
+    <template v-if="metadataExpanded">
+      <div class="insp-kv">
+        <span class="insp-key">Created</span>
+        <span class="insp-val is-muted">{{ formatAgeShort(file.created) }}</span>
+      </div>
+      <div class="insp-kv">
+        <span class="insp-key">Edited</span>
+        <span class="insp-val" :class="hasUnpublishedChanges ? 'is-attention' : 'is-muted'">
+          {{ formatAgeShort(file.modified) }}
+        </span>
+      </div>
+      <div v-if="file.published_date" class="insp-kv">
+        <span class="insp-key">Published</span>
+        <span class="insp-val is-muted">{{ formatAgeShort(file.published_date) }}</span>
+      </div>
+      <div class="insp-kv">
+        <span class="insp-key">Obsidian</span>
+        <span class="insp-val" :class="obsidianConnected ? 'is-muted' : 'is-attention'">
+          {{ obsidianConnected ? 'connected' : 'not connected' }}
+        </span>
+      </div>
+      <div class="insp-kv">
+        <span class="insp-key">Git</span>
+        <span v-if="!gitStatus" class="insp-val is-muted">checking…</span>
+        <span v-else-if="gitStatus.ok" class="insp-val is-mono is-muted">{{ gitStatus.branch }}</span>
+        <span v-else class="insp-val is-attention" :title="gitStatus.error || ''">{{ gitStatus.error }}</span>
+      </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
 .info {
-  padding: 0 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  border-bottom: 1px solid var(--border);
+  gap: var(--space-1);
+  min-width: 0;
 }
 
-.info-summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 0;
-  font-size: 10px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  user-select: none;
-}
-
-.info-summary:hover {
-  color: var(--text-primary);
-}
-
-.info-chip {
+.info-more {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-}
-
-.info-toggle {
-  font-size: 8px;
-  color: var(--text-tertiary);
-  transition: transform 0.15s ease;
-  display: inline-block;
-}
-
-.info-toggle.expanded {
-  transform: rotate(90deg);
-}
-
-.info-detail {
-  display: flex;
-  flex-direction: column;
   gap: 4px;
-  padding: 4px 0 4px 4px;
-  margin-bottom: 4px;
-  border-left: 2px solid var(--border-light);
-}
-
-.row {
-  display: flex;
-  font-size: 11px;
-  gap: 12px;
-}
-
-.label {
-  width: 68px;
+  align-self: flex-start;
+  padding: 0;
+  margin: 2px 0 0;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 10px;
+  line-height: 16px;
   color: var(--text-tertiary);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 3px;
+  cursor: pointer;
 }
-
-.weeknote-type {
+.info-more:hover {
   color: var(--label-2);
-  font-weight: 600;
-  font-size: 10px;
 }
-
-.row code {
-  font-family: 'SF Mono', monospace;
-  font-size: 10px;
-  color: var(--text-secondary);
+.caret {
+  transition: transform 0.15s;
 }
-
-.dates-compact {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  color: var(--text-secondary);
-  flex-wrap: wrap;
-}
-
-.date-sep {
-  color: var(--text-tertiary);
-  opacity: 0.5;
-}
-
-.connected,
-.published {
-  color: var(--success);
-}
-
-.modified-highlight {
-  color: var(--warning);
-  font-weight: 500;
-}
-
-.disconnected {
-  color: var(--warning);
-  opacity: 0.7;
-}
-
-.git-warning {
-  color: var(--warning);
-  font-size: 10px;
-}
-
-.analytics-inline {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum';
-  color: var(--text-secondary);
-}
-
-/* Visibility is not a status: neutral. */
-.unlisted-text,
-.protected-text,
-.public-text {
-  color: var(--label-2);
+.caret.collapsed {
+  transform: rotate(-90deg);
 }
 
 .tags-list {
-  color: var(--text-secondary);
+  color: var(--label-2);
 }
 .tag-pill {
   cursor: context-menu;
   border-radius: 3px;
   padding: 0 2px;
+  margin: 0 -2px;
   transition: background 0.1s;
 }
 .tag-pill:hover {
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  background: var(--fill);
 }
 .tag-sep {
   cursor: default;
@@ -354,7 +219,6 @@ defineEmits<{
 .suggested-tags-row {
   align-items: flex-start;
 }
-
 .suggested-tags {
   display: flex;
   flex-wrap: wrap;
@@ -365,39 +229,33 @@ defineEmits<{
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
+  padding: 1px 7px;
   font-size: 10px;
   font-weight: 500;
-  background: var(--hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  color: var(--text-secondary);
+  background: var(--fill);
+  border: 1px solid var(--separator);
+  border-radius: 10px;
+  color: var(--label-2);
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
-
 .tag-chip:hover {
   /* No scale bump on hover — macOS chips darken/lighten, not grow. */
-  background: var(--bg-tertiary);
+  background: var(--fill-2);
   border-color: var(--border-light);
-  color: var(--text-primary);
+  color: var(--label);
 }
-
 .tag-chip:active {
-  background: color-mix(in srgb, var(--bg-tertiary) 80%, var(--label));
+  background: var(--fill-2);
 }
-
 .tag-chip:disabled {
   opacity: 0.5;
   cursor: wait;
 }
-
 .tag-plus {
   font-weight: 600;
-  color: var(--success);
-  margin-right: 2px;
+  color: var(--ink-live);
 }
-
 .tag-count {
   font-size: 8px;
   opacity: 0.5;

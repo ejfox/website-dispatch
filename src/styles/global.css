@@ -242,6 +242,84 @@ html {
   }
 }
 
+/* ── Inspector primitives: the Preview tab's right column. ──
+   Shared by FilePreview, StatusBanner, ActionToolbar, MetadataPanel,
+   LintReceipt and OgImagePicker so every section has the same label,
+   the same hairline and the same left edge.
+     .insp-section   one block: gutter padding, hairline below
+     .insp-label     the small tracked-caps section title
+     .insp-row       label + control on one line ("Open in  [✎ ✎ ▶]")
+     .insp-kv        key/value line inside Details
+     .insp-note      quiet sub-line under a row */
+.insp-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--gutter);
+  border-bottom: 1px solid var(--separator);
+  min-width: 0;
+}
+.insp-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  line-height: 16px;
+}
+.insp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.insp-row > .insp-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.insp-kv {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: 11px;
+  line-height: 16px;
+}
+.insp-kv > .insp-key {
+  flex: 0 0 64px;
+  color: var(--text-tertiary);
+}
+.insp-kv > .insp-val {
+  flex: 1;
+  min-width: 0;
+  color: var(--label);
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.insp-kv > .insp-val.is-mono {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 10px;
+}
+.insp-kv > .insp-val.is-muted {
+  color: var(--label-2);
+}
+.insp-kv > .insp-val.is-oneline {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.insp-kv > .insp-val.is-attention {
+  color: var(--ink-attention);
+}
+.insp-note {
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text-tertiary);
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', system-ui,
     sans-serif;

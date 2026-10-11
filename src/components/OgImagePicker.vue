@@ -200,13 +200,12 @@ onUnmounted(() => window.removeEventListener('dispatch:generate-og', onGenerateR
 </script>
 
 <template>
-  <div ref="root" class="og-picker">
-    <!-- Header -->
-    <div class="picker-header">
+  <div ref="root" class="og-picker insp-section">
+    <!-- Header: a collapsible row that expands inline. -->
+    <div class="picker-header insp-row">
       <button class="header-toggle" @click="collapsed = !collapsed" :aria-expanded="!collapsed">
         <PhCaretDown :size="9" weight="bold" class="caret" :class="{ collapsed }" />
-        <PhSparkle :size="14" weight="fill" class="header-icon" />
-        <span class="header-title">Social card (OG image)</span>
+        <span class="insp-label">Social card</span>
         <span v-if="variants && batch > 0" class="header-batch" title="How many times you've rerolled this post's social cards">reroll {{ batch }}</span>
       </button>
       <button v-if="!collapsed" class="reroll-btn" @click.stop="reroll" :disabled="generating" title="Generate 4 new variants" aria-label="Generate 4 new social card variants">
@@ -266,23 +265,17 @@ onUnmounted(() => window.removeEventListener('dispatch:generate-og', onGenerateR
 </template>
 
 <style scoped>
+/* Section shell (padding, hairline) comes from .insp-section. */
 .og-picker {
-  border-bottom: 1px solid var(--border);
-  padding: 8px 16px 12px;
-}
-
-.picker-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--space-2);
 }
 
 .header-toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex: 1;
+  min-width: 0;
   background: none;
   border: none;
   padding: 0;
@@ -293,23 +286,12 @@ onUnmounted(() => window.removeEventListener('dispatch:generate-og', onGenerateR
 }
 
 .caret {
+  flex-shrink: 0;
   transition: transform 0.15s;
   color: var(--text-tertiary);
 }
 .caret.collapsed {
   transform: rotate(-90deg);
-}
-
-.header-icon {
-  color: var(--accent);
-}
-
-.header-title {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.75px;
 }
 
 .header-batch {
@@ -363,7 +345,6 @@ onUnmounted(() => window.removeEventListener('dispatch:generate-og', onGenerateR
   gap: 8px;
   font-size: 10px;
   color: var(--warning);
-  margin-bottom: 6px;
   overflow-wrap: anywhere;
 }
 .retry-btn {
@@ -396,7 +377,6 @@ onUnmounted(() => window.removeEventListener('dispatch:generate-og', onGenerateR
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
-  margin-bottom: 8px;
 }
 
 .variant-card {

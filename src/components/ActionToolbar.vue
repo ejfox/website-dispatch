@@ -1,16 +1,17 @@
 <script setup lang="ts">
 /**
- * The Preview tab's action area, grouped by job:
+ * The inspector's action block, top to bottom:
  *
- *   row 1  Open in     [ Obsidian | iA Writer | Site preview ]      joined, small
- *   row 2  Share       [ View on site | Copy link ▾ | Syndicate… ]  joined
- *          More        [ ⋯ ]  native menu: Convert to Vue Page… · Unpublish…
- *          Primary     [ Update live post… ]   the ONE accent button
+ *   [ Update live post… ]            the ONE accent button, full width
+ *   Open in   [ ✎ | ✎ | ▶ ]           icon-only, labels in tooltips
+ *   Share     [ ↗ | 🔗▾ | ⇪ ]          live posts only
+ *   [ ⋯ More ]                        native menu: Convert to Vue Page… ·
+ *                                     Unpublish… (live) · Publish later… ·
+ *                                     Unlisted… (not live)
  *
- * For a post that isn't live yet, row 2 is the publish alternates
- * ([Publish later…] [Unlisted…]) and the primary is Publish… / See what to fix….
- * Row 2 wraps at narrow widths; the primary keeps the right edge.
+ * For a post that isn't live the primary is Publish… / See what to fix….
  */
+import { computed } from 'vue'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { LogicalPosition } from '@tauri-apps/api/dpi'
 import {
@@ -20,8 +21,6 @@ import {
   PhLink,
   PhArrowSquareUpRight,
   PhDotsThree,
-  PhClock,
-  PhEyeSlash,
 } from '@phosphor-icons/vue'
 import type { EditorConfig, PublishTarget } from '../types'
 import { SITE_PREVIEW_HINT } from '../utils/vocab'
@@ -79,10 +78,24 @@ async function showCopyLinkMenu(e: MouseEvent) {
   await popupBelow(e, menu)
 }
 
-// Rare and destructive actions live here, off the main row.
+// Rare and destructive actions live here, off the main rows. For a post
+// that isn't live, the publish alternates (later / unlisted) live here too.
+const canPublishLater = computed(() => !props.isLive && props.isSafe && !props.isScheduled)
+const canPublishUnlisted = computed(() => !props.isLive && props.isSafe && !props.isUnlisted && !props.publishing)
+const hasMore = computed(
+  () => !props.isVuePage || props.isLive || canPublishLater.value || canPublishUnlisted.value,
+)
+
 async function showMoreMenu(e: MouseEvent) {
   const items: (MenuItem | PredefinedMenuItem)[] = []
+  if (canPublishLater.value) {
+    items.push(await MenuItem.new({ text: 'Publish later…', action: () => emit('toggle-schedule') }))
+  }
+  if (canPublishUnlisted.value) {
+    items.push(await MenuItem.new({ text: 'Publish as Unlisted…', action: () => emit('publish-unlisted') }))
+  }
   if (!props.isVuePage) {
+    if (items.length) items.push(await PredefinedMenuItem.new({ item: 'Separator' }))
     items.push(
       await MenuItem.new({
         text: props.converting ? 'Converting…' : 'Convert to Vue Page…',
@@ -90,121 +103,137 @@ async function showMoreMenu(e: MouseEvent) {
         action: () => emit('convert-to-vue-page'),
       }),
     )
-    items.push(await PredefinedMenuItem.new({ item: 'Separator' }))
   }
-  items.push(
-    await MenuItem.new({
-      text: props.unpublishing ? 'Unpublishing…' : 'Unpublish…',
-      enabled: !props.unpublishing,
-      action: () => emit('unpublish'),
-    }),
-  )
+  if (props.isLive) {
+    if (items.length) items.push(await PredefinedMenuItem.new({ item: 'Separator' }))
+    items.push(
+      await MenuItem.new({
+        text: props.unpublishing ? 'Unpublishing…' : 'Unpublish…',
+        enabled: !props.unpublishing,
+        action: () => emit('unpublish'),
+      }),
+    )
+  }
   const menu = await Menu.new({ items })
   await popupBelow(e, menu)
 }
 </script>
 
 <template>
-  <div class="toolbar">
+  <div class="actions">
+    <select
+      v-if="hasMultipleTargets"
+      class="target-select"
+      aria-label="Publish target"
+      :value="selectedTargetId || publishTargets.find((t) => t.is_default)?.id"
+      @change="emit('select-target', ($event.target as HTMLSelectElement).value)"
+    >
+      <option v-for="t in publishTargets" :key="t.id" :value="t.id">
+        {{ t.name }}
+      </option>
+    </select>
+
+    <!-- Primary: the one accent button on the screen. -->
+    <UiButton
+      v-if="isLive"
+      variant="primary"
+      class="full"
+      :disabled="publishing"
+      :label="publishing ? 'Publishing…' : 'Update live post…'"
+      @click="emit('open-publish-confirm', true)"
+    />
+    <UiButton v-else variant="primary" class="full" :disabled="publishing" @click="emit('open-publish-confirm', false)">
+      {{ publishing ? 'Publishing…' : isSafe ? 'Publish…' : 'See what to fix…' }}
+      <kbd v-if="isSafe && !publishing">⌘&crarr;</kbd>
+    </UiButton>
+
     <!-- Open in -->
-    <UiButtonGroup label="Open in" block>
-      <UiButton
-        v-for="editor in enabledEditors"
-        :key="editor.app_name"
-        size="small"
-        :icon="PhNotePencil"
-        :label="editor.name"
-        :data-tip="`Open in ${editor.name}`"
-        @click="editor.app_name === 'Obsidian' ? emit('open-obsidian') : emit('open-editor', editor.app_name)"
-      />
-      <UiButton size="small" :icon="PhPlay" label="Site preview" :data-tip="SITE_PREVIEW_HINT" @click="emit('open-preview')" />
-    </UiButtonGroup>
-
-    <div class="toolbar-row">
-      <select
-        v-if="hasMultipleTargets"
-        class="target-select"
-        aria-label="Publish target"
-        :value="selectedTargetId || publishTargets.find((t) => t.is_default)?.id"
-        @change="emit('select-target', ($event.target as HTMLSelectElement).value)"
-      >
-        <option v-for="t in publishTargets" :key="t.id" :value="t.id">
-          {{ t.name }}
-        </option>
-      </select>
-
-      <template v-if="isLive">
-        <!-- Share -->
-        <UiButtonGroup label="Share">
-          <UiButton :href="liveUrl!" :icon="PhArrowSquareOut" label="View on site" />
-          <UiButton :icon="PhLink" label="Copy link" menu data-tip="Tagged link for X or the newsletter" @click="showCopyLinkMenu" />
-          <UiButton :icon="PhArrowSquareUpRight" label="Syndicate…" data-tip="Share to social platforms" @click="emit('show-syndication')" />
-        </UiButtonGroup>
-        <!-- More -->
-        <UiButton :icon="PhDotsThree" aria-label="More actions" menu data-tip="Convert to Vue Page · Unpublish" @click="showMoreMenu" />
-        <!-- Primary -->
+    <div class="insp-row">
+      <span class="insp-label">Open in</span>
+      <UiButtonGroup label="Open in">
         <UiButton
-          variant="primary"
-          class="primary-action"
-          :disabled="publishing"
-          :label="publishing ? 'Publishing…' : 'Update live post…'"
-          @click="emit('open-publish-confirm', true)"
-        />
-      </template>
-
-      <template v-else>
-        <UiButton
-          v-if="isSafe && !isScheduled"
-          :icon="PhClock"
-          label="Publish later…"
-          data-tip="Dispatch publishes it at the time you pick (keep Dispatch running)"
-          @click="emit('toggle-schedule')"
+          v-for="editor in enabledEditors"
+          :key="editor.app_name"
+          size="small"
+          :icon="PhNotePencil"
+          :aria-label="`Open in ${editor.name}`"
+          @click="editor.app_name === 'Obsidian' ? emit('open-obsidian') : emit('open-editor', editor.app_name)"
         />
         <UiButton
-          v-if="isSafe && !isUnlisted && !publishing"
-          :icon="PhEyeSlash"
-          label="Unlisted…"
-          data-tip="Publish without listing it anywhere"
-          @click="emit('publish-unlisted')"
+          size="small"
+          :icon="PhPlay"
+          aria-label="Open site preview"
+          :title="SITE_PREVIEW_HINT"
+          @click="emit('open-preview')"
         />
-        <UiButton
-          variant="primary"
-          class="primary-action"
-          :disabled="publishing"
-          @click="emit('open-publish-confirm', false)"
-        >
-          {{ publishing ? 'Publishing…' : isSafe ? 'Publish…' : 'See what to fix…' }}
-          <kbd v-if="isSafe && !publishing">⌘&crarr;</kbd>
-        </UiButton>
-      </template>
+      </UiButtonGroup>
     </div>
+
+    <!-- Share -->
+    <div v-if="isLive && liveUrl" class="insp-row">
+      <span class="insp-label">Share</span>
+      <UiButtonGroup label="Share">
+        <UiButton size="small" :href="liveUrl" :icon="PhArrowSquareOut" aria-label="View on site" />
+        <UiButton
+          size="small"
+          :icon="PhLink"
+          menu
+          aria-label="Copy link"
+          title="Tagged link for X or the newsletter"
+          @click="showCopyLinkMenu"
+        />
+        <UiButton
+          size="small"
+          :icon="PhArrowSquareUpRight"
+          aria-label="Syndicate…"
+          title="Share to social platforms"
+          @click="emit('show-syndication')"
+        />
+      </UiButtonGroup>
+    </div>
+
+    <!-- More -->
+    <UiButton
+      v-if="hasMore"
+      variant="plain"
+      size="small"
+      class="full more"
+      :icon="PhDotsThree"
+      label="More"
+      menu
+      @click="showMoreMenu"
+    />
   </div>
 </template>
 
 <style scoped>
-.toolbar {
+.actions {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-2) var(--gutter);
-  border-bottom: 1px solid var(--separator);
+  min-width: 0;
 }
 
-.toolbar-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
+/* Full-width rows. (Not UiButton's `block`: that is flex:1, which in a
+   column would grow the button vertically.) */
+.actions > .full {
+  width: 100%;
+}
+.actions > .more {
+  justify-content: flex-start;
+  /* Flush with the section's left edge like the row labels. */
+  margin-left: calc(-1 * var(--space-2));
+  width: calc(100% + var(--space-2));
 }
 
-/* The primary holds the right edge; when the row wraps it moves to the
-   next line and still sits right. */
-.primary-action {
-  margin-left: auto;
+/* Icon groups keep their natural width and sit at the right edge. */
+.insp-row > .ui-btn-group {
+  flex-shrink: 0;
 }
 
 .target-select {
   height: 28px;
+  width: 100%;
   padding: 0 var(--space-2);
   font-size: 11px;
   color: var(--label);

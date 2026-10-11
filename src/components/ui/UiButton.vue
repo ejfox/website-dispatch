@@ -160,6 +160,14 @@ function onClick(e: MouseEvent) {
   width: var(--btn-h);
   padding: 0;
 }
+/* Icon-only with a menu caret: square plus the caret's width. */
+.ui-btn.is-icon-only.has-menu {
+  width: auto;
+  padding: 0 4px 0 5px;
+}
+.ui-btn.is-icon-only.has-menu .ui-btn-caret {
+  margin-left: 0;
+}
 
 /* Block, not flex: text-overflow only works on a block container. */
 .ui-btn-label {

@@ -1,132 +1,80 @@
 <script setup lang="ts">
-import { PhShieldWarning, PhCaretDown } from '@phosphor-icons/vue'
-import { useLocalStorage } from '@vueuse/core'
+/**
+ * "What to fix": the publish lint, as short sentences in the inspector.
+ * Renders nothing when there is nothing to fix. The section shell (label,
+ * padding, hairline) comes from the inspector's `.insp-*` primitives.
+ */
+import { PhShieldWarning } from '@phosphor-icons/vue'
 
 defineProps<{ warnings: string[] }>()
-
-const collapsed = useLocalStorage('dispatch-lint-collapsed', true)
 </script>
 
 <template>
-  <div v-if="warnings.length" class="lint-receipt">
-    <button class="lint-receipt-header" @click="collapsed = !collapsed" :aria-expanded="!collapsed">
-      <PhCaretDown :size="9" weight="bold" class="caret" :class="{ collapsed }" />
-      <span>Lint Receipt</span>
-      <span class="lint-receipt-count">{{ warnings.length }}</span>
-    </button>
-    <template v-if="!collapsed">
-      <div class="lint-receipt-divider"></div>
-      <div class="lint-receipt-list">
-        <div
-          v-for="warning in warnings"
-          :key="warning"
-          class="lint-receipt-item"
-          :class="{ privacy: warning.startsWith('[privacy]') }"
-        >
-          <span class="lint-receipt-bullet" :class="{ privacy: warning.startsWith('[privacy]') }">
-            <PhShieldWarning v-if="warning.startsWith('[privacy]')" :size="12" weight="fill" />
-            <template v-else>&bull;</template>
-          </span>
-          <span class="lint-receipt-text">{{ warning.startsWith('[privacy]') ? warning.slice(9) : warning }}</span>
-        </div>
-      </div>
-      <div class="lint-receipt-footer">Dispatch</div>
-    </template>
+  <div v-if="warnings.length" class="lint insp-section">
+    <div class="insp-row">
+      <span class="insp-label">What to fix</span>
+      <span class="lint-count">{{ warnings.length }}</span>
+    </div>
+    <ul class="lint-list">
+      <li
+        v-for="warning in warnings"
+        :key="warning"
+        class="lint-item"
+        :class="{ privacy: warning.startsWith('[privacy]') }"
+      >
+        <span class="lint-bullet" aria-hidden="true">
+          <PhShieldWarning v-if="warning.startsWith('[privacy]')" :size="11" weight="fill" />
+          <template v-else>&bull;</template>
+        </span>
+        <span class="lint-text">{{ warning.startsWith('[privacy]') ? warning.slice(9) : warning }}</span>
+      </li>
+    </ul>
   </div>
 </template>
 
 <style scoped>
-/* Lint Receipt — kept the "receipt" character (monospace, the DISPATCH
-   footer chip), but dropped the dashed-box widget shell so it flows in
-   line with the other inline sections (Local Media, Alt Text, OG Image).
-   The receipt metaphor now reads as a thin vertically-bounded section
-   with a soft warning tint, not a stuck-on widget. */
-.lint-receipt {
-  padding: 8px 16px;
-  background: color-mix(in srgb, var(--warning) 5%, transparent);
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  font-family: 'SF Mono', 'Menlo', monospace;
+.lint-count {
   font-size: 10px;
-  color: var(--text-secondary);
-}
-
-.lint-receipt-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--text-tertiary);
-  font-size: 9px;
-  font-family: inherit;
-}
-
-.lint-receipt-header span:nth-of-type(1) {
-  flex: 1;
-  text-align: left;
-}
-
-.caret {
-  transition: transform 0.15s;
-  color: var(--text-tertiary);
-}
-.caret.collapsed {
-  transform: rotate(-90deg);
-}
-
-.lint-receipt-count {
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  color: var(--ink-attention);
 }
-.lint-receipt-divider {
-  height: 1px;
-  margin: 6px 0 8px;
-  background: repeating-linear-gradient(90deg, var(--border-light) 0 4px, transparent 4px 8px);
-}
-.lint-receipt-list {
+.lint-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
-.lint-receipt-item {
+.lint-item {
   display: flex;
   gap: 6px;
   align-items: flex-start;
-}
-.lint-receipt-bullet {
-  color: var(--status-attention);
-  line-height: 1;
-}
-.lint-receipt-text {
-  color: var(--text-primary);
-}
-
-.lint-receipt-item.privacy {
-  background: var(--tint-broken);
-  padding: 2px 6px;
-  border-radius: 3px;
-  border-left: 2px solid var(--status-broken);
-}
-
-.lint-receipt-bullet.privacy {
-  color: var(--status-broken);
-  font-size: 10px;
-}
-.lint-receipt-item.privacy .lint-receipt-text {
+  font-size: 11px;
+  line-height: 16px;
   color: var(--label);
-  font-weight: 500;
+  min-width: 0;
 }
-.lint-receipt-footer {
-  margin-top: 8px;
-  text-align: right;
-  text-transform: uppercase;
-  letter-spacing: 0.2em;
-  color: var(--text-tertiary);
-  font-size: 8px;
+.lint-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.lint-bullet {
+  flex-shrink: 0;
+  width: 11px;
+  text-align: center;
+  color: var(--status-attention);
+  line-height: 16px;
+}
+/* A privacy hit is broken, not "needs attention". */
+.lint-item.privacy .lint-bullet {
+  color: var(--status-broken);
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+}
+.lint-item.privacy .lint-text {
+  font-weight: 500;
 }
 </style>
