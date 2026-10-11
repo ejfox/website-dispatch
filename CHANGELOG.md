@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.8.0 — 2026-10-11
+
+Publishing actually works again, waits for the site to really be live,
+and can't leak week notes. Plus a round of native macOS fixes and about
+5,000 fewer lines.
+
+### Fixed — Publishing
+- **Doubled year in the publish path.** Posts were written to
+  `content/blog/2026/2026/<slug>.md`, so republish lookups never matched and
+  the last publish needed a hand fix. `blog_destination()` is now the one
+  place a vault file becomes a repo path and URL; a republish updates the
+  post where it already lives, in any year folder.
+- **Pushed to whatever branch website2 was on.** Publishing now refuses
+  unless website2 is on the configured branch (default `main`), pulls
+  fast-forward-only first, never stashes, and pushes `origin <branch>`.
+- **Beachball during publish.** Git work runs off the UI thread, every git
+  call has a timeout, and commit failures are errors instead of silently
+  continuing.
+
+### Added — Deploy confirmation
+- After a push the post shows **Deploying… pushed abc1234**, and only turns
+  **Live ✓** once `ejfox.com/api/healthcheck` serves that commit and the URL
+  answers. A failed or rolled-back GitHub deploy shows **Not live** with a
+  link to the run. Webmentions go out only after the page is confirmed live.
+
+### Security — Week notes and drafts can't be published
+- `publish_guard` refuses `week-notes/`, `drafts/` and `type: weeknote`
+  whatever the config says (old configs are cleaned on load).
+  `publish-weekly.sh` is deleted, and type-to-confirm no longer passes on
+  an empty slug.
+
+### Fixed — Native macOS
+- **Unpublish never ran.** wry has no JS `confirm()`/`alert()`/`prompt()`
+  support, so they silently returned false. Replaced with native dialogs.
+- **Dock click** brings a hidden window back (`RunEvent::Reopen`); the
+  "Show Dispatch" Dock workaround is gone.
+- **Menu bar extra** is a monochrome template icon with Open, New Post,
+  recent posts and Quit.
+- **Settings… ⌘,** is in the app menu. The **Dock badge** works (it was
+  missing a permission). Minimum window 560×420; macOS 13+.
+
+### Removed
+- **Gear panel** (~2,200 lines), **streaks, stats, milestones, nudges and
+  vault pulse** (~2,500; the publishing log and heatmap stay), and the
+  **companion web server** that listened on the whole LAN (~630). The
+  sketchybar cache is no longer written; the sketchybar widget now reads
+  the site's RSS feed instead.
+
 ## 0.7.0 — 2026-05-28
 
 Native macOS polish pass + the long-overdue fix for the blank-preview bug.
