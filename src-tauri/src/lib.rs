@@ -246,6 +246,17 @@ fn publish_file_blocking(
     Ok(url)
 }
 
+// What publishing this note would do, stated before anything is written:
+// destination, new vs update, branch and clobber checks, visibility, embargo,
+// webmentions and syndication. Reads only (git status, no pull).
+#[tauri::command]
+async fn publish_preview(
+    source_path: String,
+    target_id: Option<String>,
+) -> Result<publish::PublishPreview, String> {
+    publish::off_main(move || publish::publish_preview(&source_path, target_id.as_deref())).await
+}
+
 // Unpublish a file (move from blog/ to drafts/ in the website repo)
 #[tauri::command]
 async fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), String> {
@@ -917,18 +928,27 @@ fn generate_promo_image(title: String, url: String) -> Result<String, String> {
 }
 
 // Generate 4 OG image variants for a post
+//
+// async + spawn_blocking: a sync command runs on the main thread, so the
+// node render froze the whole window (beachball) for as long as it ran.
 #[tauri::command]
-fn generate_og_variants(
+async fn generate_og_variants(
     slug: String,
     batch: Option<u32>,
 ) -> Result<syndication::OgImageVariants, String> {
-    syndication::generate_og_variants(&slug, batch.unwrap_or(0))
+    tauri::async_runtime::spawn_blocking(move || {
+        syndication::generate_og_variants(&slug, batch.unwrap_or(0))
+    })
+    .await
+    .map_err(|e| format!("OG render task failed: {}", e))?
 }
 
 // Upload a picked OG image variant to Cloudinary
 #[tauri::command]
-fn upload_og_image(file_path: String, slug: String) -> Result<String, String> {
-    syndication::upload_og_image(&file_path, &slug)
+async fn upload_og_image(file_path: String, slug: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || syndication::upload_og_image(&file_path, &slug))
+        .await
+        .map_err(|e| format!("OG upload task failed: {}", e))?
 }
 
 // List all folders in Cloudinary (for folder picker UI)
@@ -1119,6 +1139,7 @@ pub fn run() {
             get_file_content,
             append_to_file,
             publish_file,
+            publish_preview,
             unpublish_file,
             get_git_status,
             deploy::get_head_sha,

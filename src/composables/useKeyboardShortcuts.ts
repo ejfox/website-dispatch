@@ -55,33 +55,18 @@ export function useKeyboardShortcuts(options: {
   function handleGlobalKey(e: KeyboardEvent) {
     // --- COMMAND-MODIFIED SHORTCUTS — fire even while typing ---
 
-    // ⌘K toggles the command palette.
-    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-      e.preventDefault()
-      if (options.searchOpen.value) options.closeSearch()
-      else options.openSearch()
-      return
-    }
+    // ⌘K, ⌘,, ⌘0 and ⌘1–5 are owned by the native menu (menu.rs, handled in
+    // useMenuActions.ts). On macOS the menu sees a key equivalent before
+    // the webview, so a second handler here was either dead or a double fire.
 
-    // ⌘, (Settings) is owned by the native app menu — see menu.rs.
-
-    // ⌘0 toggles the sidebar.
-    if ((e.metaKey || e.ctrlKey) && e.key === '0') {
-      e.preventDefault()
-      options.sidebarCollapsed.value = !options.sidebarCollapsed.value
-      return
-    }
-
-    // ⌘1..5 jump to right-panel tab.
-    if ((e.metaKey || e.ctrlKey) && ['1', '2', '3', '4', '5'].includes(e.key)) {
-      e.preventDefault()
-      const tabs = ['preview', 'media', 'activity', 'modified', 'journal'] as const
-      options.rightTab.value = tabs[parseInt(e.key) - 1]
-      return
-    }
-
-    // ⌘Enter publishes the selected file (republishes if live).
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && options.selectedFile.value) {
+    // ⌘Enter opens the review sheet for the selected file. Not over another
+    // overlay: an open sheet owns ⌘Enter (its primary action).
+    if (
+      (e.metaKey || e.ctrlKey) &&
+      e.key === 'Enter' &&
+      options.selectedFile.value &&
+      !document.querySelector('[class$="-overlay"]')
+    ) {
       e.preventDefault()
       const isRepublish = !!options.selectedFile.value.published_url
       options.filePreviewRef.value?.openPublishConfirm(isRepublish)

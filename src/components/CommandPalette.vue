@@ -19,6 +19,8 @@ import {
 } from '@phosphor-icons/vue'
 import type { MarkdownFile } from '../types'
 import { usePaletteHistory } from '../composables/useUiState'
+import { useAppConfig } from '../composables/useVaultData'
+import { CHANGED_LABEL, CHANGED_PILL, NOT_PUBLISHED_LABEL, SITE_PREVIEW_LABEL, SITE_PREVIEW_HINT } from '../utils/vocab'
 
 interface Action {
   id: string
@@ -49,11 +51,12 @@ const emit = defineEmits<{
   selectFile: [file: MarkdownFile]
   newPost: []
   refresh: []
-  showJournal: []
-  showHelp: []
-  togglePanel: [panel: 'preview' | 'media' | 'journal']
+  showHelp: [section: 'overview' | 'shortcuts']
+  togglePanel: [panel: 'desk' | 'preview' | 'media' | 'journal' | 'modified' | 'activity']
   publish: []
 }>()
+
+const { defaultEditor } = useAppConfig()
 
 const query = ref('')
 const selectedIdx = ref(0)
@@ -111,13 +114,25 @@ const actions = computed<Action[]>(() => {
     },
     {
       id: 'open_editor',
-      label: 'Open in Editor',
+      label: `Open in ${defaultEditor.value}`,
       hint: f?.filename,
       section: 'Actions',
       icon: PhPencil,
       enabled: hasFile,
-      synonyms: ['edit', 'write', 'ia writer'],
-      run: () => f && invoke('open_in_app', { path: f.path, app: 'iA Writer' }),
+      shortcut: 'i',
+      synonyms: ['edit', 'write', 'ia writer', 'editor'],
+      run: () => f && invoke('open_in_app', { path: f.path, app: defaultEditor.value }),
+    },
+    {
+      id: 'site_preview',
+      label: SITE_PREVIEW_LABEL,
+      hint: SITE_PREVIEW_HINT,
+      section: 'Actions',
+      icon: PhEye,
+      enabled: true,
+      shortcut: 'p',
+      synonyms: ['preview window', 'real renderer', 'local server'],
+      run: () => invoke('open_preview'),
     },
     {
       id: 'reveal_finder',
@@ -163,17 +178,36 @@ const actions = computed<Action[]>(() => {
     },
     {
       id: 'show_help',
-      label: 'Show Help',
+      label: 'Keyboard Shortcuts',
       section: 'Actions',
       icon: PhCommand,
       enabled: true,
       shortcut: '⌘/',
-      synonyms: ['shortcuts', 'keyboard', 'cheatsheet'],
-      run: () => emit('showHelp'),
+      synonyms: ['help', 'shortcuts', 'keyboard', 'cheatsheet'],
+      run: () => emit('showHelp', 'shortcuts'),
+    },
+    {
+      id: 'show_overview',
+      label: 'How Dispatch Publishes',
+      section: 'Actions',
+      icon: PhCommand,
+      enabled: true,
+      synonyms: ['help', 'explain', 'pipeline', 'deploy', 'schedule', 'webmentions'],
+      run: () => emit('showHelp', 'overview'),
+    },
+    {
+      id: 'panel_desk',
+      label: 'Show Desk',
+      section: 'Actions',
+      icon: PhFile,
+      enabled: true,
+      shortcut: 'd',
+      synonyms: ['desk', 'bench', 'today'],
+      run: () => emit('togglePanel', 'desk'),
     },
     {
       id: 'panel_preview',
-      label: 'Show Preview Panel',
+      label: 'Show Preview',
       section: 'Actions',
       icon: PhFile,
       enabled: true,
@@ -183,7 +217,7 @@ const actions = computed<Action[]>(() => {
     },
     {
       id: 'panel_media',
-      label: 'Show Media Panel',
+      label: 'Show Media',
       section: 'Actions',
       icon: PhSquaresFour,
       enabled: true,
@@ -193,13 +227,33 @@ const actions = computed<Action[]>(() => {
     },
     {
       id: 'panel_journal',
-      label: 'Show Journal Panel',
+      label: 'Show Journal',
       section: 'Actions',
       icon: PhListBullets,
       enabled: true,
       shortcut: '⌘3',
       synonyms: ['history', 'log', 'heatmap'],
       run: () => emit('togglePanel', 'journal'),
+    },
+    {
+      id: 'panel_modified',
+      label: `Show ${CHANGED_LABEL}`,
+      section: 'Actions',
+      icon: PhPencil,
+      enabled: true,
+      shortcut: '⌘4',
+      synonyms: ['modified', 'changed', 'diverged', 'republish'],
+      run: () => emit('togglePanel', 'modified'),
+    },
+    {
+      id: 'panel_activity',
+      label: 'Show Activity',
+      section: 'Actions',
+      icon: PhListBullets,
+      enabled: true,
+      shortcut: '⌘5',
+      synonyms: ['feed', 'recent', 'edits'],
+      run: () => emit('togglePanel', 'activity'),
     },
   ]
 })
@@ -221,13 +275,13 @@ const placeholderText = computed(() => {
     case 'live':
       return 'Live posts only…'
     case 'drafts':
-      return 'Drafts only…'
+      return `${NOT_PUBLISHED_LABEL} only…`
     case 'modified':
-      return 'Modified-since-publish only…'
+      return `${CHANGED_LABEL} only…`
     case 'files':
       return 'Files only…'
     default:
-      return 'Type to search — try > for actions, t: for tags, l: live, d: drafts'
+      return 'Search, or > actions · t: tag · l: live · d: not published · m: changed'
   }
 })
 
@@ -267,7 +321,7 @@ function bestScore(item: Action, needle: string): number {
  *   `>foo`        — actions only (no file results)
  *   `t:tag`       — files whose tags include "tag"
  *   `l:rest`      — live posts only
- *   `d:rest`      — drafts only (unpublished)
+ *   `d:rest`      — not published (no live URL; not the same as `draft: true`)
  *   `m:rest`      — modified-since-publish only
  *   `f:rest`      — files only (no actions)
  */
@@ -288,11 +342,13 @@ function parseQuery(raw: string) {
 }
 
 function badgeForFile(f: MarkdownFile): Action['badge'] {
-  if (f.warnings.includes('Modified since publish')) return { label: 'MODIFIED', tone: 'modified' }
+  if (f.warnings.includes('Modified since publish')) return { label: CHANGED_PILL, tone: 'modified' }
   if (f.password) return { label: 'PROTECTED', tone: 'protected' }
   if (f.unlisted) return { label: 'UNLISTED', tone: 'unlisted' }
   if (f.published_url) return { label: 'LIVE', tone: 'live' }
-  return { label: 'DRAFT', tone: 'draft' }
+  // DRAFT only for literal `draft: true`, matching the file list's badge.
+  if (f.draft) return { label: 'DRAFT', tone: 'draft' }
+  return { label: 'NOT PUBLISHED', tone: 'draft' }
 }
 
 const fileItems = computed<Action[]>(() => {
@@ -525,7 +581,7 @@ function flatIdx(sectionIdx: number, itemIdx: number) {
 .palette-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   z-index: 200;
@@ -673,8 +729,16 @@ function flatIdx(sectionIdx: number, itemIdx: number) {
   flex: none;
 }
 
-/* Status badges on file rows — color-coded so you can scan at a glance. */
+/* Status badges on file rows — same dialect as the file list: 15% tint,
+   a status-colored dot, neutral label text. Unlisted/protected are
+   visibility, not status: neutral. */
 .palette-badge {
+  --st: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--label);
+  background: color-mix(in srgb, var(--st) 15%, transparent);
   font-family: 'SF Mono', monospace;
   font-size: 9px;
   font-weight: 600;
@@ -685,25 +749,31 @@ function flatIdx(sectionIdx: number, itemIdx: number) {
   white-space: nowrap;
 }
 
+.palette-badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--st);
+}
 .palette-badge.tone-live {
-  background: color-mix(in srgb, var(--success) 22%, transparent);
-  color: var(--success);
-}
-.palette-badge.tone-draft {
-  background: color-mix(in srgb, var(--text-tertiary) 22%, transparent);
-  color: var(--text-secondary);
-}
-.palette-badge.tone-unlisted {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  color: var(--accent-soft);
-}
-.palette-badge.tone-protected {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  color: var(--accent-soft);
+  --st: var(--status-live);
 }
 .palette-badge.tone-modified {
-  background: color-mix(in srgb, var(--warning) 22%, transparent);
-  color: var(--warning);
+  --st: var(--status-attention);
+}
+.palette-badge.tone-draft {
+  --st: var(--status-draft);
+  color: var(--label-2);
+}
+.palette-badge.tone-unlisted,
+.palette-badge.tone-protected {
+  background: var(--fill-2);
+  color: var(--label-2);
+}
+.palette-badge.tone-unlisted::before,
+.palette-badge.tone-protected::before {
+  display: none;
 }
 
 /* When a row is selected (AccentColor bg), make badges legible against it. */

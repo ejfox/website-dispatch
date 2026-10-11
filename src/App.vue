@@ -6,15 +6,12 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   FileText,
-  Search,
-  RefreshCw,
-  Settings,
-  Plus,
   Eye,
   Image as LucideImage,
   Activity,
   Pencil,
   BookOpen,
+  PanelRight,
 } from 'lucide-vue-next'
 import {
   PhRows,
@@ -29,18 +26,22 @@ import {
   PhFileText,
   PhWarningCircle,
   PhNewspaper,
+  PhPlus,
+  PhMagnifyingGlass,
+  PhArrowsClockwise,
+  PhGear,
 } from '@phosphor-icons/vue'
+import UiButton from './components/ui/UiButton.vue'
 import FileList from './components/FileList.vue'
 import DeskView from './components/DeskView.vue'
 import ResizeHandle from './components/ResizeHandle.vue'
-import { useResizable, useToasts } from './composables/useUiState'
+import { useResizable, useToasts, useInspector } from './composables/useUiState'
 import FilePreview from './components/FilePreview.vue'
 import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
 import PublishingJournal from './components/PublishingJournal.vue'
 import ActivityFeed from './components/ActivityFeed.vue'
 import ModifiedPostsView from './components/ModifiedPostsView.vue'
 import SettingsModal from './components/SettingsModal.vue'
-import SearchModal from './components/SearchModal.vue'
 import CommandPalette from './components/CommandPalette.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ToastStack from './components/ToastStack.vue'
@@ -49,8 +50,14 @@ import type { MarkdownFile } from './types'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
 import { useAppConfig, useConnectionStatus } from './composables/useVaultData'
 import { checkForUpdate } from './composables/useAutoUpdate'
+import { useMenuActions } from './composables/useMenuActions'
+import { CHANGED_LABEL, CHANGED_TAB, CHANGED_HINT, NOT_PUBLISHED_LABEL } from './utils/vocab'
 
 const toasts = useToasts()
+
+// The Preview tab's inspector column (View › Toggle Inspector, ⌥⌘I). The
+// toggle sits at the right end of the tab strip while a post is shown.
+const inspector = useInspector()
 
 // shallowRef: `files` (up to ~200 items) and `selectedFile` are only ever
 // replaced wholesale (`files.value = await invoke(...)`), never mutated in
@@ -64,11 +71,7 @@ const loading = ref(true)
 
 const appVersion = __APP_VERSION__
 
-// Search state
-const searchOpen = ref(false)
-
-// Command palette (⌘K) — supersedes the older searchOpen flow but
-// SearchModal stays around as a pure file-search fallback if needed.
+// Command palette (⌘K, `/`, the titlebar search button).
 const paletteOpen = ref(false)
 
 // New Post state
@@ -77,8 +80,13 @@ const newPostTitle = ref('')
 const newPostInput = ref<HTMLInputElement | null>(null)
 const newPostCreating = ref(false)
 
-// Help state
+// Help state — one overlay, two pages: how publishing works, and shortcuts.
+// `?` and ⌘/ open the shortcuts; Help › How Dispatch Publishes, the overview.
 const showHelp = ref(false)
+const helpSection = ref<'overview' | 'shortcuts'>('shortcuts')
+watch(showHelp, (open) => {
+  if (!open) helpSection.value = 'shortcuts'
+})
 
 // Window focus state (for native dimming when unfocused)
 const windowFocused = ref(true)
@@ -165,13 +173,21 @@ const titlebarSubtitle = computed(() => {
     const wc = `${f.word_count.toLocaleString()}w`
     let state: string
     if (f.published_url && f.warnings?.includes('Modified since publish')) {
-      state = 'modified'
+      state = CHANGED_LABEL.toLowerCase()
     } else if (f.published_url) {
-      state = f.password ? 'protected' : f.unlisted ? 'unlisted' : 'live'
+      state = f.password ? 'live, password' : f.unlisted ? 'live, unlisted' : 'live'
     } else if (f.publish_at) {
-      state = 'scheduled'
+      state = 'publishes later'
     } else {
-      state = f.password ? 'protected draft' : f.unlisted ? 'unlisted draft' : 'draft'
+      // "draft" alone would collide with frontmatter `draft: true`.
+      const notPublished = NOT_PUBLISHED_LABEL.toLowerCase()
+      state = f.password
+        ? `${notPublished} (will need a password)`
+        : f.unlisted
+          ? `${notPublished} (will be unlisted)`
+          : f.draft
+            ? `${notPublished} · draft: true`
+            : notPublished
     }
     return `${wc} · ${state}`
   }
@@ -179,8 +195,7 @@ const titlebarSubtitle = computed(() => {
   const total = files.value.length
   if (total === 0) return ''
   const live = files.value.filter((x) => x.published_url).length
-  const drafts = total - live
-  return `${total} posts · ${live} live · ${drafts} drafts`
+  return `${total} posts · ${live} live · ${total - live} ${NOT_PUBLISHED_LABEL.toLowerCase()}`
 })
 
 const modifiedCount = computed(
@@ -275,6 +290,18 @@ const showSettings = ref(false)
 // FilePreview ref for Cmd+Enter publish
 const filePreviewRef = ref<InstanceType<typeof FilePreview> | null>(null)
 
+/** Show `file` (default: the selected one) in the Preview tab and open its
+ *  publish review sheet. Every publish entry point outside FilePreview
+ *  (menu, Modified tab) comes through here, so none can skip the sheet. */
+async function openReviewSheet(file: MarkdownFile | null = null, mode: 'publish' | 'unlisted' = 'publish') {
+  const target = file ?? selectedFile.value
+  if (!target) return
+  selectedFile.value = target
+  rightTab.value = 'preview'
+  await nextTick()
+  filePreviewRef.value?.openPublishConfirm?.(!!target.published_url, mode)
+}
+
 // App config (shared singleton)
 const { appConfig, fetchConfig: loadConfig } = useAppConfig()
 
@@ -301,19 +328,13 @@ const {
   axis: 'x',
 })
 
-// ⌘K toggles the command palette (CommandPalette.vue). The legacy
-// SearchModal stays mounted but is not bound to anything — kept around
-// in case we want to expose a pure file-search shortcut later.
-// `openSearch` is what useKeyboardShortcuts calls; we toggle here so
-// double-⌘K closes (composable's "is searchOpen" check would lie since
-// it tracks the deprecated SearchModal flag).
+// ⌘K (menu) toggles the command palette, so a second ⌘K closes it.
 function openSearch() {
   paletteOpen.value = !paletteOpen.value
 }
 
 function closeSearch() {
   paletteOpen.value = false
-  searchOpen.value = false
 }
 
 function openNewPost() {
@@ -537,7 +558,7 @@ function jumpToSlug(slug: string) {
 const { handleGlobalKey } = useKeyboardShortcuts({
   files,
   selectedFile,
-  searchOpen,
+  searchOpen: paletteOpen,
   showSettings,
   newPostOpen,
   showHelp,
@@ -549,6 +570,19 @@ const { handleGlobalKey } = useKeyboardShortcuts({
   openNewPost,
   closeNewPost,
   loadFiles,
+})
+
+// Every native menu item that isn't one of the original few listened to in
+// onMounted below. Kept in its own composable; see useMenuActions.ts.
+const { openHelp, unpublishSelected } = useMenuActions({
+  files,
+  selectedFile,
+  rightTab,
+  filePreviewRef,
+  sidebarCollapsed,
+  showHelp,
+  helpSection,
+  modalFlags: [showSettings, newPostOpen, paletteOpen, showHelp],
 })
 
 let unlistenSchedule: (() => void) | null = null
@@ -599,6 +633,11 @@ onMounted(async () => {
   }))
   track(listen('menu-search', () => openSearch()))
   track(listen('menu-settings', () => (showSettings.value = true)))
+  // Publish menu (⌘↩ / ⌘⇧↩): open the review sheet for the selected post.
+  // An open sheet handles menu-publish itself, so skip when any overlay is up.
+  const overlayOpen = () => !!document.querySelector('[class$="-overlay"]')
+  track(listen('menu-publish', () => !overlayOpen() && openReviewSheet()))
+  track(listen('menu-publish-unlisted', () => !overlayOpen() && openReviewSheet(null, 'unlisted')))
 
   // Open Recent: payload is the absolute file path. If the file is in the
   // current scan, select it; otherwise the path is stale (deleted/moved) —
@@ -854,10 +893,7 @@ onUnmounted(() => {
     <ToastStack />
 
     <!-- Help Modal -->
-    <HelpOverlay :show="showHelp" @close="showHelp = false" />
-
-    <!-- Search Modal -->
-    <SearchModal :show="searchOpen" :files="files" @close="closeSearch" @select="handleSearchSelect" />
+    <HelpOverlay v-model:section="helpSection" :show="showHelp" @close="showHelp = false" />
 
     <!-- Command palette (⌘K). Files + actions in one fuzzy list. -->
     <CommandPalette
@@ -878,12 +914,12 @@ onUnmounted(() => {
         }
       "
       @refresh="loadFiles"
-      @show-help="showHelp = true"
+      @show-help="(section) => openHelp(section)"
       @toggle-panel="(p) => (rightTab = p)"
       @publish="
         () => {
           paletteOpen = false
-          filePreviewRef?.openPublishConfirm?.(false)
+          openReviewSheet()
         }
       "
     />
@@ -913,10 +949,13 @@ onUnmounted(() => {
               }}.md
             </span>
             <div class="new-post-actions">
-              <button @click="closeNewPost" class="np-btn">Cancel</button>
-              <button @click="createNewPost" class="np-btn accent" :disabled="!newPostTitle.trim() || newPostCreating">
-                {{ newPostCreating ? 'Creating...' : 'Create & Open' }}
-              </button>
+              <UiButton variant="plain" label="Cancel" @click="closeNewPost" />
+              <UiButton
+                variant="primary"
+                :disabled="!newPostTitle.trim() || newPostCreating"
+                :label="newPostCreating ? 'Creating...' : 'Create & Open'"
+                @click="createNewPost"
+              />
             </div>
           </div>
         </div>
@@ -933,18 +972,18 @@ onUnmounted(() => {
         <div v-if="titlebarSubtitle" class="titlebar-subtitle">{{ titlebarSubtitle }}</div>
       </div>
       <div class="titlebar-btns">
-        <button @click="openNewPost" class="titlebar-btn" data-tip="New Post">
-          <Plus :size="16" />
-        </button>
-        <button @click="openSearch" class="titlebar-btn" data-tip="Search">
-          <Search :size="16" />
-        </button>
-        <button @click="loadFiles" class="titlebar-btn" :class="{ spinning: loading }" data-tip="Refresh">
-          <RefreshCw :size="16" />
-        </button>
-        <button @click="showSettings = true" class="titlebar-btn" data-tip="Settings">
-          <Settings :size="16" />
-        </button>
+        <UiButton variant="plain" :icon="PhPlus" data-tip="Create a new post (⌘N)" aria-label="New post" @click="openNewPost" />
+        <UiButton variant="plain" :icon="PhMagnifyingGlass" data-tip="Find a post or run a command (⌘K)" aria-label="Search posts and commands" @click="openSearch" />
+        <UiButton
+          variant="plain"
+          :icon="PhArrowsClockwise"
+          class="titlebar-btn"
+          :class="{ spinning: loading }"
+          data-tip="Rescan the vault now (⌘R)"
+          aria-label="Refresh"
+          @click="loadFiles"
+        />
+        <UiButton variant="plain" :icon="PhGear" data-tip="Open settings (⌘,)" aria-label="Settings" @click="showSettings = true" />
       </div>
     </header>
 
@@ -960,6 +999,13 @@ onUnmounted(() => {
             rightTab = 'preview'
           }
         "
+        @request-unpublish="
+          (f) => {
+            selectedFile = f
+            unpublishSelected()
+          }
+        "
+        @open-settings="showSettings = true"
       />
 
       <div class="right-panel">
@@ -973,31 +1019,45 @@ onUnmounted(() => {
              This is the Apple Mail two-row chrome: titlebar (title + actions)
              on top, tab strip below. -->
         <div class="panel-tabs">
-          <button data-tab="desk" :class="{ active: rightTab === 'desk' }" data-tip="The Desk (d)" @click="rightTab = 'desk'">
+          <!-- Left to right after the Desk: ⌘1–⌘5 (View menu, menu.rs). -->
+          <button data-tab="desk" :class="{ active: rightTab === 'desk' }" data-tip="Your writing desk: today’s pieces and what’s on deck (d)" @click="rightTab = 'desk'">
             <PhNewspaper :size="13" />
             <span>Desk</span>
           </button>
-          <button data-tab="preview" :class="{ active: rightTab === 'preview' }" @click="rightTab = 'preview'">
+          <button data-tab="preview" :class="{ active: rightTab === 'preview' }" data-tip="Check and publish the selected post (⌘1)" @click="rightTab = 'preview'">
             <Eye :size="13" />
             <span>Preview</span>
           </button>
-          <button data-tab="media" :class="{ active: rightTab === 'media' }" @click="rightTab = 'media'">
+          <button data-tab="media" :class="{ active: rightTab === 'media' }" data-tip="Browse images and video on Cloudinary (⌘2)" @click="rightTab = 'media'">
             <LucideImage :size="13" />
             <span>Media</span>
           </button>
-          <button data-tab="activity" :class="{ active: rightTab === 'activity' }" @click="rightTab = 'activity'">
-            <Activity :size="13" />
-            <span>Activity</span>
-          </button>
-          <button data-tab="modified" :class="{ active: rightTab === 'modified' }" @click="rightTab = 'modified'">
-            <Pencil :size="13" />
-            <span>Modified</span>
-            <span v-if="modifiedCount > 0" class="tab-badge">{{ modifiedCount }}</span>
-          </button>
-          <button data-tab="journal" :class="{ active: rightTab === 'journal' }" @click="rightTab = 'journal'">
+          <button data-tab="journal" :class="{ active: rightTab === 'journal' }" data-tip="See every publish and unpublish, by day (⌘3)" @click="rightTab = 'journal'">
             <BookOpen :size="13" />
             <span>Journal</span>
           </button>
+          <button data-tab="modified" :class="{ active: rightTab === 'modified' }" :data-tip="`${CHANGED_LABEL}: ${CHANGED_HINT} (⌘4)`" @click="rightTab = 'modified'">
+            <Pencil :size="13" />
+            <span>{{ CHANGED_TAB }}</span>
+            <span v-if="modifiedCount > 0" class="tab-badge">{{ modifiedCount }}</span>
+          </button>
+          <button data-tab="activity" :class="{ active: rightTab === 'activity' }" data-tip="See recent edits, publishes and social posts together (⌘5)" @click="rightTab = 'activity'">
+            <Activity :size="13" />
+            <span>Activity</span>
+          </button>
+          <span class="panel-tabs-spacer" />
+          <UiButton
+            v-if="rightTab === 'preview' && selectedFile"
+            variant="plain"
+            size="small"
+            :icon="PanelRight"
+            class="inspector-toggle"
+            :class="{ active: inspector.visible.value }"
+            :data-tip="inspector.visible.value ? 'Hide Inspector (⌥⌘I)' : 'Show Inspector (⌥⌘I)'"
+            :aria-label="inspector.visible.value ? 'Hide Inspector' : 'Show Inspector'"
+            :aria-pressed="inspector.visible.value"
+            @click="inspector.toggle()"
+          />
         </div>
 
         <div class="panel-content">
@@ -1015,7 +1075,7 @@ onUnmounted(() => {
             <div class="empty-icon">
               <FileText :size="48" :stroke-width="1" />
             </div>
-            <div class="empty-title">Select a post</div>
+            <div class="empty-title">Select a post on the left, or ⌘N for a new one</div>
             <div class="empty-shortcuts">
               <div class="shortcut-row">
                 <kbd>j</kbd>
@@ -1028,7 +1088,7 @@ onUnmounted(() => {
               </div>
               <div class="shortcut-row">
                 <kbd>?</kbd>
-                <span>all shortcuts</span>
+                <span>shortcuts</span>
               </div>
             </div>
           </div>
@@ -1053,6 +1113,7 @@ onUnmounted(() => {
             v-else-if="rightTab === 'modified'"
             :files="files"
             @select-file="(file) => { selectedFile = file; rightTab = 'preview' }"
+            @review-file="(file) => openReviewSheet(file)"
             @published="loadFiles"
           />
 
@@ -1126,15 +1187,16 @@ onUnmounted(() => {
         </span>
       </div>
       <div class="status-right">
-        <button
-          @click="compactMode = !compactMode"
+        <UiButton
+          variant="plain"
+          size="small"
+          :icon="compactMode ? PhRows : PhSquaresFour"
           class="status-btn"
           :class="{ active: compactMode }"
-          data-tip="Toggle compact view"
-        >
-          <PhRows v-if="compactMode" :size="11" weight="bold" />
-          <PhSquaresFour v-else :size="11" weight="bold" />
-        </button>
+          :data-tip="compactMode ? 'Show roomy rows (⌘⇧C)' : 'Show compact rows (⌘⇧C)'"
+          :aria-label="compactMode ? 'Show roomy rows' : 'Show compact rows'"
+          @click="compactMode = !compactMode"
+        />
         <span class="status-divider"></span>
         <span
           class="status-item"
@@ -1319,6 +1381,25 @@ onUnmounted(() => {
   padding: 0 8px;
   border-bottom: 1px solid var(--border);
   overflow: hidden;
+  /* Tabs collapse to icons when the bar is tight (see @container below). */
+  container-type: inline-size;
+  container-name: panel-tabs;
+}
+
+/* Not enough room for six labelled tabs: show icons only. Names stay in the
+   hover hints (data-tip) and for VoiceOver (visually hidden, not removed). */
+@container panel-tabs (max-width: 560px) {
+  .panel-tabs button[data-tab] > span:not(.tab-badge) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .panel-tabs button[data-tab] {
+    padding: 4px 7px;
+  }
 }
 
 .panel-tabs button {
@@ -1351,14 +1432,8 @@ onUnmounted(() => {
   opacity: 1;
 }
 
-/* Per-tab icon colors when active — matches Apple Mail's distinct-glyph
-   coloring on its Primary/Transactions/Updates/Promotions tabs. Keeps
-   each tab visually identifiable at a glance. Inactive icons stay muted. */
-.panel-tabs button[data-tab='preview'].active > svg { color: var(--accent); }
-.panel-tabs button[data-tab='media'].active > svg    { color: #a78bfa; } /* violet */
-.panel-tabs button[data-tab='activity'].active > svg { color: #34d399; } /* green */
-.panel-tabs button[data-tab='modified'].active > svg { color: var(--warning); } /* amber/orange */
-.panel-tabs button[data-tab='journal'].active > svg  { color: #fbbf24; } /* gold */
+/* Tab glyphs are monochrome: these are tools, not a color-coded taxonomy.
+   Hue is reserved for status, so a colored glyph here would read as one. */
 
 .panel-tabs button:hover {
   color: var(--text-secondary);
@@ -1366,12 +1441,12 @@ onUnmounted(() => {
 }
 
 .panel-tabs button.active {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--label);
+  background: var(--fill-2);
   font-weight: 600;
 }
 .panel-tabs button.active:hover {
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: var(--fill-2);
 }
 
 /* Numeric badge nested inside a panel-tab button (e.g. "Modified · 12"). */
@@ -1386,8 +1461,9 @@ onUnmounted(() => {
   font-size: 9px;
   font-weight: 600;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--warning) 22%, transparent);
-  color: var(--warning);
+  /* The one status-colored thing on the tab strip: N posts need attention. */
+  background: var(--tint-attention);
+  color: var(--label);
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -1398,50 +1474,35 @@ onUnmounted(() => {
    is load-bearing — Tauri 2's `data-tauri-drag-region` attribute alone is
    unreliable in dev mode; the CSS rule is what actually activates the
    OS-level drag handle. */
-/* .panel-tabs-spacer removed — the unified titlebar above now hosts the
-   trailing toolbar buttons and the window-drag region, so the panel-tabs
-   row no longer needs a spacer between tabs and (former) right-side
-   buttons. */
+/* Pushes the inspector toggle to the strip's right edge. */
+.panel-tabs-spacer {
+  flex: 1;
+  min-width: var(--space-2);
+}
+.inspector-toggle {
+  flex-shrink: 0;
+  margin-right: -2px;
+}
+.inspector-toggle.active {
+  color: var(--label);
+}
+/* The strip's tooltip would overflow the window's right edge. */
+.panel-tabs .inspector-toggle::after {
+  left: auto;
+  right: 0;
+  transform: translateX(0) translateY(-2px);
+}
+.panel-tabs .inspector-toggle:hover::after {
+  transform: translateX(0) translateY(0);
+}
 
 .titlebar-btns {
   -webkit-app-region: no-drag;
   display: flex;
   /* Apple's NSToolbar trailing item spacing is ~4px. */
-  gap: 4px;
+  gap: var(--space-1);
   flex-shrink: 0;
   align-items: center;
-}
-
-.titlebar-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  /* NSToolbar-ish sizing — 30px hit target, 16px glyph (was a too-cute
-     26/13). Matches Finder/Mail's titlebar buttons. */
-  width: 30px;
-  height: 30px;
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--transition-fast);
-  -webkit-app-region: no-drag;
-}
-
-.titlebar-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.titlebar-btn:active {
-  /* macOS push-buttons darken on press, not shrink. */
-  background: color-mix(in srgb, var(--bg-tertiary) 80%, black);
-}
-
-.titlebar-btn.active {
-  color: var(--text-primary);
-  background: var(--hover-bg);
 }
 
 .titlebar-btn.spinning :deep(svg) {
@@ -1530,7 +1591,7 @@ onUnmounted(() => {
 }
 
 .status-item.connected {
-  color: var(--success);
+  color: var(--text-secondary);
 }
 
 .status-item.muted {
@@ -1557,32 +1618,15 @@ onUnmounted(() => {
 }
 
 .status-item.connected :deep(svg) {
-  color: var(--success);
+  color: var(--status-live);
 }
 
 .status-item.muted :deep(svg) {
   opacity: 0.4;
 }
 
-.status-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 0 2px;
-  display: flex;
-  align-items: center;
-  transition: all var(--transition-fast);
-  border-radius: 3px;
-}
-
-.status-btn:hover {
-  background: var(--hover-bg);
-  color: var(--text-secondary);
-}
-
 .status-btn.active {
-  color: var(--text-primary);
+  color: var(--label);
 }
 
 /* Keep tooltips from overflowing left edge */
@@ -1638,40 +1682,8 @@ onUnmounted(() => {
 
 .new-post-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--space-2);
   flex-shrink: 0;
-}
-
-.np-btn {
-  padding: 5px 12px;
-  font-size: 11px;
-  font-weight: 500;
-  border: 1px solid var(--border-light);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.np-btn:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-
-.np-btn.accent {
-  background: var(--selection-bg);
-  color: #fff;
-  border-color: transparent;
-}
-
-.np-btn.accent:hover {
-  background: color-mix(in srgb, var(--selection-bg) 88%, white);
-}
-
-.np-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 
 /* Native macOS window unfocused dimming */
@@ -1701,18 +1713,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--accent) 18%, rgba(0, 0, 0, 0.55));
+  /* A drop target is a selection-like affordance: accent. Markdown and
+     media drops look the same; only an unsupported drop is red. */
+  background: color-mix(in srgb, var(--accent) 18%, var(--scrim));
   pointer-events: none;
 }
 
-.drag-overlay.media {
-  background: color-mix(in srgb, var(--accent) 22%, rgba(0, 0, 0, 0.6));
-}
-.drag-overlay.markdown {
-  background: color-mix(in srgb, var(--success) 18%, rgba(0, 0, 0, 0.55));
-}
 .drag-overlay.unsupported {
-  background: color-mix(in srgb, var(--danger) 22%, rgba(0, 0, 0, 0.55));
+  background: color-mix(in srgb, var(--status-broken) 18%, var(--scrim));
 }
 
 .drag-overlay-card {
@@ -1726,24 +1734,18 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   max-width: 480px;
-  box-shadow: var(--shadow-lg, 0 24px 48px rgba(0, 0, 0, 0.4));
-}
-.drag-overlay.markdown .drag-overlay-card {
-  border-color: var(--success);
+  box-shadow: var(--shadow-lg);
 }
 .drag-overlay.unsupported .drag-overlay-card {
-  border-color: var(--danger);
+  border-color: var(--status-broken);
 }
 
 .drag-overlay-icon {
   color: var(--accent);
   animation: drag-overlay-pulse 1.6s ease-in-out infinite;
 }
-.drag-overlay.markdown .drag-overlay-icon {
-  color: var(--success);
-}
 .drag-overlay.unsupported .drag-overlay-icon {
-  color: var(--danger);
+  color: var(--status-broken);
   animation: none;
 }
 

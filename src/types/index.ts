@@ -212,3 +212,54 @@ export interface PostAnalytics {
   bounces: number
   totaltime: number
 }
+
+// ── Publish review (Rust `publish::PublishPreview`) ─────────────────────────
+
+/** A publish time read from frontmatter. */
+export interface WhenField {
+  /** `publishAt`, `date` or `publish_at`. */
+  key: string
+  raw: string
+  /** UTC RFC 3339, or null when the value has no zone. */
+  utc: string | null
+  /** A bare YYYY-MM-DD: the site reads it as UTC midnight. */
+  date_only: boolean
+}
+
+export interface PublishBlocker {
+  kind: string
+  message: string
+}
+
+export interface SyndicationPlan {
+  network: string
+  /** `queued`: already in the queue with a time, sends on its own.
+   *  `ask`: Dispatch opens the share sheet and waits. */
+  mode: 'queued' | 'ask'
+  scheduled_at: string | null
+}
+
+/** What a publish will do, from `publish_preview`. Nothing has been written. */
+export interface PublishPreview {
+  title: string
+  slug: string
+  kind: 'blog' | 'dispatch'
+  is_update: boolean
+  url: string
+  rel_path: string
+  repo_name: string
+  repo_path: string
+  branch: string
+  current_branch: string
+  on_branch: boolean
+  other_uncommitted: number
+  clobber_ok: boolean
+  visibility: 'public' | 'unlisted' | 'password'
+  embargo: WhenField | null
+  dispatch_schedule: WhenField | null
+  webmentions_after_live: boolean
+  bridgy_fed: boolean
+  syndication: SyndicationPlan[]
+  deploy_estimate_secs: number
+  blocked: PublishBlocker | null
+}

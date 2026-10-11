@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { PhX, PhCaretDown, PhArrowFatLineUp, PhArrowFatLineDown } from '@phosphor-icons/vue'
 import type { PublishDiff } from '../types'
+import UiButton from './ui/UiButton.vue'
 
 const props = defineProps<{
   filePath: string
@@ -56,9 +57,7 @@ watch(
           −{{ diff.words_removed }}<span class="diff-stat-unit">w</span>
         </span>
       </template>
-      <button class="diff-close" @click="emit('close')" data-tip="Collapse">
-        <PhX :size="11" weight="bold" />
-      </button>
+      <UiButton size="small" variant="plain" :icon="PhX" class="diff-close" aria-label="Hide changes" data-tip="Hide the changes" @click="emit('close')" />
     </div>
 
     <div v-if="loading" class="diff-state muted">Computing diff…</div>
@@ -156,17 +155,6 @@ watch(
 
 .diff-close {
   margin-left: auto;
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 3px;
-  border-radius: 3px;
-  display: inline-flex;
-}
-.diff-close:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
 }
 
 .diff-state {

@@ -1,19 +1,33 @@
 <script setup lang="ts">
-import { Command } from 'lucide-vue-next'
+/**
+ * The inspector's action block, top to bottom:
+ *
+ *   [ Update live post… ]            the ONE accent button, full width
+ *   Open in   [ ✎ | ✎ | ▶ ]           icon-only, labels in tooltips
+ *   Share     [ ↗ | 🔗▾ | ⇪ ]          live posts only
+ *   [ ⋯ More ]                        native menu: Convert to Vue Page… ·
+ *                                     Unpublish… (live) · Publish later… ·
+ *                                     Unlisted… (not live)
+ *
+ * For a post that isn't live the primary is Publish… / See what to fix….
+ */
+import { computed } from 'vue'
+import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
+import { LogicalPosition } from '@tauri-apps/api/dpi'
 import {
   PhNotePencil,
   PhPlay,
   PhArrowSquareOut,
-  PhArrowsClockwise,
+  PhLink,
   PhArrowSquareUpRight,
-  PhTrash,
-  PhFileCode,
-  PhClock,
-  PhEyeSlash,
+  PhDotsThree,
 } from '@phosphor-icons/vue'
 import type { EditorConfig, PublishTarget } from '../types'
+import { SITE_PREVIEW_HINT } from '../utils/vocab'
+import UiButton from './ui/UiButton.vue'
+import UiButtonGroup from './ui/UiButtonGroup.vue'
 
-defineProps<{
+const props = defineProps<{
   enabledEditors: EditorConfig[]
   publishTargets: PublishTarget[]
   hasMultipleTargets: boolean
@@ -29,289 +43,202 @@ defineProps<{
   isUnlisted: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   'open-obsidian': []
   'open-editor': [appName: string]
   'open-preview': []
   'select-target': [id: string]
-  'view-live': []
   'show-syndication': []
+  'copy-share-link': [source: string, medium: string]
   'convert-to-vue-page': []
   unpublish: []
   'open-publish-confirm': [isRepublish: boolean]
   'publish-unlisted': []
   'toggle-schedule': []
 }>()
+
+/** Pop a native menu just under the button that was clicked. */
+async function popupBelow(e: MouseEvent, menu: Menu) {
+  const el = (e.currentTarget as HTMLElement | null) ?? null
+  if (!el) return menu.popup()
+  const r = el.getBoundingClientRect()
+  return menu.popup(new LogicalPosition(r.left, r.bottom + 4))
+}
+
+async function showCopyLinkMenu(e: MouseEvent) {
+  const menu = await Menu.new({
+    items: [
+      await MenuItem.new({ text: 'Copy link for X', action: () => emit('copy-share-link', 'x', 'social') }),
+      await MenuItem.new({
+        text: 'Copy link for newsletter',
+        action: () => emit('copy-share-link', 'newsletter', 'email'),
+      }),
+    ],
+  })
+  await popupBelow(e, menu)
+}
+
+// Rare and destructive actions live here, off the main rows. For a post
+// that isn't live, the publish alternates (later / unlisted) live here too.
+const canPublishLater = computed(() => !props.isLive && props.isSafe && !props.isScheduled)
+const canPublishUnlisted = computed(() => !props.isLive && props.isSafe && !props.isUnlisted && !props.publishing)
+const hasMore = computed(
+  () => !props.isVuePage || props.isLive || canPublishLater.value || canPublishUnlisted.value,
+)
+
+async function showMoreMenu(e: MouseEvent) {
+  const items: (MenuItem | PredefinedMenuItem)[] = []
+  if (canPublishLater.value) {
+    items.push(await MenuItem.new({ text: 'Publish later…', action: () => emit('toggle-schedule') }))
+  }
+  if (canPublishUnlisted.value) {
+    items.push(await MenuItem.new({ text: 'Publish as Unlisted…', action: () => emit('publish-unlisted') }))
+  }
+  if (!props.isVuePage) {
+    if (items.length) items.push(await PredefinedMenuItem.new({ item: 'Separator' }))
+    items.push(
+      await MenuItem.new({
+        text: props.converting ? 'Converting…' : 'Convert to Vue Page…',
+        enabled: !props.converting,
+        action: () => emit('convert-to-vue-page'),
+      }),
+    )
+  }
+  if (props.isLive) {
+    if (items.length) items.push(await PredefinedMenuItem.new({ item: 'Separator' }))
+    items.push(
+      await MenuItem.new({
+        text: props.unpublishing ? 'Unpublishing…' : 'Unpublish…',
+        enabled: !props.unpublishing,
+        action: () => emit('unpublish'),
+      }),
+    )
+  }
+  const menu = await Menu.new({ items })
+  await popupBelow(e, menu)
+}
 </script>
 
 <template>
-  <div class="toolbar">
-    <div class="toolbar-open">
-      <button
-        v-for="editor in enabledEditors"
-        :key="editor.app_name"
-        @click="editor.app_name === 'Obsidian' ? $emit('open-obsidian') : $emit('open-editor', editor.app_name)"
-        class="tool-btn"
-        :data-tip="`Open in ${editor.name}`"
-      >
-        <PhNotePencil :size="12" weight="duotone" />
-        {{ editor.name }}
-      </button>
-      <button @click="$emit('open-preview')" class="tool-btn" data-tip="Open local preview server">
-        <PhPlay :size="12" weight="fill" />
-        Preview
-      </button>
+  <div class="actions">
+    <select
+      v-if="hasMultipleTargets"
+      class="target-select"
+      aria-label="Publish target"
+      :value="selectedTargetId || publishTargets.find((t) => t.is_default)?.id"
+      @change="emit('select-target', ($event.target as HTMLSelectElement).value)"
+    >
+      <option v-for="t in publishTargets" :key="t.id" :value="t.id">
+        {{ t.name }}
+      </option>
+    </select>
+
+    <!-- Primary: the one accent button on the screen. -->
+    <UiButton
+      v-if="isLive"
+      variant="primary"
+      class="full"
+      :disabled="publishing"
+      :label="publishing ? 'Publishing…' : 'Update live post…'"
+      @click="emit('open-publish-confirm', true)"
+    />
+    <UiButton v-else variant="primary" class="full" :disabled="publishing" @click="emit('open-publish-confirm', false)">
+      {{ publishing ? 'Publishing…' : isSafe ? 'Publish…' : 'See what to fix…' }}
+      <kbd v-if="isSafe && !publishing">⌘&crarr;</kbd>
+    </UiButton>
+
+    <!-- Open in -->
+    <div class="insp-row">
+      <span class="insp-label">Open in</span>
+      <UiButtonGroup label="Open in">
+        <UiButton
+          v-for="editor in enabledEditors"
+          :key="editor.app_name"
+          size="small"
+          :icon="PhNotePencil"
+          :aria-label="`Open in ${editor.name}`"
+          @click="editor.app_name === 'Obsidian' ? emit('open-obsidian') : emit('open-editor', editor.app_name)"
+        />
+        <UiButton
+          size="small"
+          :icon="PhPlay"
+          aria-label="Open site preview"
+          :title="SITE_PREVIEW_HINT"
+          @click="emit('open-preview')"
+        />
+      </UiButtonGroup>
     </div>
-    <div class="toolbar-actions">
-      <select
-        v-if="hasMultipleTargets"
-        class="target-select"
-        :value="selectedTargetId || publishTargets.find((t) => t.is_default)?.id"
-        @change="$emit('select-target', ($event.target as HTMLSelectElement).value)"
-      >
-        <option v-for="t in publishTargets" :key="t.id" :value="t.id">
-          {{ t.name }}
-        </option>
-      </select>
-      <template v-if="isLive">
-        <a :href="liveUrl!" target="_blank" class="btn">
-          <PhArrowSquareOut :size="12" weight="bold" />
-          View
-        </a>
-        <button @click="$emit('show-syndication')" class="btn syndicate-btn" data-tip="Share to social platforms">
-          <PhArrowSquareUpRight :size="12" weight="bold" />
-          Syndicate
-        </button>
-        <button
-          v-if="!isVuePage"
-          @click="$emit('convert-to-vue-page')"
-          :disabled="converting"
-          class="btn vue-page-btn"
-          data-tip="Convert this post to a custom Vue page (takes over the standard blog template)"
-        >
-          <PhFileCode :size="12" weight="bold" />
-          {{ converting ? 'Converting...' : 'Convert to Vue Page' }}
-        </button>
-        <span v-else class="vue-page-badge" data-tip="This post is a custom Vue page">
-          <PhFileCode :size="10" weight="fill" />
-          Vue Page
-        </span>
-        <button @click="$emit('unpublish')" :disabled="unpublishing" class="btn">
-          <PhTrash :size="12" weight="bold" />
-          {{ unpublishing ? '...' : 'Unpublish' }}
-        </button>
-        <button @click="$emit('open-publish-confirm', true)" :disabled="publishing" class="btn accent">
-          <PhArrowsClockwise :size="12" weight="bold" />
-          {{ publishing ? '...' : 'Republish' }}
-        </button>
-      </template>
-      <template v-else>
-        <button v-if="isSafe && !isScheduled" @click="$emit('toggle-schedule')" class="btn">
-          <PhClock :size="12" weight="bold" />
-          Schedule
-        </button>
-        <button
-          v-if="isSafe && !isUnlisted && !publishing"
-          @click="$emit('publish-unlisted')"
-          class="btn publish-unlisted-btn"
-        >
-          <PhEyeSlash :size="12" weight="bold" />
-          Unlisted
-        </button>
-        <button
-          @click="$emit('open-publish-confirm', false)"
-          :disabled="!isSafe || publishing"
-          class="btn accent publish-btn"
-          :class="{ disabled: !isSafe, full: !isSafe || isScheduled }"
-        >
-          <span>{{ publishing ? 'Publishing...' : isSafe ? 'Publish' : 'Fix issues to publish' }}</span>
-          <kbd v-if="isSafe && !publishing" class="shortcut-hint">
-            <Command :size="10" />
-            &crarr;
-          </kbd>
-        </button>
-      </template>
+
+    <!-- Share -->
+    <div v-if="isLive && liveUrl" class="insp-row">
+      <span class="insp-label">Share</span>
+      <UiButtonGroup label="Share">
+        <UiButton size="small" :href="liveUrl" :icon="PhArrowSquareOut" aria-label="View on site" />
+        <UiButton
+          size="small"
+          :icon="PhLink"
+          menu
+          aria-label="Copy link"
+          title="Tagged link for X or the newsletter"
+          @click="showCopyLinkMenu"
+        />
+        <UiButton
+          size="small"
+          :icon="PhArrowSquareUpRight"
+          aria-label="Syndicate…"
+          title="Share to social platforms"
+          @click="emit('show-syndication')"
+        />
+      </UiButtonGroup>
     </div>
+
+    <!-- More -->
+    <UiButton
+      v-if="hasMore"
+      variant="plain"
+      size="small"
+      class="full more"
+      :icon="PhDotsThree"
+      label="More"
+      menu
+      @click="showMoreMenu"
+    />
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  padding: 8px 16px;
+.actions {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  border-bottom: 1px solid var(--border);
+  gap: var(--space-2);
+  min-width: 0;
 }
 
-.toolbar-open {
-  display: flex;
-  gap: 4px;
+/* Full-width rows. (Not UiButton's `block`: that is flex:1, which in a
+   column would grow the button vertically.) */
+.actions > .full {
+  width: 100%;
+}
+.actions > .more {
+  justify-content: flex-start;
+  /* Flush with the section's left edge like the row labels. */
+  margin-left: calc(-1 * var(--space-2));
+  width: calc(100% + var(--space-2));
 }
 
-.tool-btn {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 4px 6px;
-  height: 26px;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
-}
-
-.tool-btn:hover {
-  background: var(--bg-tertiary);
-  border-color: var(--border-light);
-  color: var(--text-primary);
-}
-
-.tool-btn:active {
-  /* No scale(0.97) — macOS push-buttons darken on press, not shrink. */
-  background: color-mix(in srgb, var(--bg-tertiary) 90%, black);
-}
-
-.tool-btn svg {
+/* Icon groups keep their natural width and sit at the right edge. */
+.insp-row > .ui-btn-group {
   flex-shrink: 0;
 }
 
-.toolbar-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
 .target-select {
-  padding: 4px 8px;
-  font-size: 10px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-family: 'SF Mono', monospace;
-}
-
-.btn {
-  /* macOS push-button proportions — tighter than the old 8/16 and
-     without the lift-on-hover / brightness(1.1) animation. Mac buttons
-     darken on hover; they don't bounce. */
-  padding: 5px 12px;
-  border: none;
-  border-radius: 5px;
+  height: 28px;
+  width: 100%;
+  padding: 0 var(--space-2);
   font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  text-decoration: none;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  transition: background 0.12s ease, color 0.12s ease;
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.btn:hover {
-  background: color-mix(in srgb, var(--bg-tertiary) 70%, white);
-}
-
-.btn:active {
-  /* No transform — macOS native uses a darker fill on press, not movement. */
-  background: color-mix(in srgb, var(--bg-tertiary) 90%, black);
-}
-
-.btn.accent {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.btn.full {
-  flex: 1;
-}
-
-.btn.disabled,
-.btn:disabled {
-  background: var(--bg-tertiary);
-  color: var(--text-tertiary);
-  cursor: not-allowed;
-  filter: none;
-}
-
-.publish-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: var(--accent) !important;
-  color: var(--accent-contrast) !important;
-}
-
-.publish-btn:hover:not(:disabled) {
-  background: var(--accent-strong) !important;
-}
-
-.publish-btn:disabled {
-  background: var(--bg-tertiary) !important;
-  color: var(--text-tertiary) !important;
-}
-
-.publish-unlisted-btn {
-  background: var(--accent-soft) !important;
-  color: var(--accent) !important;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent) !important;
-}
-
-.publish-unlisted-btn:hover {
-  background: color-mix(in srgb, var(--accent) 22%, transparent) !important;
-}
-
-.shortcut-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 5px;
-  background: rgba(0, 0, 0, 0.15);
-  border: none;
-  border-radius: 3px;
-  font-size: 9px;
-  font-family: 'SF Mono', monospace;
-  color: inherit;
-  opacity: 0.8;
-}
-
-/* Vue Page conversion button */
-.vue-page-btn {
-  background: rgba(245, 158, 11, 0.15) !important;
-  color: var(--warning) !important;
-  border: 1px solid rgba(245, 158, 11, 0.2) !important;
-}
-.vue-page-btn:hover:not(:disabled) {
-  background: rgba(245, 158, 11, 0.25) !important;
-}
-
-.vue-page-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 9px;
-  font-weight: 600;
-  color: var(--warning);
-  padding: 3px 8px;
+  color: var(--label);
+  background: transparent;
+  border: 1px solid var(--separator);
   border-radius: 6px;
-  background: rgba(245, 158, 11, 0.1);
-  letter-spacing: 0.03em;
-}
-
-.syndicate-btn {
-  color: var(--accent) !important;
 }
 </style>

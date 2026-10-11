@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
+import UiButton from '../ui/UiButton.vue'
 
 interface CloudinaryAsset {
   public_id: string
@@ -89,7 +90,7 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
       <div class="asset-thumbnail">
         <img :src="getThumbnailUrl(asset)" :alt="asset.public_id" loading="lazy" />
         <span v-if="asset.resource_type === 'video'" class="badge video">VID</span>
-        <span v-if="getUsageCount(asset.public_id) === 0" class="badge unused" title="Not used in any posts">•</span>
+        <span v-if="getUsageCount(asset.public_id) === 0" class="badge unused" data-tip="Not used in any post" aria-label="Not used in any post">•</span>
         <span v-else-if="getUsageCount(asset.public_id) > 0" class="badge used">
           {{ getUsageCount(asset.public_id) }}
         </span>
@@ -101,9 +102,7 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
   </div>
 
   <div v-if="nextCursor && !showUnusedOnly" class="load-more">
-    <button @click="emit('loadMore')" :disabled="loading">
-      {{ loading ? '...' : 'Load More' }}
-    </button>
+    <UiButton size="small" :disabled="loading" :label="loading ? '…' : 'Load More'" @click="emit('loadMore')" />
   </div>
 
   <div class="modal-footer">
@@ -147,7 +146,7 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
 }
 
 .asset-card {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--fill);
   border: 2px solid transparent;
   border-radius: 6px;
   overflow: hidden;
@@ -156,17 +155,17 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
 }
 
 .asset-card:hover {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: var(--label-3);
 }
 
 .asset-card.selected {
-  border-color: rgba(255, 255, 255, 0.5);
+  border-color: var(--accent);
 }
 
 .asset-thumbnail {
   position: relative;
   height: 80px;
-  background: #111;
+  background: var(--under-page);
   overflow: hidden;
 }
 
@@ -185,6 +184,9 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
   letter-spacing: 0.3px;
 }
 
+/* .video / .unused / .used sit ON the thumbnail image, so they keep fixed
+   light-on-photo colors in both modes (an image doesn't change with the
+   appearance). */
 .badge.video {
   top: 4px;
   left: 4px;
@@ -207,7 +209,7 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
 .badge.used {
   top: 4px;
   right: 4px;
-  background: var(--success);
+  background: var(--status-live);
   color: #000;
 }
 
@@ -225,28 +227,13 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
 }
 
 .load-more {
-  padding: 8px;
+  padding: var(--space-2);
   text-align: center;
 }
-
-.load-more button {
-  padding: 6px 20px;
-  font-size: 11px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.load-more button:hover {
-  background: rgba(255, 255, 255, 0.15);
-}
-
 .modal-footer {
   padding: 8px 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid var(--separator);
+  background: var(--fill);
 }
 
 .hint {
@@ -259,8 +246,8 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
   padding: 1px 4px;
   font-family: 'SF Mono', monospace;
   font-size: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--fill);
+  border: 1px solid var(--separator);
   border-radius: 2px;
   margin: 0 2px;
 }

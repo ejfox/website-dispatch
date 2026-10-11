@@ -3,12 +3,15 @@
 // Data comes from the `desk` CLI (Rust runs it off the UI thread). The last
 // good snapshot is cached so the view paints instantly on launch, then
 // refreshes in the background.
+import { parseDate } from '../utils/formatting'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { ask } from '@tauri-apps/plugin-dialog'
 import { useLocalStorage } from '@vueuse/core'
 import type { DeskToday, DeskStory, MarkdownFile } from '../types'
+import { PhArrowsCounterClockwise } from '@phosphor-icons/vue'
+import UiButton from './ui/UiButton.vue'
 
 const props = defineProps<{ files: MarkdownFile[] }>()
 const emit = defineEmits<{ started: [notePath: string] }>()
@@ -40,6 +43,10 @@ const loading = ref(false)
 const loadError = ref<string | null>(null)
 const loadedAt = ref(0)
 
+// desk.rs words a missing binary as "Couldn't find the desk command at …".
+// That isn't an error to retry, it's setup; say what the Desk needs.
+const deskMissing = computed(() => !!loadError.value?.startsWith('Couldn\'t find the desk command'))
+
 async function load() {
   loading.value = true
   try {
@@ -69,7 +76,7 @@ const slotLabel = computed(() => {
   return `making slot opens ${d.slot.start}`
 })
 function dayLetter(iso: string) {
-  return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: 'narrow' })
+  return parseDate(iso)?.toLocaleDateString(undefined, { weekday: 'narrow' }) ?? ''
 }
 
 // Before 6:45 the desk hasn't been stocked yet.
@@ -226,6 +233,8 @@ onUnmounted(() => {
 
 <template>
   <div class="desk">
+    <p class="desk-intro">Your writing desk: today’s pieces and what’s on deck</p>
+
     <!-- Header: streak · week · slot -->
     <header class="desk-head">
       <div class="streak" :class="{ zero: !desk?.streak }">
@@ -247,17 +256,34 @@ onUnmounted(() => {
       <div class="slot" :class="{ open: desk?.slot.open && !desk?.shipped_today, done: desk?.shipped_today }">
         {{ slotLabel }}
       </div>
-      <button class="refresh" :class="{ spinning: loading }" data-tip="Refresh the desk" @click="load">↻</button>
+      <UiButton variant="plain" size="small" :icon="PhArrowsCounterClockwise" class="refresh" :class="{ spinning: loading }" data-tip="Reload today’s desk" aria-label="Reload the desk" @click="load" />
     </header>
 
+    <!-- No desk command: teach the setup instead of showing an error -->
+    <div v-if="deskMissing && !desk" class="setup">
+      <div class="setup-title">The Desk needs chart-desk</div>
+      <p>
+        Each morning chart-desk finds a story, pulls the data and sketches a chart. The Desk shows that
+        bench here so you can start the piece in one keystroke. Dispatch reads it from the
+        <code>desk</code> command, which isn't at <code>~/.local/bin/desk</code>.
+      </p>
+      <p>To set it up, put chart-desk in <code>~/code/chart-desk</code> and link its CLI:</p>
+      <pre>ln -s ~/code/chart-desk/desk.py ~/.local/bin/desk</pre>
+      <p class="setup-sub">
+        Or point <code>DISPATCH_DESK_BIN</code> at it. Everything else in Dispatch works without it, and
+        Settings › Vault › Open to can start you on another tab.
+      </p>
+      <UiButton size="small" label="Check again" @click="load" />
+    </div>
+
     <!-- Couldn't read the desk -->
-    <div v-if="loadError && !desk" class="notice bad">
+    <div v-else-if="loadError && !desk" class="notice bad">
       <div>{{ loadError }}</div>
-      <button class="btn" @click="load">Try again</button>
+      <UiButton size="small" label="Try again" @click="load" />
     </div>
     <div v-else-if="loadError" class="notice subtle">
       Showing the last desk snapshot — {{ loadError }}
-      <button class="link-btn" @click="load">Retry</button>
+      <UiButton variant="plain" size="small" label="Retry" @click="load" />
     </div>
 
     <div v-if="!desk && loading" class="skeleton">
@@ -279,12 +305,8 @@ onUnmounted(() => {
         {{ livePiece.published_url?.replace(/^https?:\/\//, '') }}
       </div>
       <div class="live-actions">
-        <button class="btn" @click="copyShare('x', 'social')">
-          {{ copied === 'x' ? 'Copied' : 'Copy link for X' }}
-        </button>
-        <button class="btn" @click="copyShare('newsletter', 'email')">
-          {{ copied === 'newsletter' ? 'Copied' : 'Copy link for newsletter' }}
-        </button>
+        <UiButton size="small" :label="copied === 'x' ? 'Copied' : 'Copy link for X'" @click="copyShare('x', 'social')" />
+        <UiButton size="small" :label="copied === 'newsletter' ? 'Copied' : 'Copy link for newsletter'" @click="copyShare('newsletter', 'email')" />
       </div>
     </div>
 
@@ -324,23 +346,24 @@ onUnmounted(() => {
       </div>
 
       <div class="actions">
-        <button class="btn primary big" :disabled="starting" @click="startPiece">
+        <!-- The Desk's one primary action. -->
+        <UiButton variant="primary" :disabled="starting" @click="startPiece">
           {{ starting ? 'Starting…' : 'Start piece' }} <kbd>⏎</kbd>
-        </button>
-        <button class="btn" :disabled="!bench.chart_html" @click="openPath(bench.chart_html)">Sketch <kbd>s</kbd></button>
-        <button
-          class="btn"
+        </UiButton>
+        <UiButton size="small" :disabled="!bench.chart_html" @click="openPath(bench.chart_html)">Sketch <kbd>s</kbd></UiButton>
+        <UiButton
+          size="small"
           :disabled="!bench.can_check || jobRunning('check', bench.id)"
           @click="startJob('check', bench)"
         >
           {{ jobRunning('check', bench.id) ? 'Checking…' : 'Fact-check my version' }} <kbd>x</kbd>
-        </button>
-        <button class="btn" @click="openPath(bench.dir)">Folder <kbd>f</kbd></button>
+        </UiButton>
+        <UiButton size="small" @click="openPath(bench.dir)">Folder <kbd>f</kbd></UiButton>
       </div>
 
       <div v-if="actionError" class="notice bad">
         <div>{{ actionError.message }}</div>
-        <button class="btn" @click="actionError.retry()">Try again</button>
+        <UiButton size="small" label="Try again" @click="actionError.retry()" />
       </div>
 
       <div v-if="jobRunning('check', bench.id)" class="notice busy">
@@ -401,20 +424,57 @@ onUnmounted(() => {
             {{ jobNotes['build:' + s.id].text }}
           </div>
         </div>
-        <button
+        <UiButton
           v-if="s.can_build"
-          class="btn"
+          size="small"
           :disabled="jobRunning('build', s.id)"
+          :label="jobRunning('build', s.id) ? 'Building…' : 'Build'"
           @click="startJob('build', s)"
-        >
-          {{ jobRunning('build', s.id) ? 'Building…' : 'Build' }}
-        </button>
+        />
       </div>
     </section>
   </div>
 </template>
 
 <style scoped>
+.desk-intro {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.setup {
+  max-width: 520px;
+  padding: 16px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.setup-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.setup p {
+  margin: 0 0 8px;
+}
+.setup-sub {
+  color: var(--text-tertiary);
+}
+.setup code,
+.setup pre {
+  font-family: 'SF Mono', monospace;
+  font-size: 11px;
+}
+.setup pre {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  background: var(--kbd-bg);
+  border-radius: 4px;
+  user-select: text;
+}
+
 .desk {
   height: 100%;
   overflow-y: auto;
@@ -472,8 +532,8 @@ onUnmounted(() => {
   background: transparent;
 }
 .day.shipped .dot {
-  background: var(--success);
-  border-color: var(--success);
+  background: var(--status-live);
+  border-color: var(--status-live);
 }
 .day.today .dot {
   outline: 2px solid var(--accent);
@@ -492,12 +552,12 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 .slot.open {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
+  background: var(--fill-2);
+  color: var(--label);
 }
 .slot.done {
-  background: color-mix(in srgb, var(--success) 16%, transparent);
-  color: var(--success);
+  background: var(--tint-live);
+  color: var(--label);
 }
 .desk-head {
   position: relative;
@@ -507,19 +567,8 @@ onUnmounted(() => {
   position: absolute;
   top: 0;
   right: 0;
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  font-size: 16px;
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 6px;
 }
-.refresh:hover {
-  color: var(--text-primary);
-  background: var(--hover-bg);
-}
-.refresh.spinning {
+.refresh.spinning :deep(svg) {
   animation: spin 0.9s linear infinite;
 }
 @keyframes spin {
@@ -557,8 +606,9 @@ onUnmounted(() => {
   font-weight: 400;
   margin-left: 6px;
 }
+/* A favorite, not a status: neutral. */
 .star {
-  color: var(--warning);
+  color: var(--label);
   font-size: 13px;
 }
 .coverage {
@@ -576,21 +626,22 @@ onUnmounted(() => {
   background: var(--hover-bg);
   color: var(--text-tertiary);
 }
+/* Tint carries the tone; text stays neutral. "busy" is neutral — the
+   only in-flight color is the deploying dot. */
+.pill[data-tone] {
+  color: var(--label);
+}
 .pill[data-tone='ok'] {
-  background: color-mix(in srgb, var(--success) 16%, transparent);
-  color: var(--success);
+  background: var(--tint-live);
 }
 .pill[data-tone='warn'] {
-  background: color-mix(in srgb, var(--warning) 16%, transparent);
-  color: var(--warning);
+  background: var(--tint-attention);
 }
 .pill[data-tone='bad'] {
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
-  color: var(--danger);
+  background: var(--tint-broken);
 }
 .pill[data-tone='busy'] {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
+  background: var(--fill-2);
 }
 .chart {
   border-radius: 8px;
@@ -654,43 +705,9 @@ onUnmounted(() => {
 }
 .actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
   align-items: center;
-}
-.btn {
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 7px;
-  border: 1px solid var(--border-light);
-  background: var(--hover-bg);
-  color: var(--text-primary);
-  cursor: pointer;
-}
-.btn:hover:not(:disabled) {
-  background: var(--active-bg);
-}
-.btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-contrast);
-}
-.btn.primary:hover:not(:disabled) {
-  background: var(--accent-strong);
-}
-.btn.big {
-  font-size: 13.5px;
-  font-weight: 650;
-  padding: 8px 16px;
 }
 kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -701,18 +718,6 @@ kbd {
   border: 1px solid var(--kbd-border);
   color: inherit;
   opacity: 0.8;
-}
-.btn.primary kbd {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.3);
-}
-.link-btn {
-  background: none;
-  border: none;
-  color: var(--accent);
-  cursor: pointer;
-  font: inherit;
-  padding: 0 4px;
 }
 
 /* Notices */

@@ -3,7 +3,8 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useLocalStorage } from '@vueuse/core'
-import { X } from 'lucide-vue-next'
+import { PhX, PhPlus, PhTrash } from '@phosphor-icons/vue'
+import UiButton from './ui/UiButton.vue'
 import type { AppConfig, MediaDestinationKind, MediaStatus } from '../types'
 
 const homeTab = useLocalStorage<'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'>(
@@ -237,7 +238,7 @@ async function save() {
       <div class="settings-modal">
         <div class="settings-header">
           <h2>Settings</h2>
-          <button class="close-btn" @click="emit('close')"><X :size="16" /></button>
+          <UiButton variant="plain" :icon="PhX" data-tip="Close without saving" aria-label="Close settings" @click="emit('close')" />
         </div>
 
         <div class="settings-tabs">
@@ -262,9 +263,9 @@ async function save() {
                 <button :class="{ active: homeTab === 'desk' }" @click="homeTab = 'desk'">Desk</button>
                 <button :class="{ active: homeTab === 'preview' }" @click="homeTab = 'preview'">Preview</button>
                 <button :class="{ active: homeTab === 'media' }" @click="homeTab = 'media'">Media</button>
-                <button :class="{ active: homeTab === 'activity' }" @click="homeTab = 'activity'">Activity</button>
-                <button :class="{ active: homeTab === 'modified' }" @click="homeTab = 'modified'">Modified</button>
                 <button :class="{ active: homeTab === 'journal' }" @click="homeTab = 'journal'">Journal</button>
+                <button :class="{ active: homeTab === 'modified' }" @click="homeTab = 'modified'">Changed since live</button>
+                <button :class="{ active: homeTab === 'activity' }" @click="homeTab = 'activity'">Activity</button>
               </div>
             </div>
 
@@ -276,7 +277,7 @@ async function save() {
                   @blur="validateVaultPath"
                   :class="{ invalid: vaultPathValid === false, valid: vaultPathValid === true }"
                 />
-                <button @click="browseVaultPath" class="browse-btn">Browse</button>
+                <UiButton size="small" label="Browse…" @click="browseVaultPath" />
               </div>
             </div>
 
@@ -293,11 +294,11 @@ async function save() {
               <div class="chip-list">
                 <span v-for="(dir, i) in config.vault.excluded_dirs" :key="i" class="chip">
                   {{ dir }}
-                  <button @click="removeExcludedDir(i)" class="chip-remove">&times;</button>
+                  <UiButton variant="plain" size="small" :icon="PhX" aria-label="Remove directory" class="chip-remove" @click="removeExcludedDir(i)" />
                 </span>
                 <div class="chip-input-row">
                   <input v-model="newExcludedDir" placeholder="Add directory..." @keydown.enter="addExcludedDir" />
-                  <button @click="addExcludedDir" class="add-btn">+</button>
+                  <UiButton size="small" :icon="PhPlus" aria-label="Add directory" @click="addExcludedDir" />
                 </div>
               </div>
             </div>
@@ -307,7 +308,7 @@ async function save() {
               <div class="chip-list">
                 <span v-for="(dir, i) in config.vault.publishable_dirs" :key="i" class="chip">
                   {{ dir }}
-                  <button @click="removePublishableDir(i)" class="chip-remove">&times;</button>
+                  <UiButton variant="plain" size="small" :icon="PhX" aria-label="Remove directory" class="chip-remove" @click="removePublishableDir(i)" />
                 </span>
                 <div class="chip-input-row">
                   <input
@@ -315,7 +316,7 @@ async function save() {
                     placeholder="Add directory..."
                     @keydown.enter="addPublishableDir"
                   />
-                  <button @click="addPublishableDir" class="add-btn">+</button>
+                  <UiButton size="small" :icon="PhPlus" aria-label="Add directory" @click="addPublishableDir" />
                 </div>
               </div>
             </div>
@@ -331,9 +332,14 @@ async function save() {
                     <input type="radio" :checked="target.is_default" @change="setDefaultTarget(i)" />
                     Default
                   </label>
-                  <button v-if="config.publish_targets.length > 1" @click="removeTarget(i)" class="remove-btn">
-                    &times;
-                  </button>
+                  <UiButton
+                    v-if="config.publish_targets.length > 1"
+                    variant="destructive"
+                    size="small"
+                    :icon="PhTrash"
+                    aria-label="Remove target"
+                    @click="removeTarget(i)"
+                  />
                 </div>
               </div>
 
@@ -345,7 +351,7 @@ async function save() {
                     @blur="validateRepoPath(i)"
                     :class="{ invalid: repoPathValid[i] === false, valid: repoPathValid[i] === true }"
                   />
-                  <button @click="browseRepoPath(i)" class="browse-btn">Browse</button>
+                  <UiButton size="small" label="Browse…" @click="browseRepoPath(i)" />
                 </div>
               </div>
 
@@ -369,7 +375,7 @@ async function save() {
               </div>
             </div>
 
-            <button @click="addTarget" class="add-target-btn">+ Add Target</button>
+            <UiButton size="small" :icon="PhPlus" label="Add Target" class="add-target-btn" @click="addTarget" />
           </div>
 
           <!-- Editors Tab -->
@@ -389,14 +395,14 @@ async function save() {
                   />
                   Default
                 </label>
-                <button @click="removeEditor(i)" class="remove-btn">&times;</button>
+                <UiButton variant="destructive" size="small" :icon="PhTrash" aria-label="Remove editor" @click="removeEditor(i)" />
               </div>
             </div>
 
             <div class="add-editor-form">
               <input v-model="newEditorName" placeholder="Name (e.g. Sublime)" />
               <input v-model="newEditorApp" placeholder="App name (e.g. Sublime Text)" />
-              <button @click="addEditor" class="add-btn" :disabled="!newEditorName || !newEditorApp">+</button>
+              <UiButton size="small" :icon="PhPlus" aria-label="Add editor" :disabled="!newEditorName || !newEditorApp" @click="addEditor" />
             </div>
           </div>
 
@@ -467,9 +473,7 @@ async function save() {
                       : 'Credentials missing or invalid'
                 "></span>
               </h3>
-              <button class="verify-btn" :disabled="checkingMedia" @click="checkMedia">
-                {{ checkingMedia ? 'Checking…' : 'Test' }}
-              </button>
+              <UiButton size="small" :disabled="checkingMedia" :label="checkingMedia ? 'Checking…' : 'Test'" @click="checkMedia" />
             </div>
             <div class="field">
               <label>Cloud name</label>
@@ -505,9 +509,7 @@ async function save() {
                       : 'Credentials missing or invalid'
                 "></span>
               </h3>
-              <button class="verify-btn" :disabled="checkingMedia" @click="checkMedia">
-                {{ checkingMedia ? 'Checking…' : 'Test' }}
-              </button>
+              <UiButton size="small" :disabled="checkingMedia" :label="checkingMedia ? 'Checking…' : 'Test'" @click="checkMedia" />
             </div>
             <div class="field">
               <label>Account ID</label>
@@ -557,9 +559,12 @@ async function save() {
             </div>
 
             <div class="field">
-              <button @click="verifyMastodon" class="verify-btn" :disabled="verifyingMastodon">
-                {{ verifyingMastodon ? 'Checking...' : mastodonStatus || 'Verify connection' }}
-              </button>
+              <UiButton
+                size="small"
+                :disabled="verifyingMastodon"
+                :label="verifyingMastodon ? 'Checking...' : mastodonStatus || 'Verify connection'"
+                @click="verifyMastodon"
+              />
             </div>
 
             <div class="field-divider"></div>
@@ -586,10 +591,8 @@ async function save() {
 
         <div class="settings-footer">
           <span class="save-msg" :class="{ error: saveMessage.startsWith('Error') }">{{ saveMessage }}</span>
-          <button @click="emit('close')" class="cancel-btn">Cancel</button>
-          <button @click="save" class="save-btn" :disabled="saving">
-            {{ saving ? 'Saving...' : 'Save' }}
-          </button>
+          <UiButton variant="plain" label="Cancel" @click="emit('close')" />
+          <UiButton variant="primary" :disabled="saving" :label="saving ? 'Saving...' : 'Save'" @click="save" />
         </div>
       </div>
     </div>
@@ -604,7 +607,7 @@ async function save() {
 .settings-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.42);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   z-index: 200;
@@ -642,20 +645,6 @@ async function save() {
 .settings-header h2 {
   font-size: 15px;
   font-weight: 600;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-}
-
-.close-btn:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
 }
 
 /* Settings tabs — pill style matching the panel tabs in the main window
@@ -702,7 +691,7 @@ async function save() {
 
 .segmented {
   display: inline-flex;
-  border: 1px solid var(--border, #2a2a2a);
+  border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
   width: fit-content;
@@ -714,13 +703,13 @@ async function save() {
   border: none;
   color: var(--text-tertiary);
   cursor: pointer;
-  border-right: 1px solid var(--border, #2a2a2a);
+  border-right: 1px solid var(--border);
 }
 .segmented button:last-child { border-right: none; }
 .segmented button:hover { color: var(--text-secondary); }
 .segmented button.active {
   background: var(--text-primary);
-  color: var(--bg, #0a0a0a);
+  color: var(--control-bg);
   font-weight: 600;
 }
 
@@ -753,11 +742,11 @@ async function save() {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--border, #444);
+  background: var(--status-draft);
 }
-.status-dot.ok { background: var(--success); }
-.status-dot.bad { background: var(--danger); }
-.status-dot.unknown { background: var(--border, #444); }
+.status-dot.ok { background: var(--status-live); }
+.status-dot.bad { background: var(--status-broken); }
+.status-dot.unknown { background: var(--status-draft); }
 
 .mirror-row {
   display: flex;
@@ -852,22 +841,6 @@ async function save() {
   flex: 1;
 }
 
-.browse-btn,
-.add-btn {
-  padding: 6px 12px;
-  font-size: 11px;
-  background: var(--hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-
-.browse-btn:hover,
-.add-btn:hover {
-  background: var(--bg-tertiary);
-}
-
 .chip-list {
   display: flex;
   flex-wrap: wrap;
@@ -885,20 +858,6 @@ async function save() {
   border-radius: 12px;
   color: var(--text-secondary);
   font-family: 'SF Mono', monospace;
-}
-
-.chip-remove {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  font-size: 14px;
-  padding: 0;
-  line-height: 1;
-}
-
-.chip-remove:hover {
-  color: var(--danger);
 }
 
 .chip-input-row {
@@ -970,19 +929,8 @@ async function save() {
   cursor: pointer;
 }
 
-.remove-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  font-size: 16px;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-.remove-btn:hover {
-  background: color-mix(in srgb, var(--danger) 20%, transparent);
-  color: var(--danger);
+.add-target-btn {
+  align-self: stretch;
 }
 
 .field-row {
@@ -992,22 +940,6 @@ async function save() {
 
 .field-row .field {
   flex: 1;
-}
-
-.add-target-btn {
-  padding: 8px;
-  font-size: 11px;
-  background: var(--hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  text-align: center;
-}
-
-.add-target-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
 }
 
 /* Editors */
@@ -1094,39 +1026,6 @@ async function save() {
 
 .save-msg.error {
   color: var(--danger);
-}
-
-.cancel-btn {
-  padding: 6px 14px;
-  font-size: 12px;
-  background: var(--hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.cancel-btn:hover {
-  background: var(--bg-tertiary);
-}
-
-.save-btn {
-  padding: 6px 14px;
-  font-size: 12px;
-  background: var(--accent);
-  border: none;
-  border-radius: 6px;
-  color: var(--accent-contrast);
-  cursor: pointer;
-  font-weight: 500;
-}
-
-.save-btn:hover {
-  background: var(--accent-strong);
-}
-.save-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* Sheet-style entrance/exit. The modal slides down from above the
