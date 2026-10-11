@@ -74,8 +74,8 @@ const unusedCountLabel = () => {
   /* Width is driven by the parent MediaLibraryModal via a CSS custom property
      so the user-resizable width applies uniformly to inline + modal modes. */
   width: var(--media-sidebar-width, 180px);
-  background: #141416;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--window);
+  border-right: 1px solid var(--separator);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -88,7 +88,7 @@ const unusedCountLabel = () => {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text-tertiary);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--separator);
 }
 
 .folder-list {
@@ -113,11 +113,11 @@ const unusedCountLabel = () => {
 }
 
 .folder-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--fill);
 }
 
 .folder-item.active {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--accent-selected);
   color: var(--text-primary);
 }
 
@@ -133,7 +133,7 @@ const unusedCountLabel = () => {
 
 .folder-divider {
   height: 1px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--fill);
   margin: 6px 0;
 }
 
@@ -145,7 +145,7 @@ const unusedCountLabel = () => {
 
 .sidebar-footer {
   padding: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--separator);
 }
 
 .usage-stats {

@@ -181,7 +181,7 @@ defineEmits<{
 
 .tool-btn:active {
   /* No scale(0.97) — macOS push-buttons darken on press, not shrink. */
-  background: color-mix(in srgb, var(--bg-tertiary) 90%, black);
+  background: color-mix(in srgb, var(--bg-tertiary) 78%, var(--label));
 }
 
 .tool-btn svg {
@@ -226,12 +226,12 @@ defineEmits<{
 }
 
 .btn:hover {
-  background: color-mix(in srgb, var(--bg-tertiary) 70%, white);
+  background: color-mix(in srgb, var(--bg-tertiary) 85%, var(--label));
 }
 
 .btn:active {
   /* No transform — macOS native uses a darker fill on press, not movement. */
-  background: color-mix(in srgb, var(--bg-tertiary) 90%, black);
+  background: color-mix(in srgb, var(--bg-tertiary) 78%, var(--label));
 }
 
 .btn.accent {
@@ -276,14 +276,15 @@ defineEmits<{
   color: var(--text-tertiary) !important;
 }
 
+/* Secondary to Publish, so neutral: one accent action per screen. */
 .publish-unlisted-btn {
-  background: var(--accent-soft) !important;
-  color: var(--accent) !important;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent) !important;
+  background: var(--fill-2) !important;
+  color: var(--label) !important;
+  border: 1px solid var(--separator) !important;
 }
 
 .publish-unlisted-btn:hover {
-  background: color-mix(in srgb, var(--accent) 22%, transparent) !important;
+  background: color-mix(in srgb, var(--label) 16%, transparent) !important;
 }
 
 .shortcut-hint {
@@ -291,7 +292,7 @@ defineEmits<{
   align-items: center;
   gap: 2px;
   padding: 2px 5px;
-  background: rgba(0, 0, 0, 0.15);
+  background: color-mix(in srgb, currentColor 18%, transparent);
   border: none;
   border-radius: 3px;
   font-size: 9px;
@@ -300,15 +301,7 @@ defineEmits<{
   opacity: 0.8;
 }
 
-/* Vue Page conversion button */
-.vue-page-btn {
-  background: rgba(245, 158, 11, 0.15) !important;
-  color: var(--warning) !important;
-  border: 1px solid rgba(245, 158, 11, 0.2) !important;
-}
-.vue-page-btn:hover:not(:disabled) {
-  background: rgba(245, 158, 11, 0.25) !important;
-}
+/* Vue Page conversion — a tool, not a status: neutral like its neighbors. */
 
 .vue-page-badge {
   display: inline-flex;
@@ -316,14 +309,10 @@ defineEmits<{
   gap: 3px;
   font-size: 9px;
   font-weight: 600;
-  color: var(--warning);
+  color: var(--label-2);
   padding: 3px 8px;
   border-radius: 6px;
-  background: rgba(245, 158, 11, 0.1);
+  background: var(--fill-2);
   letter-spacing: 0.03em;
-}
-
-.syndicate-btn {
-  color: var(--accent) !important;
 }
 </style>

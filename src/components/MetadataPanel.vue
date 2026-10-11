@@ -273,7 +273,7 @@ defineEmits<{
 }
 
 .weeknote-type {
-  color: var(--warning);
+  color: var(--label-2);
   font-weight: 600;
   font-size: 10px;
 }
@@ -324,16 +324,11 @@ defineEmits<{
   color: var(--text-secondary);
 }
 
-.unlisted-text {
-  color: var(--accent);
-}
-
-.protected-text {
-  color: var(--accent);
-}
-
+/* Visibility is not a status: neutral. */
+.unlisted-text,
+.protected-text,
 .public-text {
-  color: var(--success);
+  color: var(--label-2);
 }
 
 .tags-list {
@@ -389,7 +384,7 @@ defineEmits<{
 }
 
 .tag-chip:active {
-  background: color-mix(in srgb, var(--bg-tertiary) 80%, black);
+  background: color-mix(in srgb, var(--bg-tertiary) 80%, var(--label));
 }
 
 .tag-chip:disabled {

@@ -581,7 +581,7 @@ function flatIdx(sectionIdx: number, itemIdx: number) {
 .palette-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   z-index: 200;
@@ -729,8 +729,16 @@ function flatIdx(sectionIdx: number, itemIdx: number) {
   flex: none;
 }
 
-/* Status badges on file rows — color-coded so you can scan at a glance. */
+/* Status badges on file rows — same dialect as the file list: 15% tint,
+   a status-colored dot, neutral label text. Unlisted/protected are
+   visibility, not status: neutral. */
 .palette-badge {
+  --st: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--label);
+  background: color-mix(in srgb, var(--st) 15%, transparent);
   font-family: 'SF Mono', monospace;
   font-size: 9px;
   font-weight: 600;
@@ -741,25 +749,31 @@ function flatIdx(sectionIdx: number, itemIdx: number) {
   white-space: nowrap;
 }
 
+.palette-badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--st);
+}
 .palette-badge.tone-live {
-  background: color-mix(in srgb, var(--success) 22%, transparent);
-  color: var(--success);
-}
-.palette-badge.tone-draft {
-  background: color-mix(in srgb, var(--text-tertiary) 22%, transparent);
-  color: var(--text-secondary);
-}
-.palette-badge.tone-unlisted {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  color: var(--accent-soft);
-}
-.palette-badge.tone-protected {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  color: var(--accent-soft);
+  --st: var(--status-live);
 }
 .palette-badge.tone-modified {
-  background: color-mix(in srgb, var(--warning) 22%, transparent);
-  color: var(--warning);
+  --st: var(--status-attention);
+}
+.palette-badge.tone-draft {
+  --st: var(--status-draft);
+  color: var(--label-2);
+}
+.palette-badge.tone-unlisted,
+.palette-badge.tone-protected {
+  background: var(--fill-2);
+  color: var(--label-2);
+}
+.palette-badge.tone-unlisted::before,
+.palette-badge.tone-protected::before {
+  display: none;
 }
 
 /* When a row is selected (AccentColor bg), make badges legible against it. */

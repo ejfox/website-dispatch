@@ -99,7 +99,7 @@ const collapsed = useLocalStorage('dispatch-lint-collapsed', true)
   align-items: flex-start;
 }
 .lint-receipt-bullet {
-  color: var(--warning);
+  color: var(--status-attention);
   line-height: 1;
 }
 .lint-receipt-text {
@@ -107,18 +107,18 @@ const collapsed = useLocalStorage('dispatch-lint-collapsed', true)
 }
 
 .lint-receipt-item.privacy {
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--tint-broken);
   padding: 2px 6px;
   border-radius: 3px;
-  border-left: 2px solid var(--danger);
+  border-left: 2px solid var(--status-broken);
 }
 
 .lint-receipt-bullet.privacy {
-  color: var(--danger);
+  color: var(--status-broken);
   font-size: 10px;
 }
 .lint-receipt-item.privacy .lint-receipt-text {
-  color: var(--danger);
+  color: var(--label);
   font-weight: 500;
 }
 .lint-receipt-footer {

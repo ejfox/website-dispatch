@@ -15,7 +15,7 @@ import ActionToolbar from './ActionToolbar.vue'
 import PublishConfirmModal from './PublishConfirmModal.vue'
 import WebmentionStatus from './WebmentionStatus.vue'
 import ResizeHandle from './ResizeHandle.vue'
-import { useResizable, useToasts } from '../composables/useUiState'
+import { useResizable, useToasts, useDeployStatus } from '../composables/useUiState'
 // Markdown processing now lives in src/workers/markdownWorker.ts — see
 // `renderWorker` / `renderMarkdownInWorker` below. The pipeline imports
 // (unified / remark-* / rehype-*) used to live here and run on the main
@@ -466,6 +466,15 @@ function onDraftPromptKey(e: KeyboardEvent) {
     showDraftPrompt.value = false
   }
 }
+// Mirror this file's deploy into the shared store so its file-list row can
+// show a deploying (pulsing accent) or failed (red) dot. A null deploy on
+// the same path means it was dismissed; a path change just means we moved.
+const deployStatusStore = useDeployStatus()
+watch([() => props.file.path, currentDeploy], ([path, d], [oldPath]) => {
+  if (d) deployStatusStore.track(path, d)
+  else if (path === oldPath) deployStatusStore.clear(path)
+})
+
 watch(showDraftPrompt, (open) => {
   if (open) window.addEventListener('keydown', onDraftPromptKey)
   else window.removeEventListener('keydown', onDraftPromptKey)
@@ -1617,9 +1626,8 @@ async function openPreview() {
   }
 }
 
-.panel.live {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--success) 8%, transparent) 0%, var(--bg-primary) 200px);
-}
+/* No .panel.live wash: the preview is the reader's view and carries no
+   status color. Status lives in the banner strip and the list row. */
 
 /* Schedule Picker */
 .schedule-picker {
@@ -1694,22 +1702,25 @@ async function openPreview() {
   left: 50%;
   transform: translate(-50%, -50%);
   background: color-mix(in srgb, var(--bg-solid) 88%, transparent);
-  color: var(--success);
+  color: var(--label);
   padding: 10px 18px;
   border-radius: 10px;
   font-size: 13px;
   font-weight: 600;
   z-index: 100;
-  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.35),
-    0 0 0 1px color-mix(in srgb, var(--success) 15%, transparent);
+  border: 1px solid var(--separator);
+  box-shadow: var(--shadow-md);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   display: flex;
   align-items: center;
   gap: 8px;
   white-space: nowrap;
+}
+
+/* Neutral card; only the check glyph is green. */
+.success-toast svg {
+  color: var(--status-live);
 }
 
 .toast-enter-active {
@@ -1755,7 +1766,7 @@ async function openPreview() {
 
 @keyframes successGlow {
   0% {
-    box-shadow: inset 0 0 24px color-mix(in srgb, var(--success) 18%, transparent);
+    box-shadow: inset 0 0 24px var(--tint-live);
   }
   100% {
     box-shadow: none;
@@ -1774,7 +1785,7 @@ async function openPreview() {
   font-size: 11px;
   font-weight: 500;
   z-index: 100;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
 }
 
 .fade-enter-active,
@@ -1866,7 +1877,7 @@ async function openPreview() {
 }
 .photo-summary .ps-count {
   font-weight: 600;
-  color: var(--accent);
+  color: var(--label);
   letter-spacing: 0.3px;
 }
 .photo-summary .ps-item {
@@ -1876,12 +1887,12 @@ async function openPreview() {
   background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 .photo-summary .ps-item.warn {
-  color: var(--warning);
-  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--label);
+  background: var(--tint-attention);
 }
 .photo-summary .ps-item.ok {
-  color: var(--success);
-  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--label);
+  background: var(--tint-live);
 }
 .photo-summary .ps-spacer {
   flex: 1;
@@ -1898,7 +1909,7 @@ async function openPreview() {
 .photo-summary .ps-btn.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .photo-summary .ps-btn:hover {
   filter: brightness(1.1);
@@ -2039,15 +2050,20 @@ async function openPreview() {
 }
 
 .btn:hover {
-  background: color-mix(in srgb, var(--bg-tertiary) 70%, white);
+  background: color-mix(in srgb, var(--bg-tertiary) 85%, var(--label));
 }
 .btn:active {
-  background: color-mix(in srgb, var(--bg-tertiary) 90%, black);
+  background: color-mix(in srgb, var(--bg-tertiary) 78%, var(--label));
 }
+/* The dialog's primary action: accent fill, system accent-text. */
 .btn.accent {
-  background: color-mix(in srgb, var(--success) 20%, var(--bg-tertiary));
-  color: var(--success);
+  background: var(--accent);
+  color: var(--on-accent);
   font-weight: 600;
+}
+.btn.accent:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.1);
 }
 .btn:disabled {
   background: var(--bg-tertiary);
@@ -2128,7 +2144,7 @@ async function openPreview() {
   background: linear-gradient(
     90deg,
     var(--hover-bg) 0%,
-    color-mix(in srgb, var(--accent) 6%, var(--hover-bg)) 50%,
+    var(--fill-2) 50%,
     var(--hover-bg) 100%
   );
   background-size: 200% 100%;
@@ -2141,7 +2157,7 @@ async function openPreview() {
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--text-secondary) 14%, var(--hover-bg)) 0%,
-    color-mix(in srgb, var(--accent) 12%, var(--hover-bg)) 50%,
+    color-mix(in srgb, var(--text-secondary) 24%, var(--hover-bg)) 50%,
     color-mix(in srgb, var(--text-secondary) 14%, var(--hover-bg)) 100%
   );
   background-size: 200% 100%;
@@ -2225,7 +2241,7 @@ async function openPreview() {
   background: linear-gradient(
     90deg,
     var(--hover-bg) 0%,
-    color-mix(in srgb, var(--accent) 6%, var(--hover-bg)) 50%,
+    var(--fill-2) 50%,
     var(--hover-bg) 100%
   );
   background-size: 200% 100%;
@@ -2283,7 +2299,7 @@ async function openPreview() {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    var(--accent) 50%,
+    var(--label-3) 50%,
     transparent 100%
   );
   animation: preview-progress-slide 1.1s ease-in-out infinite;
@@ -2311,10 +2327,10 @@ async function openPreview() {
   flex-wrap: wrap;
   padding: 8px 0;
   margin: -2px 0 8px;
-  border-top: 1px solid var(--border, #1a1a1a);
-  border-bottom: 1px solid var(--border, #1a1a1a);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   font-size: 11px;
-  color: var(--text-secondary, #aaa);
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 .analytics-strip .stat,
@@ -2325,38 +2341,38 @@ async function openPreview() {
 }
 .analytics-strip .stat-big strong {
   font-size: 14px;
-  color: var(--text-primary, #fff);
+  color: var(--text-primary);
   font-weight: 700;
 }
 .analytics-strip .stat strong {
   font-size: 12px;
-  color: var(--text-primary, #fff);
+  color: var(--text-primary);
   font-weight: 600;
 }
 .analytics-strip .stat-unit {
-  color: var(--text-tertiary, #777);
+  color: var(--text-tertiary);
   font-size: 10px;
   text-transform: lowercase;
 }
 .analytics-strip .stat.warn strong {
-  color: var(--warning, var(--warning));
+  color: var(--warning);
 }
 .analytics-strip .sparkline {
   height: 22px;
   width: 120px;
   flex-shrink: 0;
-  color: var(--text-secondary, #aaa);
+  color: var(--text-secondary);
   opacity: 0.8;
 }
 .analytics-strip .stat-period {
   margin-left: auto;
   font-size: 10px;
-  color: var(--text-tertiary, #666);
+  color: var(--text-tertiary);
   letter-spacing: 0.5px;
   text-transform: uppercase;
 }
 .analytics-strip .muted {
-  color: var(--text-tertiary, #666);
+  color: var(--text-tertiary);
   font-size: 10px;
 }
 
@@ -2367,28 +2383,29 @@ async function openPreview() {
   margin: 12px 16px 0;
   padding: 10px 12px;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
-  border-left: 3px solid var(--warning);
+  /* A render failure is broken, not "needs attention". */
+  background: var(--tint-broken);
+  border-left: 3px solid var(--status-broken);
   font-size: 11px;
   line-height: 1.45;
-  color: var(--text-secondary, #aaa);
+  color: var(--text-secondary);
 }
 .render-error-stage {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 9.5px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--warning);
+  color: var(--label);
   margin-bottom: 2px;
 }
 .render-error-msg {
-  color: var(--text-primary, #fff);
+  color: var(--text-primary);
 }
 .render-error-path {
   margin-top: 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
-  color: var(--text-tertiary, #666);
+  color: var(--text-tertiary);
   word-break: break-all;
 }
 
@@ -2434,7 +2451,7 @@ async function openPreview() {
   position: fixed;
   inset: 0;
   z-index: 210;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;

@@ -145,13 +145,11 @@ const heatmapMax = computed(() => Math.max(...Array.from(heatmapData.value.value
 
 function heatmapColor(count: number): string {
   if (count < 0) return 'transparent' // future
-  if (count === 0) return 'rgba(255, 255, 255, 0.04)'
+  if (count === 0) return 'var(--fill)'
   const t = Math.min(count / heatmapMax.value, 1)
-  // Green ramp: dim -> bright
-  if (t <= 0.25) return 'rgba(48, 209, 88, 0.2)'
-  if (t <= 0.5) return 'rgba(48, 209, 88, 0.4)'
-  if (t <= 0.75) return 'rgba(48, 209, 88, 0.65)'
-  return 'rgba(48, 209, 88, 0.9)'
+  // One-hue ramp from --ramp (dim -> bright); tracks light/dark.
+  const pct = t <= 0.25 ? 25 : t <= 0.5 ? 45 : t <= 0.75 ? 70 : 95
+  return `color-mix(in srgb, var(--ramp) ${pct}%, transparent)`
 }
 
 async function loadData() {
@@ -292,7 +290,7 @@ onMounted(async () => {
 }
 
 .heatmap-cell.today {
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  box-shadow: inset 0 0 0 1px var(--label-2);
 }
 
 /* Section Labels */

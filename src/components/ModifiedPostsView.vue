@@ -250,8 +250,8 @@ function formatAge(ts: number): string {
   flex: 1;
 }
 .modified-header .count {
-  color: var(--warning);
-  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: var(--label);
+  background: var(--tint-attention);
   padding: 2px 7px;
   border-radius: 999px;
   font-size: 11px;
@@ -280,15 +280,17 @@ function formatAge(ts: number): string {
   padding: 4px 10px;
   font-size: 10px;
   font-weight: 500;
-  background: var(--warning);
-  color: #000;
+  /* Bulk republish is this view's primary action: accent. */
+  background: var(--accent);
+  color: var(--on-accent);
   border: none;
   border-radius: 4px;
   cursor: pointer;
   font-family: inherit;
 }
 .bulk-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--warning) 88%, white);
+  background: var(--accent);
+  filter: brightness(1.1);
 }
 .bulk-btn:disabled {
   opacity: 0.6;

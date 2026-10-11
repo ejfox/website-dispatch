@@ -275,7 +275,7 @@ function getStatusClass(result: MediaFixResult): string {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   z-index: 200;
@@ -288,20 +288,20 @@ function getStatusClass(result: MediaFixResult): string {
   width: 550px;
   max-width: 95vw;
   max-height: 80vh;
-  background: rgba(30, 30, 34, 0.95);
+  background: var(--modal-bg);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--separator);
   border-radius: 12px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal-header {
   padding: 14px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--separator);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -341,7 +341,7 @@ function getStatusClass(result: MediaFixResult): string {
 }
 
 .close-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--fill-2);
   color: var(--text-primary);
 }
 
@@ -365,7 +365,7 @@ function getStatusClass(result: MediaFixResult): string {
   padding: 10px;
   border-radius: 6px;
   margin-bottom: 4px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--control-bg);
 }
 
 .media-icon {
@@ -408,7 +408,7 @@ function getStatusClass(result: MediaFixResult): string {
 
 .progress-bar {
   height: 6px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--fill-2);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -436,7 +436,7 @@ function getStatusClass(result: MediaFixResult): string {
   padding: 12px 16px;
   display: flex;
   gap: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--separator);
 }
 
 .success-count {
@@ -465,15 +465,15 @@ function getStatusClass(result: MediaFixResult): string {
 }
 
 .result-item.success {
-  background: rgba(48, 209, 88, 0.1);
+  background: var(--tint-live);
 }
 
 .result-item.error {
-  background: rgba(255, 107, 107, 0.1);
+  background: var(--tint-broken);
 }
 
 .result-item.missing {
-  background: rgba(255, 159, 10, 0.1);
+  background: var(--tint-attention);
 }
 
 .result-icon {
@@ -531,7 +531,7 @@ function getStatusClass(result: MediaFixResult): string {
   font-size: 11px;
   font-family: 'SF Mono', monospace;
   color: var(--text-primary);
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--control-bg);
   padding: 8px 12px;
   border-radius: 4px;
   margin: 8px 0;

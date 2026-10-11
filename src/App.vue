@@ -1391,14 +1391,8 @@ onUnmounted(() => {
   opacity: 1;
 }
 
-/* Per-tab icon colors when active — matches Apple Mail's distinct-glyph
-   coloring on its Primary/Transactions/Updates/Promotions tabs. Keeps
-   each tab visually identifiable at a glance. Inactive icons stay muted. */
-.panel-tabs button[data-tab='preview'].active > svg { color: var(--accent); }
-.panel-tabs button[data-tab='media'].active > svg    { color: #a78bfa; } /* violet */
-.panel-tabs button[data-tab='activity'].active > svg { color: #34d399; } /* green */
-.panel-tabs button[data-tab='modified'].active > svg { color: var(--warning); } /* amber/orange */
-.panel-tabs button[data-tab='journal'].active > svg  { color: #fbbf24; } /* gold */
+/* Tab glyphs are monochrome: these are tools, not a color-coded taxonomy.
+   Hue is reserved for status, so a colored glyph here would read as one. */
 
 .panel-tabs button:hover {
   color: var(--text-secondary);
@@ -1406,12 +1400,12 @@ onUnmounted(() => {
 }
 
 .panel-tabs button.active {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--label);
+  background: var(--fill-2);
   font-weight: 600;
 }
 .panel-tabs button.active:hover {
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: var(--fill-2);
 }
 
 /* Numeric badge nested inside a panel-tab button (e.g. "Modified · 12"). */
@@ -1426,8 +1420,9 @@ onUnmounted(() => {
   font-size: 9px;
   font-weight: 600;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--warning) 22%, transparent);
-  color: var(--warning);
+  /* The one status-colored thing on the tab strip: N posts need attention. */
+  background: var(--tint-attention);
+  color: var(--label);
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -1570,7 +1565,7 @@ onUnmounted(() => {
 }
 
 .status-item.connected {
-  color: var(--success);
+  color: var(--text-secondary);
 }
 
 .status-item.muted {
@@ -1597,7 +1592,7 @@ onUnmounted(() => {
 }
 
 .status-item.connected :deep(svg) {
-  color: var(--success);
+  color: var(--status-live);
 }
 
 .status-item.muted :deep(svg) {
@@ -1700,13 +1695,14 @@ onUnmounted(() => {
 }
 
 .np-btn.accent {
+  /* Translucent accent fill, so the label stays --label (not white). */
   background: var(--selection-bg);
-  color: #fff;
+  color: var(--label);
   border-color: transparent;
 }
 
 .np-btn.accent:hover {
-  background: color-mix(in srgb, var(--selection-bg) 88%, white);
+  background: color-mix(in srgb, var(--selection-bg) 88%, var(--label));
 }
 
 .np-btn:disabled {
@@ -1741,18 +1737,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--accent) 18%, rgba(0, 0, 0, 0.55));
+  /* A drop target is a selection-like affordance: accent. Markdown and
+     media drops look the same; only an unsupported drop is red. */
+  background: color-mix(in srgb, var(--accent) 18%, var(--scrim));
   pointer-events: none;
 }
 
-.drag-overlay.media {
-  background: color-mix(in srgb, var(--accent) 22%, rgba(0, 0, 0, 0.6));
-}
-.drag-overlay.markdown {
-  background: color-mix(in srgb, var(--success) 18%, rgba(0, 0, 0, 0.55));
-}
 .drag-overlay.unsupported {
-  background: color-mix(in srgb, var(--danger) 22%, rgba(0, 0, 0, 0.55));
+  background: color-mix(in srgb, var(--status-broken) 18%, var(--scrim));
 }
 
 .drag-overlay-card {
@@ -1766,24 +1758,18 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   max-width: 480px;
-  box-shadow: var(--shadow-lg, 0 24px 48px rgba(0, 0, 0, 0.4));
-}
-.drag-overlay.markdown .drag-overlay-card {
-  border-color: var(--success);
+  box-shadow: var(--shadow-lg);
 }
 .drag-overlay.unsupported .drag-overlay-card {
-  border-color: var(--danger);
+  border-color: var(--status-broken);
 }
 
 .drag-overlay-icon {
   color: var(--accent);
   animation: drag-overlay-pulse 1.6s ease-in-out infinite;
 }
-.drag-overlay.markdown .drag-overlay-icon {
-  color: var(--success);
-}
 .drag-overlay.unsupported .drag-overlay-icon {
-  color: var(--danger);
+  color: var(--status-broken);
   animation: none;
 }
 

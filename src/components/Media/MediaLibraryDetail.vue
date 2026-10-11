@@ -96,8 +96,8 @@ const emit = defineEmits<{
 .detail-panel {
   /* Width driven by parent MediaLibraryModal's CSS custom property. */
   width: var(--media-detail-width, 300px);
-  background: #141416;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--control-bg);
+  border-left: 1px solid var(--separator);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -116,7 +116,7 @@ const emit = defineEmits<{
 
 .detail-header {
   padding: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--separator);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -145,7 +145,7 @@ const emit = defineEmits<{
 }
 
 .detail-preview {
-  background: #0a0a0a;
+  background: var(--under-page);
   padding: 12px;
   display: flex;
   align-items: center;
@@ -160,7 +160,7 @@ const emit = defineEmits<{
 
 .detail-meta {
   padding: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--separator);
 }
 
 .meta-row {
@@ -179,14 +179,14 @@ const emit = defineEmits<{
   display: flex;
   flex-direction: column;
   gap: 6px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--separator);
 }
 
 .action-btn {
   width: 100%;
   padding: 8px;
   font-size: 11px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--fill);
   border: none;
   border-radius: 5px;
   color: var(--text-primary);
@@ -194,17 +194,18 @@ const emit = defineEmits<{
 }
 
 .action-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--fill-2);
 }
 
 .action-btn.primary {
-  background: rgba(255, 255, 255, 0.15);
-  color: var(--text-primary);
+  background: var(--accent);
+  color: var(--on-accent);
   font-weight: 500;
 }
 
 .action-btn.primary:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--accent);
+  filter: brightness(1.1);
 }
 
 .detail-usage {
@@ -239,7 +240,7 @@ const emit = defineEmits<{
   justify-content: space-between;
   align-items: center;
   padding: 6px 8px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--fill);
   border-radius: 4px;
   font-size: 10px;
 }
@@ -259,7 +260,7 @@ const emit = defineEmits<{
 
 .detail-url {
   padding: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--separator);
 }
 
 .detail-url input {
@@ -267,8 +268,8 @@ const emit = defineEmits<{
   padding: 8px;
   font-size: 9px;
   font-family: 'SF Mono', monospace;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--control-bg);
+  border: 1px solid var(--separator);
   border-radius: 4px;
   color: var(--text-secondary);
   cursor: text;

@@ -410,17 +410,13 @@ function handleClick(e: ActivityEvent) {
   display: inline-flex;
   align-items: center;
 }
+/* Went live = green, taken down = red; republish/syndicate are routine
+   (neutral glyph). */
 .activity-row.publish .event-icon {
-  color: var(--success);
-}
-.activity-row.republish .event-icon {
-  color: var(--accent);
+  color: var(--status-live);
 }
 .activity-row.unpublish .event-icon {
-  color: var(--danger);
-}
-.activity-row.syndicate .event-icon {
-  color: var(--accent);
+  color: var(--status-broken);
 }
 
 .event-verb {
