@@ -619,6 +619,26 @@ onMounted(async () => {
     loadFiles()
   })
   unlistenSchedule = unlisten
+  // A "Publish later" post whose time came but couldn't go out (draft, lint,
+  // git): say so once, and take you to it.
+  track(
+    listen<{ path: string; title: string; message: string }>('scheduled-publish-failed', (ev) => {
+      const { path, title, message } = ev.payload
+      const id: number = toasts.push({
+        kind: 'error',
+        message: `Didn’t publish “${title}” on schedule`,
+        detail: message,
+        action: {
+          label: 'Show',
+          run: () => {
+            toasts.dismiss(id)
+            jumpToPath(path)
+          },
+        },
+        ttl: 0,
+      })
+    }),
+  )
 
   // Track window focus for native dimming behavior
   track(getCurrentWindow().onFocusChanged(({ payload: focused }) => {

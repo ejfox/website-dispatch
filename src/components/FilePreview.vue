@@ -1350,7 +1350,7 @@ async function openPreview() {
               <!-- Secondary: the primary above is still on screen. -->
               <UiButton size="small" :disabled="!scheduleDate" label="Publish at this time" @click="schedulePublish" />
             </div>
-            <span class="insp-note">Dispatch publishes it at the time you pick (keep Dispatch running).</span>
+            <span class="insp-note">Dispatch publishes it at the time you pick, if it still has nothing to fix and isn’t a draft (keep Dispatch running).</span>
           </div>
         </section>
 
