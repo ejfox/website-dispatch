@@ -35,6 +35,11 @@ tips that teach the app in context, and a publish flow that ends honestly.
   the deploy, and no longer retries silently every minute forever.
 - The Mastodon server setting is actually read.
 - ⌘, opens only Settings, not the hidden main window too.
+- **"No posts found" after reinstalling.** Unsigned builds get a new
+  identity each time, so macOS silently blocked the iCloud Drive vault.
+  `scripts/install-local.sh` builds, keeps the installed `.env`, and signs
+  with your Apple Development certificate so the permission sticks.
+- Frontend errors now go to `dispatch.log` (release builds have no devtools).
 
 ### Changed
 - Show Publishing Journal ⌘J is gone (⌘3 already opens the Journal).

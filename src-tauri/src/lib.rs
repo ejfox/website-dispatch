@@ -147,6 +147,17 @@ impl Config {
 
 // Get a list of recent markdown files from the vault
 // Returns Result<success_type, error_type> - Rust forces you to handle errors
+/// Frontend errors land in dispatch.log; release builds have no devtools.
+#[tauri::command]
+fn log_frontend(level: String, message: String) {
+    let msg: String = message.chars().take(2000).collect();
+    if level == "error" {
+        log::error!("[webview] {msg}");
+    } else {
+        log::warn!("[webview] {msg}");
+    }
+}
+
 #[tauri::command]
 fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
     // Call the function from the vault module
@@ -1225,6 +1236,7 @@ pub fn run() {
             play_system_sound,
             record_recent_file,
             menu::set_menu_context,
+            log_frontend,
             clear_recent_files,
             set_proxy_icon,
             set_document_dirty,
