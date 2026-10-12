@@ -24,7 +24,7 @@ async function fetchConfig() {
 }
 
 async function saveConfig(config: AppConfig) {
-  await invoke('save_app_config', { config })
+  await invoke('save_app_config', { configData: config })
   appConfig.value = config
 }
 

@@ -69,24 +69,24 @@ const iconFor = {
   border: 1px solid var(--border-light);
   border-radius: 10px;
   box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.18),
-    0 0 0 0.5px rgba(0, 0, 0, 0.08);
+    var(--shadow-md),
+    0 0 0 0.5px var(--separator);
   font-size: 13px;
   color: var(--text-primary);
   min-width: 280px;
 }
 
 .toast.kind-success .toast-icon {
-  color: var(--success);
+  color: var(--status-live);
 }
 .toast.kind-info .toast-icon {
   color: var(--text-secondary);
 }
 .toast.kind-warn .toast-icon {
-  color: var(--warning);
+  color: var(--status-attention);
 }
 .toast.kind-error .toast-icon {
-  color: var(--danger);
+  color: var(--status-broken);
 }
 
 .toast-icon {
@@ -110,9 +110,13 @@ const iconFor = {
   font-size: 11px;
   color: var(--text-secondary);
   font-family: 'SF Mono', monospace;
-  white-space: nowrap;
+  /* Errors put the "what happened" sentence here: let it wrap, up to three
+   * lines (the full text is in the tooltip and Copy Error). */
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .toast-action,

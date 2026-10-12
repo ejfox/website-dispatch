@@ -2,20 +2,30 @@
 import { ref, watch, computed, nextTick, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { message } from '@tauri-apps/plugin-dialog'
-import { PhCheckCircle, PhLinkSimple, PhImageSquare, PhCaretDown } from '@phosphor-icons/vue'
+import { PhCheckCircle } from '@phosphor-icons/vue'
+import { PanelRight } from 'lucide-vue-next'
 import LintReceipt from './LintReceipt.vue'
 import LocalMediaFixer from './LocalMediaFixer.vue'
-import BacklinksGraph from './BacklinksGraph.vue'
 import AltTextReviewer from './AltTextReviewer.vue'
 import SyndicationWizard from './SyndicationWizard.vue'
 import OgImagePicker from './OgImagePicker.vue'
 import StatusBanner from './StatusBanner.vue'
 import MetadataPanel from './MetadataPanel.vue'
 import ActionToolbar from './ActionToolbar.vue'
+import UiButton from './ui/UiButton.vue'
+import InlineTip from './ui/InlineTip.vue'
+import { useTip, invalidateTip, requestHelp } from '../composables/useTips'
+import { CHANGED_HINT } from '../utils/vocab'
 import PublishConfirmModal from './PublishConfirmModal.vue'
+import PublishDiffPanel from './PublishDiffPanel.vue'
 import WebmentionStatus from './WebmentionStatus.vue'
-import ResizeHandle from './ResizeHandle.vue'
-import { useResizable, useToasts } from '../composables/useUiState'
+import {
+  useToasts,
+  useDeployStatus,
+  useInspector,
+  INSPECTOR_WIDTH,
+  INSPECTOR_COLLAPSE_BELOW,
+} from '../composables/useUiState'
 // Markdown processing now lives in src/workers/markdownWorker.ts — see
 // `renderWorker` / `renderMarkdownInWorker` below. The pipeline imports
 // (unified / remark-* / rehype-*) used to live here and run on the main
@@ -37,10 +47,11 @@ import {
   type SkeletonBlock,
 } from '../utils/markdownRender'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
-import { useLocalStorage } from '@vueuse/core'
+import { useLocalStorage, useElementSize } from '@vueuse/core'
 import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics, DeskToday } from '../types'
 import { useTagSuggestions } from '../composables/useTagSuggestions'
-import { usePublishing, usePostActions } from '../composables/usePublishFlow'
+import { usePublishing, usePostActions, deployFailureTitle } from '../composables/usePublishFlow'
+import type { ReviewMode } from '../utils/publishReview'
 import { useAppConfig, useGitStatus } from '../composables/useVaultData'
 
 const props = defineProps<{ file: MarkdownFile }>()
@@ -49,26 +60,25 @@ const emit = defineEmits<{ published: []; 'jump-to-path': [path: string] }>()
 // Config (shared singleton)
 const { appConfig, enabledEditors, publishTargets, hasMultipleTargets } = useAppConfig()
 const selectedTargetId = useLocalStorage<string | null>('dispatch-target', null)
-const altTextCollapsed = useLocalStorage('dispatch-alttext-collapsed', true)
 
-// Drag the seam between the metadata stack (status banner / header / lint /
-// alt-text / OG / action toolbar) and the rendered content below. Default of
-// 0 means "natural sizing" — the stack flows to its content height. Once the
-// user drags, we record a pixel height which becomes the cap; metadata
-// scrolls within that. Double-click the divider to return to natural sizing.
-const metaStackRef = ref<HTMLDivElement | null>(null)
-const {
-  size: metaHeight,
-  dragging: metaDragging,
-  start: startMetaResize,
-  reset: resetMetaHeight,
-} = useResizable('dispatch-preview-meta-height', {
-  default: 0,
-  min: 80,
-  max: () => window.innerHeight - 220,
-  axis: 'y',
-  getStartSize: () => metaStackRef.value?.offsetHeight,
+// ── Inspector column ────────────────────────────────────────────────────────
+// The pane is two columns: the rendered post, and a fixed-width inspector
+// (status, actions, details) with its own scroll. Below ~620px the column
+// auto-collapses; the tab-strip toggle then opens it as an overlay. The
+// open/closed choice is shared with App.vue's toggle and View › Toggle
+// Inspector (⌥⌘I) through useInspector().
+const inspector = useInspector()
+const splitRef = ref<HTMLDivElement | null>(null)
+const { width: paneWidth } = useElementSize(splitRef)
+watch(paneWidth, (w) => {
+  if (w > 0) inspector.setNarrow(w < INSPECTOR_COLLAPSE_BELOW)
 })
+const inspectorStyle = { width: `${INSPECTOR_WIDTH}px` }
+
+// "See changes" in the Status section shows the since-last-publish diff
+// above the post, where there is room to read it. Reset on file switch.
+const diffOpen = ref(false)
+watch(() => props.file.path, () => (diffOpen.value = false))
 
 function getActiveTargetId(): string | undefined {
   if (!hasMultipleTargets.value) return undefined
@@ -315,10 +325,11 @@ const {
   justPublishedGlow,
   currentDeploy,
   dismissDeploy,
+  recheckDeploy,
   showSuccess,
   successMessage,
   showPublishConfirm,
-  publishConfirmRepublish,
+  publishConfirmMode,
   showSyndicationWizard,
   showAltTextReviewer,
   openPublishConfirm,
@@ -338,9 +349,15 @@ const {
   // Auto-fire webmentions after publish/republish. Bridgy Fed forwarding
   // is opt-in via Settings → Connections (default off).
   getTitle: () => props.file.title || slug.value || null,
+  // The toast outlives a file switch: only reopen the sheet for the same
+  // post, otherwise go back to it first.
+  onRetry: (isRepublish: boolean, path: string) =>
+    path === props.file.path ? requestPublish(isRepublish) : emit('jump-to-path', path),
   onPublishSuccess: (url: string) => afterPublish(url),
-  // Webmentions wait for the deploy to be confirmed live (page answers 200).
-  onLive: (url: string) => {
+  // Webmentions wait for the deploy to be confirmed live (page answers 200),
+  // and only if the review sheet's toggle was left on.
+  onLive: (url: string, { webmentions }) => {
+    if (!webmentions) return
     const bridgyFed = appConfig.value?.webmentions_bridgy_fed === true
     autoTriggerOnPublish(bridgyFed, url)
   },
@@ -427,15 +444,19 @@ function onWizardClosed() {
 // ── Draft gate + alt-text prep before publishing ───────────────────────────
 const showDraftPrompt = ref(false)
 const draftPromptRepublish = ref(false)
+const draftPromptMode = ref<ReviewMode>('publish')
 const clearingDraft = ref(false)
 
-function requestPublish(isRepublish = false) {
+// Every way in (toolbar, MODIFIED banner, Unlisted button, ⌘↩, palette,
+// Modified tab) lands here, then on the review sheet.
+function requestPublish(isRepublish = false, mode: ReviewMode = 'publish') {
   if (props.file.draft) {
     draftPromptRepublish.value = isRepublish
+    draftPromptMode.value = mode
     showDraftPrompt.value = true
     return
   }
-  openPublishConfirm(isRepublish)
+  openPublishConfirm(isRepublish, mode)
 }
 
 async function clearDraftAndContinue() {
@@ -444,7 +465,7 @@ async function clearDraftAndContinue() {
     await invoke('remove_draft', { path: props.file.path })
     showDraftPrompt.value = false
     emit('published') // refresh the list so the DRAFT badge goes away
-    openPublishConfirm(draftPromptRepublish.value)
+    openPublishConfirm(draftPromptRepublish.value, draftPromptMode.value)
   } catch (e) {
     toasts.error("Couldn't clear draft", String(e))
   }
@@ -459,6 +480,32 @@ function onDraftPromptKey(e: KeyboardEvent) {
     showDraftPrompt.value = false
   }
 }
+// Mirror this file's deploy into the shared store so its file-list row can
+// show a deploying (pulsing accent) or failed (red) dot. A null deploy on
+// the same path means it was dismissed; a path change just means we moved.
+const deployStatusStore = useDeployStatus()
+// One-line state for the compact bar shown when the inspector is hidden.
+const miniStatus = computed(() => {
+  const phase = currentDeploy.value?.phase
+  if (phase === 'deploying') return { key: 'deploying', word: 'Deploying…' }
+  if (phase === 'hidden') return { key: 'scheduled', word: 'Deployed, hidden for now' }
+  if (phase === 'failed') {
+    const f = currentDeploy.value?.failure
+    return { key: f === 'timeout' || f === 'untracked' ? 'attention' : 'broken', word: deployFailureTitle(f) }
+  }
+  if (isScheduled.value) return { key: 'scheduled', word: 'Scheduled' }
+  if (isLive.value)
+    return hasUnpublishedChanges.value
+      ? { key: 'attention', word: 'Changed since live' }
+      : { key: 'live', word: 'Live' }
+  return { key: 'draft', word: 'Not published' }
+})
+
+watch([() => props.file.path, currentDeploy], ([path, d], [oldPath]) => {
+  if (d) deployStatusStore.track(path, d)
+  else if (path === oldPath) deployStatusStore.clear(path)
+})
+
 watch(showDraftPrompt, (open) => {
   if (open) window.addEventListener('keydown', onDraftPromptKey)
   else window.removeEventListener('keydown', onDraftPromptKey)
@@ -466,7 +513,11 @@ watch(showDraftPrompt, (open) => {
 
 // Dispatch pieces need image_alt with image (website contract). Generate and
 // save it before publishing rather than blocking.
-async function publishWithPrep(isRepublish: boolean) {
+async function publishWithPrep(
+  isRepublish: boolean,
+  opts: { webmentions: boolean; hiddenUntil: string | null },
+  mode: ReviewMode,
+) {
   if (props.file.content_type === 'dispatch') {
     try {
       const alt = await invoke<string | null>('ensure_image_alt', { path: props.file.path })
@@ -481,7 +532,7 @@ async function publishWithPrep(isRepublish: boolean) {
           label: 'Retry',
           run: () => {
             toasts.dismiss(id)
-            publishWithPrep(isRepublish)
+            publishWithPrep(isRepublish, opts, mode)
           },
         },
         ttl: 0,
@@ -489,7 +540,8 @@ async function publishWithPrep(isRepublish: boolean) {
       return
     }
   }
-  await publish(isRepublish)
+  if (mode === 'unlisted') await publishUnlisted(isRepublish, opts)
+  else await publish(isRepublish, opts)
 }
 
 // Tag suggestions composable
@@ -869,22 +921,6 @@ const slug = computed(() => {
   return props.file.path.includes('/blog/') ? baseName : ''
 })
 
-const targetUrl = computed(() => {
-  const targets = publishTargets.value
-  const target = targets.find((t) => t.id === selectedTargetId.value) || targets.find((t) => t.is_default) || targets[0]
-  const domain = target
-    ? (appConfig.value as any)?.publish_targets
-        ?.find((t: any) => t.id === target.id)
-        ?.domain?.replace(/^https?:\/\//, '') || 'ejfox.com'
-    : 'ejfox.com'
-  // Dispatch pieces live at /dispatch/<slug> (no year folder).
-  if (props.file.content_type === 'dispatch') {
-    return `${domain}/dispatch/${props.file.filename.replace(/\.md$/, '')}`
-  }
-  // slug already includes year (e.g. "2013/the-magazine-..."), so just append.
-  return `${domain}/blog/${slug.value}`
-})
-
 const isLive = computed(() => !!props.file.published_url || !!justPublished.value)
 const liveUrl = computed(() => props.file.published_url || justPublished.value)
 const hasUnpublishedChanges = computed(() => props.file.warnings.includes('Modified since publish'))
@@ -897,6 +933,37 @@ const missingAltTextCount = computed(() => {
   const match = w.match(/\((\d+)\)/)
   return match ? parseInt(match[1]) : 0
 })
+
+// ── First-use tips (see composables/useTips.ts) ───────────────────────────
+// Each shows only in its context, one at a time, and retires once you do the
+// thing it describes.
+// Two placements share the 'inspector' tip: inside the inspector when it's
+// open, and under the one-line bar (whose Details button opens it) when it's
+// hidden. Opening it by hand (Details, the tab-strip toggle, ⌥⌘I) retires it.
+const inspectorTip = useTip('inspector', () => inspector.visible.value)
+const inspectorHiddenTip = useTip('inspector', () => !inspector.visible.value)
+watch([inspector.open, inspector.overlay], ([o, ov], [po, pov]) => {
+  if (o !== po || (ov && !pov)) invalidateTip('inspector')
+})
+const publishTip = useTip('publish', () => !isLive.value && props.file.is_safe && !props.file.publish_at)
+const changedTip = useTip('changed', () => isLive.value && hasUnpublishedChanges.value)
+const altTextTip = useTip('alt-text', () => missingAltTextCount.value > 0 && inspector.visible.value)
+// The social-card picker remembers whether it's folded; the tip only makes
+// sense while it is.
+const ogCollapsed = useLocalStorage('dispatch-og-collapsed', true)
+const socialCardTip = useTip(
+  'social-card',
+  () => !!slug.value && props.file.content_type !== 'dispatch' && ogCollapsed.value && inspector.visible.value,
+)
+const syndicateTip = useTip(
+  'syndicate',
+  () => isLive.value && !hasUnpublishedChanges.value && !props.file.password && inspector.visible.value,
+)
+watch(showPublishConfirm, (open) => open && invalidateTip('publish'))
+watch([diffOpen, publishing], ([d, p]) => (d || p) && isLive.value && invalidateTip('changed'))
+watch(showAltTextReviewer, (open) => open && invalidateTip('alt-text'))
+watch(ogCollapsed, (c) => !c && invalidateTip('social-card'))
+watch(showSyndicationWizard, (open) => open && invalidateTip('syndicate'))
 
 // ── Photo-post treatment ─────────────────────────────────────────────────
 // A post the vault marks `type: photos` (content_type set in vault.rs). These
@@ -1004,20 +1071,20 @@ async function schedulePublish() {
     await invoke('schedule_publish', { path: props.file.path, publishAt: isoDate })
     showSchedulePicker.value = false
     scheduleDate.value = ''
-    showCopyFeedback('Scheduled!')
+    showCopyFeedback('Will publish then')
     emit('published')
   } catch (e) {
-    await message(String(e), { title: 'Couldn’t schedule', kind: 'error' })
+    await message(String(e), { title: 'Couldn’t set the time', kind: 'error' })
   }
 }
 
 async function cancelSchedule() {
   try {
     await invoke('cancel_schedule', { path: props.file.path })
-    showCopyFeedback('Schedule cancelled')
+    showCopyFeedback('Won’t publish later')
     emit('published')
   } catch (e) {
-    await message(String(e), { title: 'Couldn’t cancel the schedule', kind: 'error' })
+    await message(String(e), { title: 'Couldn’t cancel publishing later', kind: 'error' })
   }
 }
 
@@ -1037,7 +1104,16 @@ function copyUrlAndPassword() {
 }
 
 // Expose methods for parent component
-defineExpose({ openPublishConfirm: requestPublish })
+/** Menu-bar entry points (useMenuActions). Each opens what the matching
+ *  inspector control opens; the menu enables them only when they apply. */
+function openSyndication() {
+  if (liveUrl.value) showSyndicationWizard.value = true
+}
+function openSchedulePicker() {
+  showSchedulePicker.value = true
+}
+
+defineExpose({ openPublishConfirm: requestPublish, unpublish, openSyndication, openSchedulePicker })
 
 async function openInObsidian() {
   await invoke('open_in_obsidian', { path: props.file.path })
@@ -1069,421 +1145,95 @@ async function openPreview() {
       </div>
     </Transition>
 
-    <!-- Resizable metadata stack. Default height is 0 (natural sizing — flows
-         to content); once the user drags the divider it becomes a fixed cap
-         with internal scroll. Double-click the divider to reset to natural. -->
-    <div
-      ref="metaStackRef"
-      class="metadata-stack"
-      :class="{ sized: metaHeight > 0, resizing: metaDragging }"
-      :style="metaHeight > 0 ? { height: metaHeight + 'px' } : {}"
-    >
-    <!-- Status Banner -->
-    <StatusBanner
-      :is-live="isLive"
-      :is-scheduled="isScheduled"
-      :is-unlisted="isUnlisted"
-      :is-password-protected="isPasswordProtected"
-      :has-unpublished-changes="hasUnpublishedChanges"
-      :is-safe="file.is_safe"
-      :warnings="file.warnings"
-      :live-url="liveUrl"
-      :publish-at="file.publish_at"
-      :visibility-label="visibilityLabel"
-      :publishing="publishing"
-      :file-path="file.path"
-      :deploy="currentDeploy"
-      @dismiss-deploy="dismissDeploy(slug)"
-      @copy-url="copyUrl"
-      @copy-url-password="copyUrlAndPassword"
-      @republish="publish(true)"
-      @cancel-schedule="cancelSchedule"
-    />
-
-    <!-- Webmention status — auto-fires after publish/republish, surfaced
-         inline so the user sees an outcome without an extra click. -->
-    <WebmentionStatus
-      v-if="isLive && (sendingWebmentions || webmentionReport)"
-      :report="webmentionReport"
-      :sending="sendingWebmentions"
-      @resend="triggerWebmentions({ bridgyFed: appConfig?.webmentions_bridgy_fed === true, force: true })"
-    />
-
-    <!-- Header -->
-    <div class="header">
-      <template v-if="titleIsDerived && file.dek">
-        <h1>{{ file.dek }}</h1>
-        <p class="title-hint">{{ slug }}</p>
-      </template>
-      <template v-else>
-        <h1 :class="{ 'derived-title': titleIsDerived }">{{ title }}</h1>
-        <p v-if="titleIsDerived" class="title-hint">Title derived from filename</p>
-        <p v-if="file.dek" class="dek">{{ file.dek }}</p>
-      </template>
-    </div>
-
-    <!-- Photo-post summary: media + alt-text state up top, since for a photo
-         post those ARE the work. Buttons jump straight into the workflows. -->
-    <div v-if="isPhotoPost" class="photo-summary">
-      <span class="ps-count">{{ file.image_count }} photo{{ file.image_count === 1 ? '' : 's' }}</span>
-      <span v-if="missingAltTextCount > 0" class="ps-item warn">
-        {{ missingAltTextCount }} missing alt
-      </span>
-      <span v-else-if="file.image_count > 0" class="ps-item ok">alt text complete</span>
-      <span v-if="localImageCount > 0" class="ps-item local">{{ localImageCount }} to host</span>
-      <span class="ps-spacer" />
-      <button v-if="localImageCount > 0" class="ps-btn primary" @click="showMediaFixer = true">Upload</button>
-      <button v-if="missingAltTextCount > 0" class="ps-btn" @click="showAltTextReviewer = true">Describe</button>
-    </div>
-
-    <!-- Analytics strip — visible up top whenever the post is live. Shows
-         pageviews, visitors, avg time on page, bounce rate, and a 30-day
-         sparkline of daily views. -->
-    <div v-if="isLive && (postStats || loadingStats)" class="analytics-strip">
-      <template v-if="loadingStats">
-        <span class="muted">analytics…</span>
-      </template>
-      <template v-else-if="postStats">
-        <span class="stat-big">
-          <strong>{{ fmtCount(postStats.pageviews) }}</strong>
-          <span class="stat-unit">views</span>
-        </span>
-        <span v-if="postStats.visitors" class="stat">
-          <strong>{{ fmtCount(postStats.visitors) }}</strong>
-          <span class="stat-unit">visitors</span>
-        </span>
-        <span v-if="avgTimeOnPage" class="stat">
-          <strong>{{ fmtDuration(avgTimeOnPage) }}</strong>
-          <span class="stat-unit">avg</span>
-        </span>
-        <span v-if="bounceRate !== null" class="stat" :class="{ warn: bounceRate > 0.7 }">
-          <strong>{{ Math.round(bounceRate * 100) }}%</strong>
-          <span class="stat-unit">bounce</span>
-        </span>
-        <svg
-          v-if="sparkPath"
-          class="sparkline"
-          viewBox="0 0 120 22"
-          preserveAspectRatio="none"
-          :data-tip="`${pageviewSeries.length}-day daily pageviews`"
-        >
-          <path :d="sparkPath" fill="none" stroke="currentColor" stroke-width="1.25" />
-        </svg>
-        <span class="stat-period">last 30d</span>
-      </template>
-    </div>
-    <!-- Where the traffic came from (utm_source), and tagged links to share. -->
-    <div v-if="isLive && liveUrl" class="share-strip">
-      <span v-if="postSources.length" class="sources" data-tip="Visits by utm_source, last 30 days">
-        <span v-for="s in postSources.slice(0, 5)" :key="s.x" class="source">
-          {{ s.x }} <strong>{{ fmtCount(s.y) }}</strong>
-        </span>
-      </span>
-      <span class="share-spacer"></span>
-      <button class="share-btn" data-tip="Copies the link tagged utm_source=x" @click="copyShareLink('x', 'social')">
-        Copy link for X
-      </button>
-      <button
-        class="share-btn"
-        data-tip="Copies the link tagged utm_source=newsletter"
-        @click="copyShareLink('newsletter', 'email')"
-      >
-        Copy link for newsletter
-      </button>
-    </div>
-
-    <!-- Info / Metadata -->
-    <MetadataPanel
-      :file="file"
-      :obsidian-connected="obsidianConnected"
-      :git-status="gitStatus"
-      :post-stats="postStats"
-      :loading-stats="loadingStats"
-      :suggested-tags="suggestedTags"
-      :available-tags="availableTags"
-      :adding-tag="addingTag"
-      :metadata-expanded="metadataExpanded"
-      :has-unpublished-changes="hasUnpublishedChanges"
-      :is-unlisted="isUnlisted"
-      :is-password-protected="isPasswordProtected"
-      @toggle-metadata="metadataExpanded = !metadataExpanded"
-      @add-tag="addTag"
-    />
-
-    <!-- Lint Receipt (only when warnings exist) -->
-    <LintReceipt :warnings="lintWarnings" />
-
-    <!-- Media health: Local upload (prerequisite) → Alt text (depends on URLs).
-         Order matters — Local Media must come before Alt Text because alt text
-         generation needs publicly-hosted URLs. The cross-references in the
-         hint copy spell this out so users don't dead-end in the Describe modal. -->
-
-    <!-- Local Media (Step 1 of media flow) -->
-    <div v-if="localImageCount > 0 || localVideoCount > 0" class="media-section">
-      <div class="media-section-header">
-        <span class="label">
-          <PhImageSquare :size="10" weight="duotone" />
-          Local Media
-          <span v-if="missingAltTextCount > 0" class="step-pill">step 1 of 2</span>
-        </span>
-        <span class="count" :class="{ warning: localImageCount > 0 }">{{ localImageCount + localVideoCount }}</span>
-        <button v-if="localImageCount > 0" @click.stop="showMediaFixer = true" class="section-btn primary">
-          Upload to Cloudinary
-        </button>
-      </div>
-      <div class="media-section-hint">
-        <template v-if="localImageCount > 0 && localVideoCount > 0">
-          {{ localImageCount }} image{{ localImageCount === 1 ? '' : 's' }} +
-          {{ localVideoCount }} video{{ localVideoCount === 1 ? '' : 's' }} live in your vault.
-          Uploading rewrites the markdown refs to public URLs.
-        </template>
-        <template v-else-if="localImageCount > 0">
-          {{ localImageCount }} image{{ localImageCount === 1 ? '' : 's' }} live in your vault.
-          Uploading rewrites the markdown refs to public URLs.
-        </template>
-        <template v-else>
-          {{ localVideoCount }} video{{ localVideoCount === 1 ? '' : 's' }} in your vault — videos
-          stay local; nothing to upload here.
-        </template>
-      </div>
-    </div>
-
-    <!-- Alt Text (Step 2 of media flow) -->
-    <div v-if="missingAltTextCount > 0" class="media-section">
-      <div class="media-section-header">
-        <button class="section-toggle" @click="altTextCollapsed = !altTextCollapsed" :aria-expanded="!altTextCollapsed">
-          <PhCaretDown :size="9" weight="bold" class="caret" :class="{ collapsed: altTextCollapsed }" />
-          <span class="label">
-            <PhImageSquare :size="10" weight="duotone" />
-            Alt Text
-            <span v-if="localImageCount > 0" class="step-pill">step 2 of 2</span>
-          </span>
-          <span class="count" :class="{ warning: localImageCount === 0 }">{{ missingAltTextCount }}</span>
-        </button>
-        <button
-          @click.stop="showAltTextReviewer = true"
-          class="section-btn"
-          :class="localImageCount > 0 ? 'ghost' : 'primary'"
-          :title="localImageCount > 0 ? 'Open describer (will prompt to upload local images first)' : ''"
-        >
-          Describe
-        </button>
-      </div>
-      <div v-if="!altTextCollapsed" class="media-section-hint">
-        <template v-if="localImageCount > 0">
-          Local images need a public URL before they can be described —
-          run <strong>Upload to Cloudinary</strong> above first.
-        </template>
-        <template v-else>
-          {{ missingAltTextCount }} image{{ missingAltTextCount === 1 ? '' : 's' }} ready to
-          describe with AI.
-        </template>
-      </div>
-    </div>
-
-    <!-- Alt Text Reviewer Modal -->
-    <AltTextReviewer
-      v-if="showAltTextReviewer"
-      :file-path="file.path"
-      :count="missingAltTextCount"
-      :local-image-count="localImageCount"
-      :local-video-count="localVideoCount"
-      @close="showAltTextReviewer = false"
-      @applied="onAltTextApplied"
-      @open-local-fixer="onOpenLocalFixerFromAltText"
-    />
-
-    <!-- Backlinks -->
-    <div v-if="backlinks.length || loadingBacklinks" class="backlinks">
-      <div class="backlinks-header">
-        <span class="label">
-          <PhLinkSimple :size="10" weight="duotone" />
-          Backlinks
-        </span>
-        <span class="count">{{ loadingBacklinks ? '...' : backlinks.length }}</span>
-      </div>
-      <div v-if="loadingBacklinks" class="backlinks-loading">Loading...</div>
-      <template v-else>
-        <BacklinksGraph
-          v-if="backlinks.length"
-          :backlinks="backlinks"
-          :current-title="props.file.title || ''"
-          @select="(path: string) => emit('jump-to-path', path)"
-        />
-        <div class="backlinks-list">
-        <div
-          v-for="link in backlinks"
-          :key="link.path"
-          class="backlink-item"
-          @contextmenu="showBacklinkMenu(link, $event)"
-        >
-          <span class="backlink-title">{{ link.title || link.path }}</span>
-          <span v-if="link.context" class="backlink-context">{{ link.context }}</span>
-        </div>
-        </div>
-      </template>
-    </div>
-
-    <!-- OG Image (only after publish) -->
-    <!-- OG picker shows for any post with a usable slug, not just live ones —
-         picking an OG before publish is a natural part of the publish flow. -->
-    <OgImagePicker v-if="slug && file.content_type !== 'dispatch'" :slug="slug" @picked="() => {}" />
-
-    <!-- Local Media Fixer (the modal — surface lives in the Local Media section above) -->
-    <LocalMediaFixer
-      v-if="showMediaFixer"
-      :file-path="file.path"
-      :local-media="localMedia"
-      :folder="mediaUploadFolder"
-      @close="showMediaFixer = false"
-      @fixed="onLocalMediaFixed"
-      @open-alt-text="onOpenAltTextFromFixer"
-    />
-
-    <!-- Toolbar dock — sticks to the bottom of the metadata-stack scroll
-         region so the publish CTA is always visible, even when the user
-         has sized the meta area tighter than its natural content. Without
-         this, ActionToolbar was the last child of an overflow:auto column
-         and got pushed below the scroll viewport, clipping the publish
-         button. -->
-    <div class="toolbar-dock">
-      <ActionToolbar
-        :enabled-editors="enabledEditors"
-        :publish-targets="publishTargets"
-        :has-multiple-targets="hasMultipleTargets"
-        :selected-target-id="selectedTargetId"
-        :is-live="isLive"
-        :live-url="liveUrl"
-        :is-vue-page="isVuePage || file.content_type === 'dispatch' /* no Vue-page conversion for dispatch */"
-        :converting="converting"
-        :unpublishing="unpublishing"
-        :publishing="publishing"
-        :is-safe="file.is_safe"
-        :is-scheduled="isScheduled"
-        :is-unlisted="isUnlisted"
-        @open-obsidian="openInObsidian"
-        @open-editor="openInEditor"
-        @open-preview="openPreview"
-        @select-target="selectTarget"
-        @show-syndication="showSyndicationWizard = true"
-        @convert-to-vue-page="convertToVuePage"
-        @unpublish="unpublish"
-        @open-publish-confirm="requestPublish"
-        @publish-unlisted="publishUnlisted"
-        @toggle-schedule="showSchedulePicker = !showSchedulePicker"
+    <!-- Two columns: the post, and the inspector. Below ~620px the inspector
+         becomes an overlay panel (see useInspector / .is-narrow). -->
+    <!-- Inspector hidden (by choice or because the pane is narrow): keep the
+         post's state and its one primary action reachable in a single line. -->
+    <div v-if="!inspector.visible.value" class="insp-mini">
+      <span class="status-dot" :data-status="miniStatus.key" />
+      <span class="insp-mini-word">{{ miniStatus.word }}</span>
+      <span class="insp-mini-spacer" />
+      <UiButton
+        variant="primary"
+        size="small"
+        :disabled="publishing"
+        :label="publishing ? 'Publishing…' : isLive ? 'Update live post…' : file.is_safe ? 'Publish…' : 'See what to fix…'"
+        @click="requestPublish(isLive)"
       />
+      <UiButton
+        variant="plain"
+        size="small"
+        label="Details"
+        :icon="PanelRight"
+        aria-label="Show Inspector"
+        data-tip="Show Inspector (⌥⌘I)"
+        @click="inspector.toggle()"
+      />
+    </div>
 
-      <!-- Schedule Picker -->
-      <div v-if="showSchedulePicker" class="schedule-picker">
-        <input
-          type="datetime-local"
-          v-model="scheduleDate"
-          class="schedule-input"
-          :min="new Date().toISOString().slice(0, 16)"
+    <InlineTip v-if="!inspector.visible.value && inspectorHiddenTip.show.value" class="mini-tip" @close="inspectorHiddenTip.close()">
+      Status, links, photos and the social card are under Details, or press <kbd>⌥⌘I</kbd>.
+    </InlineTip>
+
+    <div ref="splitRef" class="preview-split" :class="{ 'is-narrow': inspector.narrow.value }">
+      <!-- ── The post ─────────────────────────────────────────────────────── -->
+      <div class="preview">
+        <!-- Thin macOS-style indeterminate progress bar pinned to the top
+             of the preview pane. Only renders while content is loading AND
+             the load is taking long enough to be worth showing — fast loads
+             never flash it. -->
+        <div v-if="showLoadingIndicator" class="preview-progress" aria-hidden="true">
+          <div class="preview-progress-track"></div>
+        </div>
+
+        <!-- Render error card — surfaces what would otherwise be a silent
+             blank pane. Sits above the rendered content so the user sees
+             the cause and, when applicable, the raw text fallback below. -->
+        <div v-if="renderError" class="render-error-card">
+          <div class="render-error-stage">{{ renderError.stage }} failed</div>
+          <div class="render-error-msg">{{ renderError.message }}</div>
+          <div class="render-error-path">{{ file.path }}</div>
+        </div>
+
+        <!-- What changed since the last publish — opened from the inspector's
+             Status section, shown here where a diff has room to breathe. -->
+        <PublishDiffPanel
+          v-if="isLive && hasUnpublishedChanges"
+          class="preview-diff"
+          :file-path="file.path"
+          :open="diffOpen"
+          @close="diffOpen = false"
         />
-        <button @click="schedulePublish" :disabled="!scheduleDate" class="btn accent">Confirm Schedule</button>
-        <button @click="showSchedulePicker = false" class="btn">Cancel</button>
-      </div>
-    </div>
-    </div>
-    <!-- /metadata-stack -->
 
-    <!-- Drag this to give the rendered preview more (or less) room. Double-
-         click to return the metadata stack to natural (content-fit) height. -->
-    <ResizeHandle
-      axis="y"
-      :active="metaDragging"
-      data-tip="drag to resize · double-click to reset"
-      @down="startMetaResize"
-      @reset="resetMetaHeight"
-    />
-
-    <!-- Syndication Wizard Modal -->
-    <SyndicationWizard
-      v-if="showSyndicationWizard && liveUrl"
-      :post-url="liveUrl"
-      :title="title"
-      :slug="slug"
-      :source-path="file.path"
-      :dek="file.dek"
-      :tags="file.tags"
-      :content-type="file.content_type"
-      :visibility="isPasswordProtected ? 'protected' : isUnlisted ? 'unlisted' : 'public'"
-      :quick="autoWizard"
-      @close="onWizardClosed"
-      @queued="onSyndicationQueued"
-      @syndicated="onWizardSyndicated"
-    />
-
-    <!-- Draft gate: a `draft: true` piece asks before publishing. -->
-    <div v-if="showDraftPrompt" class="draft-overlay" @click.self="showDraftPrompt = false">
-      <div class="draft-modal">
-        <div class="draft-title">This piece is still a draft</div>
-        <div class="draft-body">
-          Its frontmatter says <code>draft: true</code>. Remove that and continue to publish?
+        <!-- Header -->
+        <div class="header">
+          <template v-if="titleIsDerived && file.dek">
+            <h1>{{ file.dek }}</h1>
+            <p class="title-hint">{{ slug }}</p>
+          </template>
+          <template v-else>
+            <h1 :class="{ 'derived-title': titleIsDerived }">{{ title }}</h1>
+            <p v-if="titleIsDerived" class="title-hint">Title derived from filename</p>
+            <p v-if="file.dek" class="dek">{{ file.dek }}</p>
+          </template>
         </div>
-        <div class="draft-actions">
-          <button class="btn" @click="showDraftPrompt = false">Not yet <kbd>esc</kbd></button>
-          <button class="btn accent" :disabled="clearingDraft" @click="clearDraftAndContinue">
-            {{ clearingDraft ? 'Clearing…' : 'Remove draft & publish' }} <kbd>⏎</kbd>
-          </button>
+
+        <!-- Contact-sheet gallery for photo posts — the images ARE the post, so
+             lead with a grid. The full inline render stays below for captions and
+             any prose between shots. -->
+        <div v-if="isPhotoPost && galleryImages.length" class="photo-gallery">
+          <a
+            v-for="(src, gi) in galleryImages"
+            :key="gi"
+            class="gallery-cell"
+            :href="src"
+            target="_blank"
+            rel="noopener"
+            :title="`Open image ${gi + 1} of ${galleryImages.length}`"
+          >
+            <img :src="galleryThumb(src)" loading="lazy" alt="" />
+          </a>
         </div>
-      </div>
-    </div>
-
-
-    <!-- Publish Confirmation -->
-    <PublishConfirmModal
-      :show="showPublishConfirm"
-      :file="file"
-      :slug="slug"
-      :target-url="targetUrl"
-      :is-republish="publishConfirmRepublish"
-      @close="closePublishConfirm"
-      @confirm="(isRepublish: boolean) => publishWithPrep(isRepublish)"
-    />
-
-    <!-- Content divider — plain tracked-caps label, no decorative glyph.
-         Mail uses the same restraint on its section labels. -->
-    <div class="content-divider">
-      <span>CONTENT</span>
-    </div>
-
-    <!-- Preview -->
-    <div class="preview">
-      <!-- Thin macOS-style indeterminate progress bar pinned to the top
-           of the preview pane. Only renders while content is loading AND
-           the load is taking long enough to be worth showing — fast loads
-           never flash it. -->
-      <div v-if="showLoadingIndicator" class="preview-progress" aria-hidden="true">
-        <div class="preview-progress-track"></div>
-      </div>
-
-      <!-- Render error card — surfaces what would otherwise be a silent
-           blank pane. Sits above the rendered content so the user sees
-           the cause and, when applicable, the raw text fallback below. -->
-      <div v-if="renderError" class="render-error-card">
-        <div class="render-error-stage">{{ renderError.stage }} failed</div>
-        <div class="render-error-msg">{{ renderError.message }}</div>
-        <div class="render-error-path">{{ file.path }}</div>
-      </div>
-
-      <!-- Contact-sheet gallery for photo posts — the images ARE the post, so
-           lead with a grid. The full inline render stays below for captions and
-           any prose between shots. -->
-      <div v-if="isPhotoPost && galleryImages.length" class="photo-gallery">
-        <a
-          v-for="(src, gi) in galleryImages"
-          :key="gi"
-          class="gallery-cell"
-          :href="src"
-          target="_blank"
-          rel="noopener"
-          :title="`Open image ${gi + 1} of ${galleryImages.length}`"
-        >
-          <img :src="galleryThumb(src)" loading="lazy" alt="" />
-        </a>
-      </div>
 
       <Transition name="preview-fade">
         <div
@@ -1563,7 +1313,327 @@ async function openPreview() {
           </div>
         </div>
       </Transition>
+      </div>
+
+      <!-- ── Inspector ────────────────────────────────────────────────────── -->
+      <aside v-if="inspector.visible.value" class="inspector" :style="inspectorStyle" aria-label="Inspector">
+        <InlineTip v-if="inspectorTip.show.value" class="insp-tip" @close="inspectorTip.close()">
+          This is the Inspector: where the post stands, what to fix, and how to share it
+          (<kbd>⌥⌘I</kbd> hides it).
+        </InlineTip>
+        <!-- Status -->
+        <section class="insp-section">
+          <StatusBanner
+            :is-live="isLive"
+            :is-scheduled="isScheduled"
+            :is-unlisted="isUnlisted"
+            :is-password-protected="isPasswordProtected"
+            :has-unpublished-changes="hasUnpublishedChanges"
+            :is-safe="file.is_safe"
+            :warnings="file.warnings"
+            :live-url="liveUrl"
+            :publish-at="file.publish_at"
+            :visibility-label="visibilityLabel"
+            :publishing="publishing"
+            :file-path="file.path"
+            :deploy="currentDeploy"
+            :diff-open="diffOpen"
+            @dismiss-deploy="dismissDeploy(file.path)"
+            @recheck-deploy="recheckDeploy(file.path)"
+            @copy-url="copyUrl"
+            @copy-url-password="copyUrlAndPassword"
+            @republish="requestPublish(true)"
+            @cancel-schedule="cancelSchedule"
+            @toggle-diff="diffOpen = !diffOpen"
+          />
+
+          <!-- Webmention status — auto-fires after publish/republish, surfaced
+               inline so the user sees an outcome without an extra click. -->
+          <WebmentionStatus
+            v-if="isLive && (sendingWebmentions || webmentionReport)"
+            :report="webmentionReport"
+            :sending="sendingWebmentions"
+            @resend="triggerWebmentions({ bridgyFed: appConfig?.webmentions_bridgy_fed === true, force: true })"
+          />
+          <InlineTip v-if="changedTip.show.value" @close="changedTip.close()">
+            {{ CHANGED_HINT }}: See changes shows the diff, and Update live post sends your edits.
+          </InlineTip>
+        </section>
+
+        <!-- Actions: the one primary, then Open in / Share / More -->
+        <section class="insp-section">
+          <InlineTip
+            v-if="publishTip.show.value"
+            action="How publishing works"
+            @close="publishTip.close()"
+            @action="requestHelp('overview')"
+          >
+            Publish shows you a review, then commits the note to the site’s repo and pushes it, and
+            ejfox.com has it about 3 minutes later.
+          </InlineTip>
+          <ActionToolbar
+            :enabled-editors="enabledEditors"
+            :publish-targets="publishTargets"
+            :has-multiple-targets="hasMultipleTargets"
+            :selected-target-id="selectedTargetId"
+            :is-live="isLive"
+            :live-url="liveUrl"
+            :is-vue-page="isVuePage || file.content_type === 'dispatch' /* no Vue-page conversion for dispatch */"
+            :converting="converting"
+            :unpublishing="unpublishing"
+            :publishing="publishing"
+            :is-safe="file.is_safe"
+            :is-scheduled="isScheduled"
+            :is-unlisted="isUnlisted"
+            @open-obsidian="openInObsidian"
+            @open-editor="openInEditor"
+            @open-preview="openPreview"
+            @select-target="selectTarget"
+            @show-syndication="showSyndicationWizard = true"
+            @copy-share-link="copyShareLink"
+            @convert-to-vue-page="convertToVuePage"
+            @unpublish="unpublish"
+            @open-publish-confirm="requestPublish"
+            @publish-unlisted="requestPublish(false, 'unlisted')"
+            @toggle-schedule="showSchedulePicker = !showSchedulePicker"
+          />
+          <InlineTip v-if="syndicateTip.show.value" @close="syndicateTip.close()">
+            Bluesky and Mastodon only hear about a post when you send it with Syndicate, the last button
+            under Share.
+          </InlineTip>
+
+          <!-- Schedule Picker (More › Publish later…) -->
+          <div v-if="showSchedulePicker" class="schedule-picker">
+            <span class="insp-label">Publish later</span>
+            <input
+              type="datetime-local"
+              v-model="scheduleDate"
+              class="schedule-input"
+              aria-label="Publish at"
+              :min="new Date().toISOString().slice(0, 16)"
+            />
+            <div class="schedule-actions">
+              <UiButton size="small" variant="plain" label="Cancel" @click="showSchedulePicker = false" />
+              <!-- Secondary: the primary above is still on screen. -->
+              <UiButton size="small" :disabled="!scheduleDate" label="Publish at this time" @click="schedulePublish" />
+            </div>
+            <span class="insp-note">Dispatch publishes it at the time you pick, if it still has nothing to fix and isn’t a draft (keep Dispatch running).</span>
+          </div>
+        </section>
+
+        <!-- Details -->
+        <section class="insp-section">
+          <span class="insp-label">Details</span>
+          <div class="insp-list">
+            <MetadataPanel
+              :file="file"
+              :obsidian-connected="obsidianConnected"
+              :git-status="gitStatus"
+              :suggested-tags="suggestedTags"
+              :available-tags="availableTags"
+              :adding-tag="addingTag"
+              :metadata-expanded="metadataExpanded"
+              :has-unpublished-changes="hasUnpublishedChanges"
+              :is-unlisted="isUnlisted"
+              :is-password-protected="isPasswordProtected"
+              @toggle-metadata="metadataExpanded = !metadataExpanded"
+              @add-tag="addTag"
+            >
+
+            <!-- Media health: Local upload (prerequisite) → Alt text (depends on
+                 URLs). Order matters — local media must be hosted before alt text
+                 can be generated, so Upload sits above Describe and the note
+                 spells out the dependency. -->
+            <div v-if="localImageCount > 0 || localVideoCount > 0" class="insp-kv insp-kv-action">
+              <span class="insp-key">In vault</span>
+              <span class="insp-val" :class="{ 'is-attention': localImageCount > 0 }">
+                <template v-if="localImageCount > 0">{{ localImageCount }} image{{ localImageCount === 1 ? '' : 's' }}</template>
+                <template v-if="localImageCount > 0 && localVideoCount > 0"> + </template>
+                <template v-if="localVideoCount > 0">{{ localVideoCount }} video{{ localVideoCount === 1 ? '' : 's' }}</template>
+              </span>
+              <UiButton
+                v-if="localImageCount > 0"
+                size="small"
+                label="Upload"
+                title="Upload to Cloudinary; rewrites the markdown refs to public URLs"
+                @click.stop="showMediaFixer = true"
+              />
+            </div>
+            <span v-if="localImageCount > 0 || localVideoCount > 0" class="insp-note">
+              <template v-if="localImageCount > 0">Uploading rewrites the refs to public URLs.</template>
+              <template v-if="localImageCount > 0 && missingAltTextCount > 0"> Do it before describing.</template>
+              <template v-if="localImageCount === 0">Videos stay local; nothing to upload.</template>
+            </span>
+
+            <div v-if="file.image_count > 0 || missingAltTextCount > 0" class="insp-kv insp-kv-action">
+              <span class="insp-key">Photos</span>
+              <span class="insp-val" :title="`${file.image_count} image${file.image_count === 1 ? '' : 's'} in the post`">
+                <span v-if="missingAltTextCount > 0" class="is-attention-text">{{ missingAltTextCount }} missing alt</span>
+                <template v-else>{{ file.image_count }} <span class="is-muted-text">· alt text complete</span></template>
+              </span>
+              <UiButton
+                v-if="missingAltTextCount > 0"
+                size="small"
+                :variant="localImageCount > 0 ? 'plain' : 'secondary'"
+                label="Describe"
+                :title="localImageCount > 0 ? 'Open the describer (it will ask to upload local images first)' : 'Describe the images with AI'"
+                @click.stop="showAltTextReviewer = true"
+              />
+            </div>
+            <InlineTip v-if="altTextTip.show.value" class="insp-inline-tip" @close="altTextTip.close()">
+              Describe drafts alt text for each image with AI, and nothing is saved until you approve it.
+            </InlineTip>
+
+            <!-- Analytics (Umami, last 30 days) while the post is live. -->
+            <template v-if="isLive && (postStats || loadingStats)">
+              <div class="insp-kv">
+                <span class="insp-key">Views</span>
+                <span v-if="loadingStats" class="insp-val is-muted">…</span>
+                <span v-else-if="postStats" class="insp-val">
+                  {{ fmtCount(postStats.pageviews) }}
+                  <span v-if="postStats.visitors" class="is-muted-text">· {{ fmtCount(postStats.visitors) }} visitors</span>
+                  <span class="is-muted-text">· 30d</span>
+                </span>
+              </div>
+              <div v-if="postStats && (avgTimeOnPage || bounceRate !== null)" class="insp-kv">
+                <span class="insp-key">Reading</span>
+                <span class="insp-val">
+                  <template v-if="avgTimeOnPage">{{ fmtDuration(avgTimeOnPage) }} avg</template>
+                  <span v-if="bounceRate !== null" :class="bounceRate > 0.7 ? 'is-attention-text' : 'is-muted-text'">
+                    <template v-if="avgTimeOnPage">· </template>{{ Math.round(bounceRate * 100) }}% bounce
+                  </span>
+                </span>
+              </div>
+              <div v-if="sparkPath" class="insp-kv is-spark">
+                <span class="insp-key">Daily</span>
+                <span class="insp-val">
+                  <svg
+                    class="sparkline"
+                    viewBox="0 0 120 22"
+                    preserveAspectRatio="none"
+                    role="img"
+                    :aria-label="`${pageviewSeries.length}-day daily pageviews`"
+                  >
+                    <path :d="sparkPath" fill="none" stroke="currentColor" stroke-width="1.25" />
+                  </svg>
+                </span>
+              </div>
+              <!-- Where the traffic came from (utm_source). The tagged share
+                   links live under Share › Copy link. -->
+              <div v-if="liveUrl && postSources.length" class="insp-kv">
+                <span class="insp-key">From</span>
+                <span class="insp-val sources" title="Visits by utm_source, last 30 days">
+                  <span v-for="s in postSources.slice(0, 5)" :key="s.x" class="source">
+                    {{ s.x }} <strong>{{ fmtCount(s.y) }}</strong>
+                  </span>
+                </span>
+              </div>
+            </template>
+
+            <!-- Backlinks -->
+            <div v-if="backlinks.length || loadingBacklinks" class="insp-kv">
+              <span class="insp-key">Backlinks</span>
+              <span class="insp-val" :class="{ 'is-muted': loadingBacklinks }">
+                {{ loadingBacklinks ? '…' : backlinks.length }}
+              </span>
+            </div>
+            <!-- Click jumps to the linking note; right-click for Obsidian / Finder / copy. -->
+            <div v-if="!loadingBacklinks && backlinks.length" class="backlinks-list">
+              <button
+                v-for="link in backlinks"
+                :key="link.path"
+                class="backlink-item"
+                type="button"
+                :title="link.path"
+                @click="emit('jump-to-path', link.path)"
+                @contextmenu="showBacklinkMenu(link, $event)"
+              >
+                <span class="backlink-title">{{ link.title || link.path }}</span>
+                <span v-if="link.context" class="backlink-context">{{ link.context }}</span>
+              </button>
+            </div>
+            </MetadataPanel>
+          </div>
+        </section>
+
+        <!-- What to fix (only when there are issues) -->
+        <LintReceipt :warnings="lintWarnings" />
+
+        <!-- Social card. Shows for any post with a usable slug, not just live
+             ones — picking an OG before publish is part of the publish flow. -->
+        <InlineTip v-if="socialCardTip.show.value" class="insp-tip" @close="socialCardTip.close()">
+          The social card is the picture people see when this link is shared; open Social card below to
+          pick one.
+        </InlineTip>
+        <OgImagePicker v-if="slug && file.content_type !== 'dispatch'" :slug="slug" @picked="() => {}" />
+      </aside>
     </div>
+
+    <!-- Alt Text Reviewer Modal -->
+    <AltTextReviewer
+      v-if="showAltTextReviewer"
+      :file-path="file.path"
+      :count="missingAltTextCount"
+      :local-image-count="localImageCount"
+      :local-video-count="localVideoCount"
+      @close="showAltTextReviewer = false"
+      @applied="onAltTextApplied"
+      @open-local-fixer="onOpenLocalFixerFromAltText"
+    />
+
+    <!-- Local Media Fixer (the modal — surface lives in the Local Media section above) -->
+    <LocalMediaFixer
+      v-if="showMediaFixer"
+      :file-path="file.path"
+      :local-media="localMedia"
+      :folder="mediaUploadFolder"
+      @close="showMediaFixer = false"
+      @fixed="onLocalMediaFixed"
+      @open-alt-text="onOpenAltTextFromFixer"
+    />
+
+    <!-- Syndication Wizard Modal -->
+    <SyndicationWizard
+      v-if="showSyndicationWizard && liveUrl"
+      :post-url="liveUrl"
+      :title="title"
+      :slug="slug"
+      :source-path="file.path"
+      :dek="file.dek"
+      :tags="file.tags"
+      :content-type="file.content_type"
+      :visibility="isPasswordProtected ? 'protected' : isUnlisted ? 'unlisted' : 'public'"
+      :quick="autoWizard"
+      @close="onWizardClosed"
+      @queued="onSyndicationQueued"
+      @syndicated="onWizardSyndicated"
+    />
+
+    <!-- Draft gate: a `draft: true` piece asks before publishing. -->
+    <div v-if="showDraftPrompt" class="draft-overlay" @click.self="showDraftPrompt = false">
+      <div class="draft-modal">
+        <div class="draft-title">This piece is still a draft</div>
+        <div class="draft-body">
+          Its frontmatter says <code>draft: true</code>. Remove that and continue to publish?
+        </div>
+        <div class="draft-actions">
+          <UiButton variant="plain" @click="showDraftPrompt = false">Not yet <kbd>esc</kbd></UiButton>
+          <UiButton variant="primary" :disabled="clearingDraft" @click="clearDraftAndContinue">
+            {{ clearingDraft ? 'Clearing…' : 'Remove draft & publish' }} <kbd>⏎</kbd>
+          </UiButton>
+        </div>
+      </div>
+    </div>
+
+    <!-- Publish Confirmation -->
+    <PublishConfirmModal
+      :show="showPublishConfirm"
+      :file="file"
+      :target-id="getActiveTargetId() ?? null"
+      :mode="publishConfirmMode"
+      @close="closePublishConfirm"
+      @confirm="(o) => publishWithPrep(o.isUpdate, { webmentions: o.webmentions, hiddenUntil: o.hiddenUntil }, publishConfirmMode)"
+    />
   </div>
 </template>
 
@@ -1578,88 +1648,227 @@ async function openPreview() {
   background: var(--bg-primary);
 }
 
-/* Wrapper around the status banner / header / lint / alt-text / OG /
-   action toolbar. Default behavior is "no cap" — flows to content. When
-   the user drags the ResizeHandle below, `.sized` is added and the wrapper
-   becomes a fixed-height scroll region so the rendered content gets more
-   room. Double-click the divider clears the cap. */
-.metadata-stack {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.metadata-stack.sized {
-  overflow-y: auto;
-}
-
-/* Pin the publish CTA + schedule picker to the bottom of the visible
- * meta-stack viewport. With `.sized` (user-dragged height), the stack
- * scrolls vertically; without `.toolbar-dock` sticky, the toolbar
- * would scroll off the bottom and the publish button could disappear
- * behind the meta-stack resize edge. */
-.toolbar-dock {
-  position: sticky;
-  bottom: 0;
-  background: var(--bg-solid);
-  /* Soft fade-up so content scrolling under doesn't look chopped. */
-  box-shadow: 0 -8px 12px -8px var(--bg-solid);
-  z-index: 2;
-}
-.metadata-stack.resizing {
-  /* Disable any internal transitions mid-drag so the panes track 1:1. */
-  transition: none;
-  /* No backdrop-filter on the scroll container — the parent window is
-     opaque, so the blur was decorative only and cost a GPU pass per frame
-     while scrolling long posts. */
-  animation: panelEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes panelEnter {
-  from {
-    opacity: 0.8;
-    transform: translateX(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-.panel.live {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--success) 8%, transparent) 0%, var(--bg-primary) 200px);
-}
-
-/* Schedule Picker */
-.schedule-picker {
+/* ── Two columns: the post and the inspector ───────────────────────────── */
+.insp-mini {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--gutter);
+  border-bottom: 1px solid var(--separator);
+  flex-shrink: 0;
+}
+.insp-mini-word {
+  font-size: 12px;
+  color: var(--label);
+  white-space: nowrap;
+}
+.insp-mini-spacer {
+  flex: 1;
 }
 
+.preview-split {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+/* The post. Scrolls on its own; wide code blocks scroll inside themselves
+   (rendered-content.css), so this column never scrolls sideways. */
+.preview {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-4) var(--gutter) var(--space-6);
+  scroll-behavior: smooth;
+}
+
+/* The inspector: fixed width, its own scroll, one hairline on the left.
+   Sections are .insp-section (global.css) — padding and hairlines come from
+   there so every section shares one left edge. */
+.inspector {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-left: 1px solid var(--separator);
+  background: var(--bg-solid);
+}
+/* First-use tips that sit between inspector sections. */
+.insp-tip {
+  flex-shrink: 0;
+  margin: var(--space-3) var(--gutter) 0;
+}
+.mini-tip {
+  flex-shrink: 0;
+  margin: var(--space-2) var(--space-3) 0;
+}
+.insp-inline-tip {
+  margin-top: var(--space-1);
+}
+
+/* The last section's hairline would double the panel's bottom edge. */
+.inspector > :last-child {
+  border-bottom: none;
+}
+
+/* Narrow pane: the inspector floats over the post instead of taking a
+   column. useInspector() flips `visible` for this case; the toggle in the
+   tab strip opens and closes it. */
+.preview-split.is-narrow .inspector {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  box-shadow: var(--shadow-lg);
+}
+
+/* Webmention chip inside the Status section: drop its standalone strip look. */
+.inspector :deep(.wm-chip) {
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+/* The diff sits above the post, inside the reading column's gutters. */
+.preview-diff {
+  margin: 0 0 var(--space-4);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+/* No .panel.live wash: the preview is the reader's view and carries no
+   status color. Status lives in the inspector and the list row. */
+
+/* Key/value rows that end in a small button. */
+.insp-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.insp-kv-action {
+  align-items: center;
+}
+.insp-kv-action > .insp-val {
+  line-height: 22px;
+}
+.insp-kv-action > .ui-btn {
+  flex-shrink: 0;
+}
+.is-attention-text {
+  color: var(--ink-attention);
+}
+.is-muted-text {
+  color: var(--label-2);
+}
+
+/* Analytics rows */
+.insp-kv.is-spark {
+  align-items: center;
+}
+.sparkline {
+  display: block;
+  width: 100%;
+  height: 22px;
+  color: var(--label-2);
+}
+.sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-2);
+  color: var(--label-2);
+}
+.sources .source strong {
+  color: var(--label);
+  font-weight: 600;
+}
+
+/* Backlinks */
+.backlinks-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.backlink-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  padding: 4px 6px;
+  background: var(--fill);
+  border: none;
+  border-radius: 4px;
+  min-width: 0;
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.backlink-item:hover {
+  background: var(--fill-2);
+}
+.backlink-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--label);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.backlink-context {
+  font-size: 9px;
+  color: var(--text-tertiary);
+  font-family: 'SF Mono', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Schedule Picker (stacked: the datetime input is wider than a row allows) */
+.schedule-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--separator);
+  min-width: 0;
+}
 .schedule-input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
   font-size: 12px;
   font-family: 'SF Mono', monospace;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-light);
-  border-radius: 4px;
-  padding: 4px 8px;
-  color: var(--text-primary);
+  background: var(--control-bg);
+  border: 1px solid var(--separator);
+  border-radius: 6px;
+  padding: 0 var(--space-2);
+  color: var(--label);
   color-scheme: dark;
 }
-
 @media (prefers-color-scheme: light) {
   .schedule-input {
     color-scheme: light;
   }
 }
+.schedule-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
 
 /* Header */
 .header {
-  padding: 12px 16px 8px;
+  padding: 0 0 var(--space-2);
 }
 
 .header h1 {
@@ -1703,22 +1912,25 @@ async function openPreview() {
   left: 50%;
   transform: translate(-50%, -50%);
   background: color-mix(in srgb, var(--bg-solid) 88%, transparent);
-  color: var(--success);
+  color: var(--label);
   padding: 10px 18px;
   border-radius: 10px;
   font-size: 13px;
   font-weight: 600;
   z-index: 100;
-  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.35),
-    0 0 0 1px color-mix(in srgb, var(--success) 15%, transparent);
+  border: 1px solid var(--separator);
+  box-shadow: var(--shadow-md);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   display: flex;
   align-items: center;
   gap: 8px;
   white-space: nowrap;
+}
+
+/* Neutral card; only the check glyph is green. */
+.success-toast svg {
+  color: var(--status-live);
 }
 
 .toast-enter-active {
@@ -1764,7 +1976,7 @@ async function openPreview() {
 
 @keyframes successGlow {
   0% {
-    box-shadow: inset 0 0 24px color-mix(in srgb, var(--success) 18%, transparent);
+    box-shadow: inset 0 0 24px var(--tint-live);
   }
   100% {
     box-shadow: none;
@@ -1783,7 +1995,7 @@ async function openPreview() {
   font-size: 11px;
   font-weight: 500;
   z-index: 100;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
 }
 
 .fade-enter-active,
@@ -1797,128 +2009,12 @@ async function openPreview() {
   transform: translateY(8px);
 }
 
-/* Shared section label/count styles */
-.label {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.75px;
-}
-.count {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-.count.warning {
-  color: var(--warning);
-}
-
-/* Backlinks */
-.backlinks {
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  max-height: 120px;
-  overflow-y: auto;
-}
-
-.backlinks-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 6px;
-}
-
-.backlinks-loading {
-  font-size: 10px;
-  color: var(--text-tertiary);
-}
-.backlinks-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.backlink-item {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 4px 6px;
-  background: var(--bg-tertiary);
-  border-radius: 4px;
-}
-
-.backlink-title {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-.backlink-context {
-  font-size: 9px;
-  color: var(--text-tertiary);
-  font-family: 'SF Mono', monospace;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Media health sections (Local Media + Alt Text) — shared shell so both
-   feel like steps of the same flow. */
-/* Photo-post summary banner */
-.photo-summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 16px;
-  border-bottom: 1px solid var(--border);
-  font-size: 11px;
-}
-.photo-summary .ps-count {
-  font-weight: 600;
-  color: var(--accent);
-  letter-spacing: 0.3px;
-}
-.photo-summary .ps-item {
-  padding: 1px 6px;
-  border-radius: 8px;
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-}
-.photo-summary .ps-item.warn {
-  color: var(--warning);
-  background: color-mix(in srgb, var(--warning) 12%, transparent);
-}
-.photo-summary .ps-item.ok {
-  color: var(--success);
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-}
-.photo-summary .ps-spacer {
-  flex: 1;
-}
-.photo-summary .ps-btn {
-  padding: 2px 8px;
-  font-size: 10.5px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-.photo-summary .ps-btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-.photo-summary .ps-btn:hover {
-  filter: brightness(1.1);
-}
-
 /* Contact-sheet gallery */
 .photo-gallery {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
   gap: 4px;
-  padding: 8px 16px 12px;
+  padding: 0 0 var(--space-3);
 }
 .photo-gallery .gallery-cell {
   aspect-ratio: 1;
@@ -1935,171 +2031,6 @@ async function openPreview() {
 }
 .photo-gallery .gallery-cell:hover img {
   transform: scale(1.05);
-}
-
-.media-section {
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.media-section-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-
-.section-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-
-.section-toggle .caret {
-  transition: transform 0.15s;
-  color: var(--text-tertiary);
-}
-.section-toggle .caret.collapsed {
-  transform: rotate(-90deg);
-}
-
-.media-section-hint {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  line-height: 1.4;
-}
-.media-section-hint strong {
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-
-/* Sequence indicator — "step 1 of 2" / "step 2 of 2" — only renders when
-   both sections are visible. Quieted from a filled pill to plain muted
-   tracked-caps text; the section label itself is the headline, the step
-   info is just an annotation. */
-.step-pill {
-  margin-left: 6px;
-  font-size: 9px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-  opacity: 0.7;
-}
-
-/* Inline section buttons (Upload to Cloudinary / Describe). Primary uses
-   the macOS accent; ghost is a subtle secondary for "you can do this but
-   it's not the recommended next step right now." */
-.section-btn {
-  margin-left: auto;
-  padding: 3px 10px;
-  font-size: 10px;
-  font-weight: 500;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.15s;
-  white-space: nowrap;
-}
-.section-btn.primary {
-  background: var(--accent);
-  color: var(--accent-contrast);
-}
-.section-btn.primary:hover {
-  background: var(--accent-strong);
-}
-.section-btn.ghost {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-}
-.section-btn.ghost:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-
-/* Schedule Picker Buttons — same macOS push-button language as
-   ActionToolbar's .btn. Color-mix darken on hover, no lift, no
-   brightness filter. */
-.btn {
-  padding: 5px 12px;
-  border: none;
-  border-radius: 5px;
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  text-decoration: none;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  transition: background 0.12s ease, color 0.12s ease;
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.btn:hover {
-  background: color-mix(in srgb, var(--bg-tertiary) 70%, white);
-}
-.btn:active {
-  background: color-mix(in srgb, var(--bg-tertiary) 90%, black);
-}
-.btn.accent {
-  background: color-mix(in srgb, var(--success) 20%, var(--bg-tertiary));
-  color: var(--success);
-  font-weight: 600;
-}
-.btn:disabled {
-  background: var(--bg-tertiary);
-  color: var(--text-tertiary);
-  cursor: not-allowed;
-  filter: none;
-}
-
-/* Content Divider */
-.content-divider {
-  padding: 4px 16px;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border);
-}
-
-.content-divider span {
-  font-size: 8px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.75px;
-  color: var(--text-tertiary);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-/* Preview */
-.preview {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 16px;
-  scroll-behavior: smooth;
-}
-
-.preview pre {
-  font-family: 'SF Mono', 'Menlo', monospace;
-  font-size: 10.5px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  margin: 0;
-  tab-size: 2;
 }
 
 /* --- Block-accurate loading skeleton -------------------------------------
@@ -2137,7 +2068,7 @@ async function openPreview() {
   background: linear-gradient(
     90deg,
     var(--hover-bg) 0%,
-    color-mix(in srgb, var(--accent) 6%, var(--hover-bg)) 50%,
+    var(--fill-2) 50%,
     var(--hover-bg) 100%
   );
   background-size: 200% 100%;
@@ -2150,7 +2081,7 @@ async function openPreview() {
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--text-secondary) 14%, var(--hover-bg)) 0%,
-    color-mix(in srgb, var(--accent) 12%, var(--hover-bg)) 50%,
+    color-mix(in srgb, var(--text-secondary) 24%, var(--hover-bg)) 50%,
     color-mix(in srgb, var(--text-secondary) 14%, var(--hover-bg)) 100%
   );
   background-size: 200% 100%;
@@ -2234,7 +2165,7 @@ async function openPreview() {
   background: linear-gradient(
     90deg,
     var(--hover-bg) 0%,
-    color-mix(in srgb, var(--accent) 6%, var(--hover-bg)) 50%,
+    var(--fill-2) 50%,
     var(--hover-bg) 100%
   );
   background-size: 200% 100%;
@@ -2281,7 +2212,7 @@ async function openPreview() {
   left: 0;
   right: 0;
   height: 2px;
-  margin: -12px -16px 8px;
+  margin: calc(-1 * var(--space-4)) calc(-1 * var(--gutter)) var(--space-2);
   overflow: hidden;
   background: var(--hover-bg);
   z-index: 1;
@@ -2292,7 +2223,7 @@ async function openPreview() {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    var(--accent) 50%,
+    var(--label-3) 50%,
     transparent 100%
   );
   animation: preview-progress-slide 1.1s ease-in-out infinite;
@@ -2313,129 +2244,37 @@ async function openPreview() {
   }
 }
 
-.analytics-strip {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  padding: 8px 0;
-  margin: -2px 0 8px;
-  border-top: 1px solid var(--border, #1a1a1a);
-  border-bottom: 1px solid var(--border, #1a1a1a);
-  font-size: 11px;
-  color: var(--text-secondary, #aaa);
-  font-variant-numeric: tabular-nums;
-}
-.analytics-strip .stat,
-.analytics-strip .stat-big {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-}
-.analytics-strip .stat-big strong {
-  font-size: 14px;
-  color: var(--text-primary, #fff);
-  font-weight: 700;
-}
-.analytics-strip .stat strong {
-  font-size: 12px;
-  color: var(--text-primary, #fff);
-  font-weight: 600;
-}
-.analytics-strip .stat-unit {
-  color: var(--text-tertiary, #777);
-  font-size: 10px;
-  text-transform: lowercase;
-}
-.analytics-strip .stat.warn strong {
-  color: var(--warning, var(--warning));
-}
-.analytics-strip .sparkline {
-  height: 22px;
-  width: 120px;
-  flex-shrink: 0;
-  color: var(--text-secondary, #aaa);
-  opacity: 0.8;
-}
-.analytics-strip .stat-period {
-  margin-left: auto;
-  font-size: 10px;
-  color: var(--text-tertiary, #666);
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-.analytics-strip .muted {
-  color: var(--text-tertiary, #666);
-  font-size: 10px;
-}
-
 /* Render-error card — never silent again. Soft warning wash, monospace
  * stage label, full file path so the user can locate the offending file
  * outside the app if needed. */
 .render-error-card {
-  margin: 12px 16px 0;
+  margin: 0 0 var(--space-3);
   padding: 10px 12px;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
-  border-left: 3px solid var(--warning);
+  /* A render failure is broken, not "needs attention". */
+  background: var(--tint-broken);
+  border-left: 3px solid var(--status-broken);
   font-size: 11px;
   line-height: 1.45;
-  color: var(--text-secondary, #aaa);
+  color: var(--text-secondary);
 }
 .render-error-stage {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 9.5px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--warning);
+  color: var(--label);
   margin-bottom: 2px;
 }
 .render-error-msg {
-  color: var(--text-primary, #fff);
+  color: var(--text-primary);
 }
 .render-error-path {
   margin-top: 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
-  color: var(--text-tertiary, #666);
-  word-break: break-all;
-}
-
-/* Share strip: utm_source breakdown + tagged copy links */
-.share-strip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 6px 16px;
-  font-size: 11px;
-  border-bottom: 1px solid var(--border);
-}
-.share-strip .sources {
-  display: flex;
-  gap: 10px;
   color: var(--text-tertiary);
-}
-.share-strip .source strong {
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-.share-spacer {
-  flex: 1;
-}
-.share-btn {
-  font: inherit;
-  font-size: 11px;
-  padding: 3px 9px;
-  border-radius: 6px;
-  border: 1px solid var(--border-light);
-  background: var(--hover-bg);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.share-btn:hover {
-  color: var(--text-primary);
-  background: var(--active-bg);
+  word-break: break-all;
 }
 
 /* Draft gate */
@@ -2443,7 +2282,7 @@ async function openPreview() {
   position: fixed;
   inset: 0;
   z-index: 210;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -2471,14 +2310,15 @@ async function openPreview() {
 .draft-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 16px;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 .draft-actions kbd {
   font-size: 9px;
   opacity: 0.75;
   margin-left: 4px;
 }
+
 </style>
 
 <!-- Non-scoped rendered content styles (v-html content is not affected by scoped CSS) -->

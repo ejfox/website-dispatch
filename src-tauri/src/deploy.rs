@@ -183,7 +183,7 @@ pub struct DeployProgress {
 #[derive(Debug, Clone, Serialize)]
 pub struct DeployResult {
     pub sha: String,
-    /// "live" | "deployed_unverified" | "timeout" | "failed"
+    /// "live" | "hidden" | "deployed_unverified" | "timeout" | "failed"
     pub phase: String,
     pub ok: bool,
     pub message: String,
@@ -251,7 +251,13 @@ pub async fn get_head_sha(target_id: Option<String>) -> Result<String, String> {
 /// contains it), then confirm `post_url` returns 200. Emits `deploy-progress`
 /// events (filter on `sha`). Never returns Err for a deploy problem — the
 /// outcome is in `DeployResult.phase` so the UI can show a proper message.
+///
+/// `hidden_until` is set for a post the site embargoes (`publishAt`/`date`
+/// in the future), as display text ("Tue, Oct 14, 9:00 AM EDT"). Its URL
+/// 404s until then by design, so the URL check is skipped and a confirmed
+/// deploy ends as `hidden` (a success) instead of a scary "unverified".
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn wait_for_deploy(
     app: tauri::AppHandle,
     sha: String,
@@ -260,6 +266,7 @@ pub async fn wait_for_deploy(
     target_id: Option<String>,
     title: Option<String>,
     skip_url_check: Option<bool>,
+    hidden_until: Option<String>,
 ) -> Result<DeployResult, String> {
     let target = config::resolve_target(target_id.as_deref())?;
     let client = reqwest::Client::builder()
@@ -361,8 +368,8 @@ pub async fn wait_for_deploy(
                             phase: "failed".into(),
                             ok: false,
                             message: format!(
-                                "Deploy run {} — the site was not updated (or rolled back)",
-                                run.conclusion.as_deref().unwrap_or("failed")
+                                "GitHub's deploy run ended in {}, so the site kept the previous version.",
+                                run.conclusion.as_deref().unwrap_or("failure").replace('_', " ")
                             ),
                             deployed_commit: last_reported,
                             url_status: None,
@@ -385,18 +392,43 @@ pub async fn wait_for_deploy(
                 sha: sha.clone(),
                 phase: "timeout".into(),
                 ok: false,
-                message: format!(
-                    "Pushed {} but the site still reports {} after {}s",
-                    short,
-                    last_reported.as_deref().unwrap_or("nothing"),
-                    start.elapsed().as_secs()
-                ),
+                message: match last_reported.as_deref() {
+                    Some(c) => format!(
+                        "After {} the site still runs {}, not {}. The deploy may be queued or slow.",
+                        fmt_wait(start.elapsed().as_secs()),
+                        c,
+                        short
+                    ),
+                    None => format!(
+                        "After {} the site's healthcheck still hasn't answered, so {} can't be confirmed.",
+                        fmt_wait(start.elapsed().as_secs()),
+                        short
+                    ),
+                },
                 deployed_commit: last_reported,
                 url_status: None,
                 run_url,
             },
         ));
     };
+
+    // An embargoed post 404s until its time: the deploy is the whole
+    // confirmation, and the outcome says when it will appear.
+    if let Some(when) = hidden_until.filter(|w| !w.trim().is_empty()) {
+        return Ok(finish(
+            &app,
+            title.as_deref(),
+            DeployResult {
+                sha,
+                phase: "hidden".into(),
+                ok: true,
+                message: format!("Deployed. The site keeps it hidden until {}.", when),
+                deployed_commit: Some(deployed),
+                url_status: None,
+                run_url,
+            },
+        ));
+    }
 
     // Password posts 404 at their own URL on website2 (isProtectedContent),
     // so a URL check would cry wolf — the matching SHA is the confirmation.
@@ -420,14 +452,17 @@ pub async fn wait_for_deploy(
             "deployed_unverified",
             false,
             format!(
-                "Deployed {} but the post URL returned HTTP {} (scheduled post? future date?)",
+                "The site runs your commit ({}), but the post's URL answered HTTP {}.",
                 deployed, code
             ),
         ),
         (None, Some(_)) => (
             "deployed_unverified",
             false,
-            format!("Deployed {} but the post URL didn't respond", deployed),
+            format!(
+                "The site runs your commit ({}), but the post's URL didn't answer.",
+                deployed
+            ),
         ),
     };
     Ok(finish(
@@ -445,6 +480,15 @@ pub async fn wait_for_deploy(
     ))
 }
 
+/// "45s", "6 min".
+fn fmt_wait(secs: u64) -> String {
+    if secs < 60 {
+        format!("{}s", secs)
+    } else {
+        format!("{} min", (secs + 30) / 60)
+    }
+}
+
 /// Native macOS notification for the final outcome (moved here from the
 /// publish command, which used to announce "live" at push time).
 fn finish(app: &tauri::AppHandle, title: Option<&str>, result: DeployResult) -> DeployResult {
@@ -453,7 +497,9 @@ fn finish(app: &tauri::AppHandle, title: Option<&str>, result: DeployResult) -> 
         .map(|t| t.trim().trim_start_matches('#').trim().to_string())
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "Your post".into());
-    let (head, body) = if result.ok {
+    let (head, body) = if result.phase == "hidden" {
+        ("Deployed", format!("\u{2018}{}\u{2019}: {}", name, result.message))
+    } else if result.ok {
         ("Live", format!("\u{2018}{}\u{2019} is live", name))
     } else {
         (

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { parseEpochSeconds } from '../utils/formatting'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -9,6 +10,7 @@ import {
   PhBroadcast,
   PhArrowsCounterClockwise,
 } from '@phosphor-icons/vue'
+import UiButton from './ui/UiButton.vue'
 import type { MarkdownFile } from '../types'
 
 /**
@@ -75,8 +77,7 @@ const filter = ref<'all' | 'edits' | 'publishes' | 'syndications'>('all')
  *  is already epoch seconds. Returns epoch seconds (UTC). */
 function parseTs(s: string | number): number {
   if (typeof s === 'number') return s
-  const d = new Date(s)
-  return Math.floor(d.getTime() / 1000)
+  return parseEpochSeconds(s) ?? 0
 }
 
 async function loadActivity() {
@@ -235,9 +236,7 @@ function handleClick(e: ActivityEvent) {
   <div class="activity-feed">
     <div class="activity-header">
       <h2>Activity</h2>
-      <button class="refresh-btn" :class="{ spinning: loading }" @click="loadActivity" data-tip="Refresh">
-        <PhArrowsCounterClockwise :size="12" weight="bold" />
-      </button>
+      <UiButton variant="plain" size="small" :icon="PhArrowsCounterClockwise" class="refresh-btn" :class="{ spinning: loading }" data-tip="Reload the activity feed" aria-label="Reload activity" @click="loadActivity" />
     </div>
 
     <div class="activity-filters">
@@ -310,20 +309,7 @@ function handleClick(e: ActivityEvent) {
   flex: 1;
 }
 
-.refresh-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: inline-flex;
-}
-.refresh-btn:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-.refresh-btn.spinning svg {
+.refresh-btn.spinning :deep(svg) {
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin {
@@ -410,17 +396,13 @@ function handleClick(e: ActivityEvent) {
   display: inline-flex;
   align-items: center;
 }
+/* Went live = green, taken down = red; republish/syndicate are routine
+   (neutral glyph). */
 .activity-row.publish .event-icon {
-  color: var(--success);
-}
-.activity-row.republish .event-icon {
-  color: var(--accent);
+  color: var(--status-live);
 }
 .activity-row.unpublish .event-icon {
-  color: var(--danger);
-}
-.activity-row.syndicate .event-icon {
-  color: var(--accent);
+  color: var(--status-broken);
 }
 
 .event-verb {

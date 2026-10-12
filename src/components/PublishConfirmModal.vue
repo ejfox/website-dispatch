@@ -1,151 +1,200 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { PhArrowsClockwise, PhArrowSquareUpRight, PhKeyboard, PhCheck } from '@phosphor-icons/vue'
-import type { MarkdownFile } from '../types'
+// The publish review sheet. It states what publishing will actually do,
+// composed from `publish_preview` (the same checks publish runs, nothing
+// written), and offers one verb button. Publishing is reversible, so the
+// sentence plus the button is the confirmation; the irreversible extra
+// (webmentions) gets its own visible toggle.
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import type { MarkdownFile, PublishPreview } from '../types'
+import { composeReview, hiddenUntil, type ReviewMode } from '../utils/publishReview'
+import UiButton from './ui/UiButton.vue'
 
-const props = defineProps<{
-  show: boolean
-  file: MarkdownFile
-  slug: string
-  targetUrl: string
-  isRepublish: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    show: boolean
+    file: MarkdownFile
+    targetId?: string | null
+    mode?: ReviewMode
+  }>(),
+  { targetId: null, mode: 'publish' },
+)
 
 const emit = defineEmits<{
   close: []
-  confirm: [isRepublish: boolean]
+  confirm: [opts: { isUpdate: boolean; webmentions: boolean; hiddenUntil: string | null }]
 }>()
 
-const publishConfirmStep = ref(1)
-const publishConfirmChecked = ref(false)
-const publishConfirmText = ref('')
+const loading = ref(false)
+const loadError = ref<string | null>(null)
+const preview = ref<PublishPreview | null>(null)
+const sendWebmentions = ref(true)
+const submitting = ref(false)
+const primaryBtn = ref<InstanceType<typeof UiButton> | null>(null)
 
-// Reset internal state when modal opens
-watch(
-  () => props.show,
-  (val) => {
-    if (val) {
-      publishConfirmStep.value = 1
-      publishConfirmChecked.value = false
-      publishConfirmText.value = ''
-    }
-  },
+const review = computed(() =>
+  preview.value
+    ? composeReview(preview.value, {
+        mode: props.mode,
+        webmentions: sendWebmentions.value,
+        warnings: props.file.warnings,
+      })
+    : null,
 )
+const canSubmit = computed(() => !!review.value && !review.value.blocker && !submitting.value)
 
-// Type-to-confirm must never pass on an empty or missing expected slug:
-// a week-notes/ or drafts/ path yields slug '' and ''.trim() === '' would
-// otherwise enable Publish with nothing typed.
-const slugMatches = computed(() => {
-  const expected = (props.slug ?? '').trim()
-  return expected !== '' && publishConfirmText.value.trim() === expected
-})
+// Re-read on every open: the branch or the repo copy may have changed.
+async function load() {
+  loading.value = true
+  loadError.value = null
+  preview.value = null
+  try {
+    preview.value = await invoke<PublishPreview>('publish_preview', {
+      sourcePath: props.file.path,
+      targetId: props.targetId || null,
+    })
+  } catch (e) {
+    loadError.value = String(e)
+  }
+  loading.value = false
+  await nextTick()
+  primaryBtn.value?.focus()
+}
 
-function handleConfirm() {
-  if (!slugMatches.value) return
-  emit('confirm', props.isRepublish)
+function submit() {
+  if (!props.show || !canSubmit.value || !preview.value) return
+  submitting.value = true
+  const hidden = hiddenUntil(preview.value)
+  emit('confirm', {
+    isUpdate: preview.value.is_update,
+    // The toggle isn't shown for a hidden post: nothing goes out for it.
+    webmentions: !hidden && sendWebmentions.value,
+    hiddenUntil: hidden,
+  })
   emit('close')
 }
+
+// Keys: Esc cancels, ⌘↩ runs the primary action. Capture phase so the
+// global ⌘↩ (open this sheet) and Esc (deselect) handlers never also run.
+function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    emit('close')
+  } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault()
+    e.stopPropagation()
+    submit()
+  }
+}
+
+// The native Publish menu owns ⌘↩ as its key equivalent, so the keystroke
+// may arrive as a menu event instead of a keydown. One press can produce
+// both (the keydown opened this sheet, then the menu event lands), so a
+// menu event right after opening is ignored: opening never also publishes.
+let unlistenMenu: UnlistenFn | null = null
+let openedAt = 0
+function onMenuPublish() {
+  if (!props.show || Date.now() - openedAt < 700) return
+  submit()
+}
+// Registered once for the component's life (not per open), so a quick
+// open/close can't leave a stray listener behind.
+onMounted(async () => {
+  unlistenMenu = await listen('menu-publish', onMenuPublish).catch(() => null)
+})
+
+watch(
+  () => props.show,
+  (open) => {
+    if (open) {
+      openedAt = Date.now()
+      submitting.value = false
+      sendWebmentions.value = true
+      window.addEventListener('keydown', onKey, true)
+      load()
+    } else {
+      window.removeEventListener('keydown', onKey, true)
+    }
+  },
+  { immediate: true },
+)
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKey, true)
+  unlistenMenu?.()
+})
 </script>
 
 <template>
   <Transition name="pub-modal">
-    <div v-if="show" class="pub-overlay" @click.self="$emit('close')" @keydown.escape="$emit('close')" tabindex="-1">
-      <div class="pub-modal">
-        <div class="pub-modal-step-indicator">
-          <div class="pub-step" :class="{ active: publishConfirmStep === 1, done: publishConfirmStep === 2 }">
-            <span class="pub-step-num">1</span>
-            <span class="pub-step-label">Review</span>
-          </div>
-          <div class="pub-step-line" :class="{ active: publishConfirmStep === 2 }"></div>
-          <div class="pub-step" :class="{ active: publishConfirmStep === 2 }">
-            <span class="pub-step-num">2</span>
-            <span class="pub-step-label">Confirm</span>
-          </div>
-        </div>
+    <div v-if="show" class="pub-overlay" @click.self="$emit('close')">
+      <div class="pub-modal" role="dialog" aria-modal="true" :aria-label="review?.headline ?? 'Publish'">
+        <div class="pub-modal-body">
+          <template v-if="loading">
+            <h2 class="pub-modal-title">Checking {{ file.title || file.filename }}…</h2>
+            <p class="pub-line pub-muted">Looking at the website repo. Nothing is written yet.</p>
+          </template>
 
-        <div v-if="publishConfirmStep === 1" class="pub-modal-body">
-          <div class="pub-modal-icon">
-            <PhArrowsClockwise v-if="isRepublish" :size="28" weight="light" />
-            <PhArrowSquareUpRight v-else :size="28" weight="light" />
-          </div>
-          <h2 class="pub-modal-title">{{ isRepublish ? 'Republish' : 'Ready to publish?' }}</h2>
-          <p class="pub-modal-subtitle">This will push to your live website.</p>
+          <template v-else-if="loadError">
+            <h2 class="pub-modal-title">Can’t check this post</h2>
+            <p class="pub-line">{{ loadError }}</p>
+          </template>
 
-          <div class="pub-detail-card">
-            <div class="pub-detail-row">
-              <span class="pub-detail-label">File</span>
-              <code class="pub-detail-value">{{ file.filename }}</code>
-            </div>
-            <div class="pub-detail-divider"></div>
-            <div class="pub-detail-row">
-              <span class="pub-detail-label">URL</span>
-              <code class="pub-detail-value pub-detail-url">{{ targetUrl }}</code>
-            </div>
-            <div class="pub-detail-divider"></div>
-            <div class="pub-detail-row">
-              <span class="pub-detail-label">Words</span>
-              <code class="pub-detail-value">{{ file.word_count.toLocaleString() }}</code>
-            </div>
-            <div v-if="file.content_type === 'weeknote'" class="pub-detail-divider"></div>
-            <div v-if="file.content_type === 'weeknote'" class="pub-detail-row">
-              <span class="pub-detail-label">Type</span>
-              <span class="pub-detail-value pub-weeknote-badge">Week Note</span>
-            </div>
-          </div>
+          <template v-else-if="review && preview">
+            <h2 class="pub-modal-title">{{ review.headline }}</h2>
 
-          <label class="pub-checkbox" :class="{ checked: publishConfirmChecked }">
-            <input type="checkbox" v-model="publishConfirmChecked" />
-            <span class="pub-checkbox-box">
-              <PhCheck v-if="publishConfirmChecked" :size="13" weight="bold" />
-            </span>
-            <span>I reviewed links, media, and metadata.</span>
-          </label>
-        </div>
+            <template v-if="review.blocker">
+              <p class="pub-line pub-blocker">{{ review.blocker }}</p>
+              <ul v-if="review.blockerList.length" class="pub-issues">
+                <li v-for="issue in review.blockerList" :key="issue">{{ issue }}</li>
+              </ul>
+              <p class="pub-line pub-muted">Nothing was written.</p>
+              <p class="pub-git">{{ review.git }}</p>
+            </template>
 
-        <div v-else class="pub-modal-body">
-          <div class="pub-modal-icon">
-            <PhKeyboard :size="28" weight="light" />
-          </div>
-          <h2 class="pub-modal-title">Type slug to confirm</h2>
-          <p class="pub-modal-subtitle">
-            Type
-            <code class="pub-slug-hint">{{ slug }}</code>
-            to publish.
-          </p>
-          <input
-            class="pub-slug-input"
-            v-model="publishConfirmText"
-            :placeholder="slug"
-            autofocus
-            @keydown.enter="slugMatches && handleConfirm()"
-          />
-          <div class="pub-slug-match" v-if="publishConfirmText.length > 0">
-            <span v-if="slugMatches" class="pub-match-yes">Match!</span>
-            <span v-else class="pub-match-no">{{ publishConfirmText.length }}/{{ slug.length }}</span>
-          </div>
+            <template v-else>
+              <p v-for="line in review.summary" :key="line" class="pub-line">{{ line }}</p>
+              <p v-if="review.visibility" class="pub-line">{{ review.visibility }}</p>
+              <p class="pub-line">{{ review.syndication }}</p>
+
+              <p v-if="!review.webmentionsApply" class="pub-line">{{ review.webmentions }}</p>
+              <label v-else class="pub-toggle" :class="{ on: sendWebmentions }">
+                <input type="checkbox" v-model="sendWebmentions" />
+                <span class="pub-toggle-text">
+                  <span class="pub-toggle-label">Send webmentions once it’s live</span>
+                  <span class="pub-toggle-detail">{{ review.webmentions }}</span>
+                </span>
+              </label>
+
+              <div v-if="review.notes.length" class="pub-notes">
+                <p class="pub-line pub-muted">Still in the text (updates go through anyway):</p>
+                <ul class="pub-issues">
+                  <li v-for="note in review.notes" :key="note">{{ note }}</li>
+                </ul>
+              </div>
+
+              <p class="pub-line pub-muted">{{ review.undo }}</p>
+              <p class="pub-git">{{ review.git }}</p>
+            </template>
+          </template>
         </div>
 
         <div class="pub-modal-footer">
-          <button class="pub-btn-cancel" @click="$emit('close')">
-            Cancel
+          <UiButton variant="plain" @click="$emit('close')">
+            {{ review?.blocker || loadError ? 'Close' : 'Cancel' }}
             <kbd>esc</kbd>
-          </button>
-          <button
-            v-if="publishConfirmStep === 1"
-            class="pub-btn-go"
-            :disabled="!publishConfirmChecked"
-            @click="publishConfirmStep = 2"
+          </UiButton>
+          <UiButton
+            v-if="review && !review.blocker"
+            ref="primaryBtn"
+            variant="primary"
+            :disabled="!canSubmit"
+            @click="submit"
           >
-            Continue
-          </button>
-          <button
-            v-else
-            class="pub-btn-go pub-btn-publish"
-            :disabled="!slugMatches"
-            @click="handleConfirm()"
-          >
-            {{ isRepublish ? 'Republish' : 'Publish' }}
-          </button>
+            {{ review.primaryLabel }}
+            <kbd>⌘↩</kbd>
+          </UiButton>
         </div>
       </div>
     </div>
@@ -153,13 +202,11 @@ function handleConfirm() {
 </template>
 
 <style scoped>
-/* Top-anchored sheet-style overlay — mirrors SettingsModal. The publish
- * confirm is heavier in tone (destructive-ish), so we keep it tight and
- * close to the titlebar like a real Mac sheet. */
+/* Top-anchored sheet, close to the titlebar like a real Mac sheet. */
 .pub-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.42);
+  background: var(--scrim);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   z-index: 200;
@@ -170,8 +217,11 @@ function handleConfirm() {
 }
 
 .pub-modal {
-  width: 420px;
+  width: 460px;
   max-width: 90vw;
+  max-height: calc(100vh - 96px);
+  display: flex;
+  flex-direction: column;
   background: var(--modal-bg);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
@@ -179,331 +229,109 @@ function handleConfirm() {
   border-radius: 16px;
   box-shadow:
     var(--shadow-lg),
-    0 0 0 1px rgba(255, 255, 255, 0.05);
+    0 0 0 1px var(--separator);
   overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-/* Step indicator */
-.pub-modal-step-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  padding: 16px 24px 0;
-}
-
-.pub-step {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  opacity: 0.35;
-  transition: all 0.3s ease;
-}
-
-.pub-step.active,
-.pub-step.done {
-  opacity: 1;
-}
-
-.pub-step-num {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-  background: var(--bg-tertiary);
-  color: var(--text-tertiary);
-  transition: all 0.3s ease;
-}
-
-.pub-step.active .pub-step-num {
-  background: var(--success);
-  color: #000;
-}
-
-.pub-step.done .pub-step-num {
-  background: var(--success);
-  color: #000;
-}
-
-.pub-step-label {
-  font-size: 10px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-tertiary);
-}
-
-.pub-step.active .pub-step-label {
-  color: var(--text-primary);
-}
-
-.pub-step-line {
-  width: 40px;
-  height: 2px;
-  background: var(--border);
-  margin: 0 10px;
-  border-radius: 1px;
-  transition: background 0.3s ease;
-}
-
-.pub-step-line.active {
-  background: var(--success);
-}
-
-/* Modal body */
 .pub-modal-body {
-  padding: 20px 24px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-}
-
-.pub-modal-icon {
-  margin-bottom: 8px;
-  color: var(--success);
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  padding: 20px 24px 16px;
+  overflow-y: auto;
 }
 
 .pub-modal-title {
-  margin: 0;
-  font-size: 16px;
+  margin: 0 0 10px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.pub-modal-subtitle {
-  margin: 4px 0 16px;
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-/* Detail card */
-.pub-detail-card {
-  width: 100%;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 2px 0;
-  margin-bottom: 16px;
-}
-
-.pub-detail-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 14px;
-}
-
-.pub-detail-label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-tertiary);
-  flex-shrink: 0;
-}
-
-.pub-detail-value {
-  font-size: 11px;
-  font-family: 'SF Mono', monospace;
+.pub-line {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.45;
   color: var(--text-primary);
-  text-align: right;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 260px;
 }
 
-.pub-detail-url {
-  color: var(--success);
-}
-
-.pub-detail-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 0 14px;
-}
-
-.pub-weeknote-badge {
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--warning);
-  background: rgba(245, 158, 11, 0.15);
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-/* Custom checkbox */
-.pub-checkbox {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
+.pub-muted {
   color: var(--text-secondary);
-  cursor: pointer;
-  padding: 10px 14px;
-  border-radius: 8px;
-  background: transparent;
-  border: 1px solid var(--border);
-  width: 100%;
-  transition: all 0.2s ease;
 }
 
-.pub-checkbox:hover {
-  background: var(--bg-tertiary);
-}
-
-.pub-checkbox.checked {
-  border-color: var(--success);
-  background: color-mix(in srgb, var(--success) 8%, transparent);
-}
-
-.pub-checkbox input {
-  display: none;
-}
-
-.pub-checkbox-box {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  border: 2px solid var(--border-light);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: all 0.2s ease;
-  color: #fff;
-}
-
-.pub-checkbox.checked .pub-checkbox-box {
-  background: var(--success);
-  border-color: var(--success);
-}
-
-/* Slug confirmation input */
-.pub-slug-hint {
-  font-family: 'SF Mono', monospace;
-  font-size: 11px;
-  background: var(--bg-tertiary);
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: var(--success);
-}
-
-.pub-slug-input {
-  width: 100%;
-  padding: 12px 14px;
-  font-size: 14px;
-  font-family: 'SF Mono', monospace;
-  background: var(--bg-tertiary);
-  border: 2px solid var(--border);
-  border-radius: 10px;
+.pub-blocker {
   color: var(--text-primary);
-  outline: none;
-  text-align: center;
-  transition: border-color 0.2s ease;
-}
-
-.pub-slug-input:focus {
-  border-color: var(--success);
-}
-
-.pub-slug-match {
-  margin-top: 6px;
-  font-size: 11px;
   font-weight: 500;
 }
 
-.pub-match-yes {
-  color: var(--success);
+.pub-issues {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
 }
 
-.pub-match-no {
-  color: var(--text-tertiary);
+.pub-issues li {
+  margin-bottom: 2px;
+}
+
+.pub-notes {
+  margin-top: 4px;
+}
+
+/* Webmentions toggle: a native-looking checkbox with its consequence. */
+.pub-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 4px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.pub-toggle input {
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.pub-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pub-toggle-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.pub-toggle-detail {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.pub-git {
+  margin: 10px 0 0;
+  font-size: 11px;
   font-family: 'SF Mono', monospace;
+  color: var(--text-tertiary);
+  word-break: break-all;
 }
 
 /* Footer */
 .pub-modal-footer {
-  padding: 12px 20px;
+  padding: var(--space-3) 20px;
   border-top: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-.pub-btn-cancel {
-  padding: 8px 14px;
-  font-size: 11px;
-  font-weight: 500;
-  background: transparent;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border-radius: 8px;
-  transition: all 0.15s ease;
-}
-
-.pub-btn-cancel:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-}
-
-.pub-btn-cancel kbd {
-  font-size: 9px;
-  padding: 1px 4px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font-family: 'SF Mono', monospace;
-  color: var(--text-tertiary);
-}
-
-.pub-btn-go {
-  padding: 8px 20px;
-  font-size: 12px;
-  font-weight: 600;
-  background: var(--success);
-  color: #000;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.pub-btn-go:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--success) 88%, white);
-}
-
-.pub-btn-go:active:not(:disabled) {
-  background: color-mix(in srgb, var(--success) 80%, black);
-}
-
-.pub-btn-go:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.pub-btn-publish {
-  padding: 8px 24px;
-}
-
-/* Sheet-style transition: scrim fades, modal slides down from above the
+/* Sheet-style transition: scrim fades, the sheet slides down from above the
  * titlebar with a soft settle. */
 .pub-modal-enter-active,
 .pub-modal-leave-active {
@@ -515,8 +343,9 @@ function handleConfirm() {
 }
 .pub-modal-enter-active .pub-modal,
 .pub-modal-leave-active .pub-modal {
-  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
-              opacity 0.18s ease-out;
+  transition:
+    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.18s ease-out;
 }
 .pub-modal-enter-from .pub-modal,
 .pub-modal-leave-to .pub-modal {
