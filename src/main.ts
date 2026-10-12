@@ -1,9 +1,16 @@
-import { createApp } from 'vue'
+import { createApp, defineAsyncComponent } from 'vue'
 import App from './App.vue'
 import './styles/global.css'
 
+// One bundle, two windows: the Settings window (src-tauri/src/settings.rs)
+// loads index.html?window=settings and mounts its own root instead of App.
+const isSettingsWindow = new URLSearchParams(location.search).get('window') === 'settings'
+
 function mount() {
-  createApp(App).mount('#app')
+  const root = isSettingsWindow
+    ? defineAsyncComponent(() => import('./components/settings/SettingsWindow.vue'))
+    : App
+  createApp(root).mount('#app')
 }
 
 // Dev-only: `?mock` in a plain browser stubs the Tauri bridge with fixture

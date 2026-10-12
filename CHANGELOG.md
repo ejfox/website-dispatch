@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.8.2 — 2026-10-11
+
+The native-Mac release: a real icon, a real Settings window, a full menu bar,
+tips that teach the app in context, and a publish flow that ends honestly.
+
+### Added
+- **A postmark app icon** (and a matching menu-bar icon) on the standard
+  macOS icon grid, legible down to 16px. Candidates live in `design/icon-candidates/`.
+- **Settings is its own window** (⌘,) with General, Publishing, Media,
+  Connections and Advanced panes. Changes apply as you make them, every
+  setting has a one-sentence explanation, folders and branch are checked
+  inline, and Test buttons reuse the media/Umami/Mastodon/Obsidian probes.
+  Stored secrets are only ever shown as their last 4 characters.
+- **First-use tips**, TipKit-style: one at a time, only in context, retired
+  once you do the thing. Explains the status dots, the Inspector, what
+  Publish does, changed-since-live, alt text, the social card, Syndicate,
+  media drag-to-upload and ⌘K. Help › Show Tips Again brings them back.
+- **Empty states** for Media and Journal that say what to do.
+- **Menu bar**: items grey out and relabel with context (Publish… →
+  Republish…, Show/Hide Sidebar and Inspector, ✓ Compact Rows), plus Check
+  for Updates…, Open in your editor, Copy File Path ⌥⌘C, Publish Later…,
+  Syndicate…, Dispatch Documentation, and a right-click menu on posts that
+  matches the menu bar. A test fails on any shortcut collision.
+- **"It's live"**: a toast with the post's title, URL and Copy link.
+
+### Fixed
+- Scheduled posts no longer finish as "Not live" with an error (their URL
+  404s by design); they end as "Deployed, appears <time>".
+- Deploy failures are split into run failed / timed out / page not
+  answering, each with a next step. Dismiss on a failed deploy works.
+- A failed push says the commit is safe and Try again re-pushes it.
+- Publish later now holds drafts and lint failures, notifies once, follows
+  the deploy, and no longer retries silently every minute forever.
+- The Mastodon server setting is actually read.
+- ⌘, opens only Settings, not the hidden main window too.
+
+### Changed
+- Show Publishing Journal ⌘J is gone (⌘3 already opens the Journal).
+
 ## 0.8.1 — 2026-10-11
 
 The clarity release: Dispatch says what it's about to do, every shortcut

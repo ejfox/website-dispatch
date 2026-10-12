@@ -299,6 +299,77 @@ pub fn update(mut config: AppConfig) -> Result<(), String> {
     Ok(())
 }
 
+// --- SECRETS: never hand a stored secret to a webview in full ---
+//
+// Every config that crosses into JS goes through `masked()`. A masked value
+// is "••••" plus the last four characters (or just "••••" for anything too
+// short to show four without giving most of it away). When a config comes
+// back from JS, `merge_secrets` keeps the stored value for any field that is
+// still masked, so an untouched field round-trips without the webview ever
+// holding the real thing. Clearing a field (empty string) clears the secret.
+
+/// Prefix every masked value starts with. Real keys never start with U+2022.
+pub const MASK_PREFIX: &str = "\u{2022}\u{2022}\u{2022}\u{2022}";
+
+/// "••••" + last 4, or "" for an empty secret.
+pub fn mask_secret(secret: &str) -> String {
+    if secret.is_empty() {
+        return String::new();
+    }
+    let chars: Vec<char> = secret.chars().collect();
+    if chars.len() < 12 {
+        return MASK_PREFIX.to_string();
+    }
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    format!("{}{}", MASK_PREFIX, tail)
+}
+
+pub fn is_masked(value: &str) -> bool {
+    value.starts_with(MASK_PREFIX)
+}
+
+/// A copy of `config` with every secret masked. Safe to send to JS.
+pub fn masked(config: &AppConfig) -> AppConfig {
+    let mut c = config.clone();
+    if let Some(cl) = c.media.cloudinary.as_mut() {
+        cl.api_key = mask_secret(&cl.api_key);
+        cl.api_secret = mask_secret(&cl.api_secret);
+    }
+    if let Some(r2) = c.media.r2.as_mut() {
+        r2.access_key_id = mask_secret(&r2.access_key_id);
+        r2.secret_access_key = mask_secret(&r2.secret_access_key);
+    }
+    c
+}
+
+/// Restore the stored secret when the webview sent the field back still masked.
+fn keep_if_masked(incoming: &mut String, stored: Option<&str>) {
+    if is_masked(incoming) {
+        *incoming = stored.unwrap_or_default().to_string();
+    }
+}
+
+pub fn merge_secrets(mut incoming: AppConfig, stored: &AppConfig) -> AppConfig {
+    if let Some(cl) = incoming.media.cloudinary.as_mut() {
+        let old = stored.media.cloudinary.as_ref();
+        keep_if_masked(&mut cl.api_key, old.map(|o| o.api_key.as_str()));
+        keep_if_masked(&mut cl.api_secret, old.map(|o| o.api_secret.as_str()));
+    }
+    if let Some(r2) = incoming.media.r2.as_mut() {
+        let old = stored.media.r2.as_ref();
+        keep_if_masked(&mut r2.access_key_id, old.map(|o| o.access_key_id.as_str()));
+        keep_if_masked(&mut r2.secret_access_key, old.map(|o| o.secret_access_key.as_str()));
+    }
+    incoming
+}
+
+/// Save a config that came from a webview: masked secrets keep their stored
+/// values. Every JS-facing save goes through here, never `update` directly.
+pub fn update_from_ui(incoming: AppConfig) -> Result<(), String> {
+    let stored = get()?;
+    update(merge_secrets(incoming, &stored))
+}
+
 pub fn get_config_file_path() -> String {
     config_path().to_string_lossy().to_string()
 }
@@ -452,6 +523,88 @@ mod tests {
         assert!(config.media.mirrors.is_empty());
         assert!(config.media.cloudinary.is_none());
         assert!(config.media.r2.is_none());
+    }
+
+    #[test]
+    fn test_mask_secret_shows_only_last_four() {
+        assert_eq!(mask_secret(""), "");
+        assert_eq!(mask_secret("short"), MASK_PREFIX);
+        let m = mask_secret("abcdefghijkl1234");
+        assert_eq!(m, format!("{}1234", MASK_PREFIX));
+        assert!(!m.contains("abcd"));
+        assert!(is_masked(&m));
+        assert!(!is_masked("plain-key"));
+    }
+
+    fn with_creds() -> AppConfig {
+        let mut c = AppConfig::default();
+        c.media.cloudinary = Some(CloudinaryCreds {
+            cloud_name: "cloud".into(),
+            api_key: "123456789012345".into(),
+            api_secret: "super-secret-cloudinary-value".into(),
+        });
+        c.media.r2 = Some(R2Creds {
+            account_id: "acct".into(),
+            access_key_id: "r2-access-key-id-0000".into(),
+            secret_access_key: "r2-secret-access-key-9999".into(),
+            bucket: "b".into(),
+            public_url_base: "https://r2.example.com".into(),
+        });
+        c
+    }
+
+    #[test]
+    fn test_masked_config_carries_no_secret() {
+        let c = with_creds();
+        let json = serde_json::to_string(&masked(&c)).unwrap();
+        for secret in [
+            "123456789012345",
+            "super-secret-cloudinary-value",
+            "r2-access-key-id-0000",
+            "r2-secret-access-key-9999",
+        ] {
+            assert!(!json.contains(secret), "masked config leaked a secret");
+        }
+        // Non-secret fields are untouched.
+        assert!(json.contains("\"cloud\""));
+        assert!(json.contains("r2.example.com"));
+    }
+
+    #[test]
+    fn test_merge_keeps_masked_replaces_typed_clears_empty() {
+        let stored = with_creds();
+        let mut incoming = masked(&stored);
+        // Untouched masked fields round-trip to the stored value.
+        let merged = merge_secrets(incoming.clone(), &stored);
+        let cl = merged.media.cloudinary.as_ref().unwrap();
+        assert_eq!(cl.api_key, "123456789012345");
+        assert_eq!(cl.api_secret, "super-secret-cloudinary-value");
+        assert_eq!(
+            merged.media.r2.as_ref().unwrap().secret_access_key,
+            "r2-secret-access-key-9999"
+        );
+
+        // A typed value replaces; an empty value clears.
+        let cl = incoming.media.cloudinary.as_mut().unwrap();
+        cl.api_key = "new-key".into();
+        cl.api_secret = String::new();
+        let merged = merge_secrets(incoming, &stored);
+        let cl = merged.media.cloudinary.as_ref().unwrap();
+        assert_eq!(cl.api_key, "new-key");
+        assert_eq!(cl.api_secret, "");
+    }
+
+    #[test]
+    fn test_merge_with_nothing_stored_drops_mask() {
+        let stored = AppConfig::default();
+        let mut incoming = AppConfig::default();
+        incoming.media.cloudinary = Some(CloudinaryCreds {
+            cloud_name: "c".into(),
+            api_key: format!("{}1234", MASK_PREFIX),
+            api_secret: String::new(),
+        });
+        let merged = merge_secrets(incoming, &stored);
+        assert_eq!(merged.media.cloudinary.unwrap().api_key, "");
     }
 
     #[test]

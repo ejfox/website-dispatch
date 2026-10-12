@@ -390,6 +390,7 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         &[
             &item(handle, "show_overview", "Dispatch Help")?,
             &item(handle, "show_help", "Keyboard Shortcuts")?,
+            &item(handle, "reset_tips", "Show Tips Again")?,
             &PredefinedMenuItem::separator(handle)?,
             &item(handle, "open_docs", "Dispatch Documentation")?,
             &item(handle, "report_issue", "Report an Issue\u{2026}")?,
@@ -559,6 +560,7 @@ pub const MENU_EVENT_IDS: &[&str] = &[
     "panel_activity",
     "show_help",
     "show_overview",
+    "reset_tips",
 ];
 
 /// Items handled entirely in Rust (no frontend event).
@@ -580,9 +582,8 @@ pub fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) 
     // a dead shortcut, since the menu sees the key before the webview).
     let passthrough = MENU_EVENT_IDS;
     if id == "settings" {
-        // The window may be hidden (hide-on-close); Settings lives in it.
-        show_main_window(app);
-        let _ = app.emit("menu-settings", ());
+        // Settings is its own window; don't drag the hidden main window up too.
+        let _ = crate::settings::open_window(app, None);
         return;
     }
     if passthrough.contains(&id) {

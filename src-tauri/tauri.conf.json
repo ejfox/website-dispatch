@@ -24,7 +24,7 @@
   },
   "productName": "Dispatch",
   "mainBinaryName": "Dispatch",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "identifier": "com.ejfox.dispatch",
   "plugins": {
     "updater": {

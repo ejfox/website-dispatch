@@ -39,6 +39,7 @@ mod publish; // Handles git operations to publish posts to your website
 mod publish_guard; // Hard refusal of week-notes/, drafts/, type: weeknote
 mod publish_diff; // Computes a line-level diff between vault source and the published copy
 mod r2; // Cloudflare R2 (S3-compatible) uploader with hand-rolled SigV4
+mod settings; // The Settings window + its config/validation commands
 mod syndication; // Post-publish social distribution (Mastodon, etc.)
 mod syndication_queue; // Scheduled syndication queue with background sender
 mod vault; // Scans your Obsidian vault for markdown files
@@ -343,14 +344,19 @@ fn open_in_terminal(path: String, cmd: String) -> Result<(), String> {
 
 // --- CONFIG COMMANDS ---
 
+// Secrets are masked to their last 4 on the way out and restored on the way
+// back in, so no webview ever holds a stored key in full (see config.rs).
 #[tauri::command]
 fn get_app_config() -> Result<config::AppConfig, String> {
-    config::get()
+    config::get().map(|c| config::masked(&c))
 }
 
 #[tauri::command]
-fn save_app_config(config_data: config::AppConfig) -> Result<(), String> {
-    config::update(config_data)
+fn save_app_config(app: tauri::AppHandle, config_data: config::AppConfig) -> Result<(), String> {
+    use tauri::Emitter;
+    config::update_from_ui(config_data)?;
+    let _ = app.emit(settings::CHANGED_EVENT, ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -1105,6 +1111,9 @@ pub fn run() {
                 syndication_queue::run_syndication_scheduler(syndication_handle).await;
             });
 
+            // Settings window opens on `menu:settings` from anywhere.
+            settings::register(app.handle());
+
             // Build tray icon with menu
             menu::build_tray(app)?;
 
@@ -1219,6 +1228,13 @@ pub fn run() {
             clear_recent_files,
             set_proxy_icon,
             set_document_dirty,
+            settings::open_settings_window,
+            settings::get_settings,
+            settings::save_settings,
+            settings::reveal_config_file,
+            settings::check_vault_folder,
+            settings::check_publish_target,
+            settings::check_app_installed,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

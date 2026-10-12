@@ -5,6 +5,7 @@ import type { MarkdownFile } from '../types'
 import { useToasts, useInspector } from './useUiState'
 import { useAppConfig } from './useVaultData'
 import { checkForUpdate } from './useAutoUpdate'
+import { resetTips } from './useTips'
 
 type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'
 type HelpSection = 'overview' | 'shortcuts'
@@ -132,6 +133,7 @@ export function useMenuActions(options: {
   const actions: Record<string, () => unknown> = {
     // App
     'menu-check-updates': () => checkForUpdate({ manual: true }),
+    'menu-reset-tips': () => resetTips(),
     // File
     'menu-open-in-obsidian': () => {
       const f = needFile()
