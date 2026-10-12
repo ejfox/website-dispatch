@@ -9,7 +9,7 @@
     "typecheck": "vue-tsc --noEmit",
     "test:preview": "node test/preview-smoke.mjs",
     "test:smoke": "node test/smoke.e2e.mjs",
-    "test:unit": "node --test test/inline-diff.test.mjs",
+    "test:unit": "node --experimental-strip-types --test test/inline-diff.test.mjs",
     "test": "npm run typecheck && npm run test:unit && npm run test:preview",
     "preview:server": "node preview-server.mjs",
     "tauri": "tauri"
