@@ -42,6 +42,10 @@ pub struct PublishDiff {
     /// Set when we couldn't find a published copy to compare against
     /// (the post was never published, or path resolution failed).
     pub error: Option<String>,
+    /// The published copy's markdown body (frontmatter stripped). The Preview
+    /// pane's inline diff mode renders this through the same renderer as the
+    /// vault body and diffs the two at the rendered level.
+    pub published_body: Option<String>,
 }
 
 /// Strip YAML frontmatter and return body only. Mirrors `normalize_content`
@@ -94,6 +98,7 @@ pub fn compute_publish_diff(source_file_path: &str) -> Result<PublishDiff, Strin
             lines_removed: 0,
             hunks: Vec::new(),
             error: Some("No published copy found to compare against.".into()),
+            published_body: None,
         });
     };
 
@@ -170,6 +175,7 @@ pub fn compute_publish_diff(source_file_path: &str) -> Result<PublishDiff, Strin
         lines_removed,
         hunks,
         error: None,
+        published_body: Some(published_body),
     })
 }
 

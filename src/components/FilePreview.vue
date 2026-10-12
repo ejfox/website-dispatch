@@ -16,6 +16,7 @@ import PublishConfirmModal from './PublishConfirmModal.vue'
 import WebmentionStatus from './WebmentionStatus.vue'
 import ResizeHandle from './ResizeHandle.vue'
 import { useResizable, useToasts } from '../composables/useUiState'
+import { buildInlineDiffHtml, type InlineDiffHtml } from '../utils/inlineDiffDom'
 // Markdown processing now lives in src/workers/markdownWorker.ts — see
 // `renderWorker` / `renderMarkdownInWorker` below. The pipeline imports
 // (unified / remark-* / rehype-*) used to live here and run on the main
@@ -38,7 +39,7 @@ import {
 } from '../utils/markdownRender'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { useLocalStorage } from '@vueuse/core'
-import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics, DeskToday } from '../types'
+import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics, DeskToday, PublishDiff } from '../types'
 import { useTagSuggestions } from '../composables/useTagSuggestions'
 import { usePublishing, usePostActions } from '../composables/usePublishFlow'
 import { useAppConfig, useGitStatus } from '../composables/useVaultData'
@@ -890,6 +891,86 @@ const liveUrl = computed(() => props.file.published_url || justPublished.value)
 const hasUnpublishedChanges = computed(() => props.file.warnings.includes('Modified since publish'))
 const lintWarnings = computed(() => props.file.warnings.filter((w) => w !== 'Modified since publish'))
 
+// ── Inline diff mode (D) ───────────────────────────────────────────────
+// The post stays typeset exactly like Preview; changed words are marked in
+// place. Direction is "vault → live": what pressing publish would do.
+// Additions are vault-only words; removals are words that are live NOW and
+// would be lost — the case that matters when the live copy carries fixes the
+// vault lacks. Both sides go through the same worker renderer (passive
+// renders, so the main Preview render is never made stale) and are diffed per
+// block, then per word, by utils/inlineDiff.ts.
+const diffOn = ref(false)
+const diffLoading = ref(false)
+const diffError = ref<string | null>(null)
+const diffResult = ref<InlineDiffHtml | null>(null)
+let diffRun = 0
+
+const canDiff = computed(() => isLive.value && hasUnpublishedChanges.value)
+
+async function computeInlineDiff() {
+  const run = ++diffRun
+  const path = props.file.path
+  diffLoading.value = true
+  diffError.value = null
+  try {
+    const pd = (await invoke('get_publish_diff', { filePath: path })) as PublishDiff
+    if (run !== diffRun) return
+    if (pd.published_body == null) throw new Error(pd.error || 'No published copy found.')
+    const raw = (await invoke('get_file_content', { path })) as string
+    const vaultBody = raw.replace(/^---\n[\s\S]*?\n---\n*/, '')
+    const domain = activeTargetDomain.value
+    const [liveHtml, vaultHtml] = await Promise.all([
+      renderMarkdownInWorker(pd.published_body, domain, { passive: true }).promise,
+      renderMarkdownInWorker(vaultBody, domain, { passive: true }).promise,
+    ])
+    if (run !== diffRun || path !== props.file.path) return
+    diffResult.value = buildInlineDiffHtml(liveHtml, vaultHtml)
+    nextTick(() => renderMermaidIn(document))
+  } catch (e: any) {
+    if (run !== diffRun) return
+    diffResult.value = null
+    diffError.value = typeof e === 'string' ? e : (e?.message ?? String(e))
+  } finally {
+    if (run === diffRun) diffLoading.value = false
+  }
+}
+
+function toggleDiff() {
+  if (diffOn.value) return exitDiff()
+  if (!canDiff.value) return false
+  diffOn.value = true
+  void computeInlineDiff()
+  return true
+}
+
+/** Leave diff mode. Returns true if it was on (so Escape can stop there). */
+function exitDiff(): boolean {
+  if (!diffOn.value) return false
+  diffOn.value = false
+  diffRun++
+  diffResult.value = null
+  diffError.value = null
+  diffLoading.value = false
+  return true
+}
+
+// New file, or the post stopped being "changed since live" (just published,
+// or the edit was reverted): drop out of diff mode.
+watch(
+  () => props.file.path,
+  () => exitDiff(),
+)
+watch(canDiff, (ok) => {
+  if (!ok) exitDiff()
+})
+// Vault edit while diffing (file mtime moves): recompute in place.
+watch(
+  () => props.file.modified,
+  () => {
+    if (diffOn.value) void computeInlineDiff()
+  },
+)
+
 // Alt text detection
 const missingAltTextCount = computed(() => {
   const w = props.file.warnings.find((w) => w.startsWith('Missing alt text'))
@@ -1037,7 +1118,7 @@ function copyUrlAndPassword() {
 }
 
 // Expose methods for parent component
-defineExpose({ openPublishConfirm: requestPublish })
+defineExpose({ openPublishConfirm: requestPublish, toggleDiff, exitDiff, canDiff, diffOn })
 
 async function openInObsidian() {
   await invoke('open_in_obsidian', { path: props.file.path })
@@ -1446,7 +1527,47 @@ async function openPreview() {
     <!-- Content divider — plain tracked-caps label, no decorative glyph.
          Mail uses the same restraint on its section labels. -->
     <div class="content-divider">
-      <span>CONTENT</span>
+      <span>{{ diffOn ? 'CHANGES · VAULT → LIVE' : 'CONTENT' }}</span>
+      <button
+        v-if="isLive"
+        class="diff-toggle"
+        :class="{ on: diffOn }"
+        :disabled="!canDiff && !diffOn"
+        :aria-pressed="diffOn"
+        :data-tip="
+          diffOn
+            ? 'Back to the plain preview (D or esc)'
+            : canDiff
+              ? 'Mark what publishing would change, inline (D)'
+              : 'Live copy matches the vault — nothing to diff'
+        "
+        @click="toggleDiff"
+      >
+        Diff <kbd>D</kbd>
+      </button>
+    </div>
+
+    <!-- Diff summary: what pressing publish would do to the live post. The
+         removal line gets its own sentence because that's the dangerous one:
+         live-only words (fixes made on the site) that publishing would erase. -->
+    <div v-if="diffOn" class="diff-summary" role="status">
+      <template v-if="diffLoading && !diffResult">Comparing vault with the live copy…</template>
+      <template v-else-if="diffError">Diff unavailable: {{ diffError }}</template>
+      <template v-else-if="diffResult">
+        <span class="diff-summary-line">
+          Publishing would change the live post:
+          <span class="diff-summary-num">{{ diffResult.wordsAdded }}</span> word{{ diffResult.wordsAdded === 1 ? '' : 's' }} added
+          ·
+          <span class="diff-summary-num">{{ diffResult.wordsRemoved }}</span> removed
+        </span>
+        <span v-if="diffResult.wordsRemoved > 0" class="diff-summary-warn">
+          <del class="diff-del">struck</del> words are live now and exist only there; publishing removes them.
+        </span>
+        <span
+          v-else-if="diffResult.wordsAdded === 0"
+          class="diff-summary-line muted"
+        >No word changes; only markup or whitespace differs.</span>
+      </template>
     </div>
 
     <!-- Preview -->
@@ -1487,7 +1608,13 @@ async function openPreview() {
 
       <Transition name="preview-fade">
         <div
-          v-if="renderedContent"
+          v-if="diffOn && diffResult"
+          key="diff"
+          class="rendered-content diff-mode"
+          v-html="diffResult.html"
+        ></div>
+        <div
+          v-else-if="renderedContent"
           key="content"
           class="rendered-content"
           v-html="renderedContent"
@@ -2081,6 +2208,70 @@ async function openPreview() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+.content-divider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.diff-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.diff-toggle kbd {
+  font-family: 'SF Mono', monospace;
+  font-size: 9px;
+  color: var(--text-tertiary);
+}
+.diff-toggle:hover:not(:disabled) {
+  background: var(--hover-bg);
+  color: var(--text-primary);
+}
+.diff-toggle.on {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--bg-primary);
+}
+.diff-toggle.on kbd {
+  color: inherit;
+  opacity: 0.6;
+}
+.diff-toggle:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.diff-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.diff-summary-num {
+  font-family: 'SF Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.diff-summary-warn {
+  color: var(--text-primary);
+}
+.diff-summary .muted {
+  color: var(--text-tertiary);
 }
 
 /* Preview */

@@ -112,6 +112,7 @@ Credentials (`.env`): `BLUESKY_HANDLE`, `BLUESKY_APP_PASSWORD` (optional `BLUESK
 | `o` | Open in Obsidian |
 | `i` | Open in default editor |
 | `p` | Preview |
+| `D` | Preview: inline diff, what publishing would change (vault → live) |
 | `v` | View on site |
 | `c` | Copy URL |
 | `m` | Media library |
