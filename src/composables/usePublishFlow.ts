@@ -227,6 +227,7 @@ export function usePublishing(options: {
    *  again" calls it with the same sha, replacing the failed state. */
   async function trackDeploy(w: Watch, sha: string, timeoutSecs: number) {
     const slug = w.slug
+    clearFailureToast(slug)
     deploys.value[slug] = {
       slug,
       url: w.url,
@@ -298,7 +299,7 @@ export function usePublishing(options: {
       d.phase = 'failed'
       d.failure = FAILURE_OF[result.phase] ?? 'timeout'
       playSound('Sosumi')
-      const id: number = toasts.push({
+      const id: number = (failureToast[slug] = toasts.push({
         kind: 'error',
         message: `${deployFailureTitle(d.failure)}: “${w.title}”`,
         detail: result.message,
@@ -313,8 +314,16 @@ export function usePublishing(options: {
                 },
               },
         ttl: 0,
-      })
+      }))
     }
+  }
+
+  // One failure toast per post: a re-check or a dismiss in the inspector
+  // takes the stale one with it.
+  const failureToast: Record<string, number> = {}
+  function clearFailureToast(slug: string) {
+    if (failureToast[slug] !== undefined) toasts.dismiss(failureToast[slug])
+    delete failureToast[slug]
   }
 
   /** The it's-live moment: which post, where, and the link one click away.
@@ -345,7 +354,8 @@ export function usePublishing(options: {
     await trackDeploy(d, d.sha, 180)
   }
 
-function dismissDeploy(slug: string) {
+  function dismissDeploy(slug: string) {
+    clearFailureToast(slug)
     delete deploys.value[slug]
   }
 

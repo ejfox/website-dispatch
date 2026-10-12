@@ -82,7 +82,7 @@ const nextStep = computed(() => {
     case 'run':
       return 'Your post is pushed, so the next deploy that succeeds includes it. The run shows what broke.'
     case 'timeout':
-      return 'GitHub can queue deploys. Check again in a minute, or open the run.'
+      return 'Check again in a minute, or open the run.'
     case 'unverified':
       return 'Open the page to see what it shows, then check again.'
     default:
@@ -114,7 +114,7 @@ const displayUrl = computed(() => (props.liveUrl || '').replace(/^https?:\/\//, 
       <a :href="deploy.runUrl" target="_blank" rel="noopener">Actions</a>
     </div>
     <div v-else-if="deploy?.phase === 'hidden'" class="insp-note status-note">
-      {{ deploy.message }} No webmentions were sent.
+      The site keeps it hidden until then. No webmentions were sent.
     </div>
     <!-- Didn't end live: what happened, what to do, and the buttons for it. -->
     <template v-else-if="deploy?.phase === 'failed'">
