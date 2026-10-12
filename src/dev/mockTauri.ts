@@ -257,6 +257,18 @@ const commands: Record<string, (args: any) => unknown> = {
   }),
   generate_og_variants: () =>
     new Promise((_, reject) => setTimeout(() => reject('Preview server is not running (mock)'), 400)),
+  // Empty Media and Journal tabs, so their empty states can be checked.
+  cloudinary_list_folders: () => [],
+  cloudinary_list_assets: () => ({ assets: [], next_cursor: null }),
+  cloudinary_search: () => ({ assets: [], next_cursor: null }),
+  scan_asset_usage: () => ({
+    usage_map: { by_asset: {}, by_post: {}, total_assets: 0, total_posts: 0 },
+    cloudinary_urls: [],
+    scan_duration_ms: 0,
+  }),
+  get_journal_entries: () => [],
+  get_journal_heatmap: () => [],
+  backfill_journal: () => 0,
   desk_today: () => ({ date: '', day_dir: '', streak: 0, week: [], shipped_today: false, slot: { start: '', open: false }, bench: null, stories: [] }),
   'plugin:event|listen': ({ event, handler }) => {
     if (!listeners.has(event)) listeners.set(event, new Set())

@@ -211,7 +211,10 @@ onMounted(async () => {
     <div class="activity-section">
       <div class="section-label">Recent activity</div>
       <div v-if="entries.length === 0" class="empty-log">
-        <p>No publishing activity yet.</p>
+        <p>No publishes logged yet.</p>
+        <p class="empty-log-sub">
+          Every publish and unpublish lands here by day. Posts that were live before Dispatch can be imported.
+        </p>
         <UiButton v-if="!backfilling" size="small" class="backfill-btn" label="Import from git history" @click="doBackfill" />
         <span v-else class="backfill-loading">Importing...</span>
       </div>
@@ -382,6 +385,15 @@ onMounted(async () => {
   padding: 20px;
   color: var(--text-tertiary);
   font-size: 11px;
+}
+
+.empty-log p {
+  margin: 0;
+}
+.empty-log .empty-log-sub {
+  max-width: 300px;
+  margin: var(--space-1) auto 0;
+  line-height: 1.45;
 }
 
 .backfill-btn {
