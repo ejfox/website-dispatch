@@ -275,6 +275,15 @@ const showSettings = ref(false)
 // FilePreview ref for Cmd+Enter publish
 const filePreviewRef = ref<InstanceType<typeof FilePreview> | null>(null)
 
+// Palette → Preview's inline diff. The Preview pane may not be mounted yet
+// (another tab was showing), so switch first and toggle once it exists.
+async function toggleDiffFromPalette() {
+  paletteOpen.value = false
+  rightTab.value = 'preview'
+  await nextTick()
+  filePreviewRef.value?.toggleDiff?.()
+}
+
 // App config (shared singleton)
 const { appConfig, fetchConfig: loadConfig } = useAppConfig()
 
@@ -886,6 +895,7 @@ onUnmounted(() => {
           filePreviewRef?.openPublishConfirm?.(false)
         }
       "
+      @toggle-diff="toggleDiffFromPalette"
     />
 
     <!-- New Post Modal -->

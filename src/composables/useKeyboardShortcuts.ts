@@ -12,7 +12,11 @@ export function useKeyboardShortcuts(options: {
   showHelp: Ref<boolean>
   rightTab: Ref<'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'>
   sidebarCollapsed: Ref<boolean>
-  filePreviewRef: Ref<{ openPublishConfirm: (isRepublish: boolean) => void } | null>
+  filePreviewRef: Ref<{
+    openPublishConfirm: (isRepublish: boolean) => void
+    toggleDiff?: () => boolean
+    exitDiff?: () => boolean
+  } | null>
   openSearch: () => void
   closeSearch: () => void
   openNewPost: () => void
@@ -239,6 +243,20 @@ export function useKeyboardShortcuts(options: {
       if (idx < options.files.value.length) {
         options.selectedFile.value = options.files.value[idx]
       }
+    }
+
+    // D (shift-d) - toggle the inline diff in Preview (vault → live). Lowercase
+    // `d` is the universal "back to the Desk", so this one is shifted, like G/J.
+    if (e.key === 'D' && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault()
+      options.filePreviewRef.value?.toggleDiff?.()
+      return
+    }
+
+    // Escape leaves diff mode first; only a second Escape deselects.
+    if (e.key === 'Escape' && options.filePreviewRef.value?.exitDiff?.()) {
+      e.preventDefault()
+      return
     }
 
     // Escape to deselect

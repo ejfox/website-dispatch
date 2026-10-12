@@ -143,3 +143,84 @@
   color: var(--text-secondary, #999);
   background: transparent;
 }
+
+/* ── Inline diff mode (Preview → Diff, `D`) ─────────────────────────────
+   Same typesetting as Preview; changes are marked, not recolored.
+   Direction is vault → live (what publishing would do):
+   - .diff-ins  vault-only words: quiet underline + faint wash
+   - .diff-del  live-only words publishing would REMOVE: struck + dimmed
+   - a thin margin tick beside each changed top-level block, so a long post
+     is scannable. Monochrome first; the existing success/danger tokens only
+     tint the underline and the strike. */
+.rendered-content ins.diff-ins {
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--success) 70%, var(--text-primary));
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-primary);
+  border-radius: 2px;
+}
+
+.rendered-content del.diff-del,
+.diff-summary del.diff-del {
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: color-mix(in srgb, var(--danger) 75%, var(--text-primary));
+  color: var(--text-tertiary);
+  opacity: 0.85;
+}
+
+/* Whole blocks: vault-only gets the underline treatment, live-only is a
+   struck-through ghost of the old block. */
+.rendered-content .diff-block-added {
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--success) 70%, var(--text-primary));
+}
+.rendered-content .diff-block-removed {
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: color-mix(in srgb, var(--danger) 75%, var(--text-primary));
+  color: var(--text-tertiary);
+  opacity: 0.75;
+}
+.rendered-content .diff-block-removed img,
+.rendered-content .diff-block-removed video {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+
+/* Margin tick — top-level changed blocks only. .preview has 16px of left
+   padding, so the tick sits in that gutter without shifting the text. */
+.rendered-content.diff-mode > .diff-changed {
+  position: relative;
+}
+.rendered-content.diff-mode > .diff-changed::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 0.25em;
+  bottom: 0.25em;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--text-primary);
+  opacity: 0.55;
+}
+.rendered-content.diff-mode > .diff-block-removed::before {
+  background: var(--danger);
+  opacity: 0.7;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .rendered-content.diff-mode ins.diff-ins,
+  .rendered-content.diff-mode del.diff-del,
+  .rendered-content.diff-mode > .diff-changed::before {
+    animation: diff-mark-in 0.25s ease-out both;
+  }
+}
+@keyframes diff-mark-in {
+  from {
+    opacity: 0;
+  }
+}

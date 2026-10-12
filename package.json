@@ -9,7 +9,8 @@
     "typecheck": "vue-tsc --noEmit",
     "test:preview": "node test/preview-smoke.mjs",
     "test:smoke": "node test/smoke.e2e.mjs",
-    "test": "npm run typecheck && npm run test:preview",
+    "test:unit": "node --test test/inline-diff.test.mjs",
+    "test": "npm run typecheck && npm run test:unit && npm run test:preview",
     "preview:server": "node preview-server.mjs",
     "tauri": "tauri"
   },
@@ -23,6 +24,7 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@vueuse/core": "^14.2.1",
+    "diff": "^9.0.0",
     "gray-matter": "^4.0.3",
     "lucide-vue-next": "^0.563.0",
     "mermaid": "^11.15.0",

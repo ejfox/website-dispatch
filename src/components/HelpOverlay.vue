@@ -78,6 +78,10 @@ const emit = defineEmits<{
             <span>preview</span>
           </div>
           <div class="help-row">
+            <kbd>D</kbd>
+            <span>diff: what publishing would change</span>
+          </div>
+          <div class="help-row">
             <kbd>v</kbd>
             <span>view on site</span>
           </div>
