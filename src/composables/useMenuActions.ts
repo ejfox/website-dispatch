@@ -1,8 +1,10 @@
-import { nextTick, onMounted, onUnmounted, type Ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { MarkdownFile } from '../types'
 import { useToasts, useInspector } from './useUiState'
+import { useAppConfig } from './useVaultData'
+import { checkForUpdate } from './useAutoUpdate'
 
 type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'
 type HelpSection = 'overview' | 'shortcuts'
@@ -11,6 +13,8 @@ type HelpSection = 'overview' | 'shortcuts'
  *  Preview tab shows a post, so go through `withPreview()`. */
 interface PreviewHandle {
   unpublish: () => unknown
+  openSyndication: () => unknown
+  openSchedulePicker: () => unknown
 }
 
 /**
@@ -23,6 +27,10 @@ interface PreviewHandle {
  * named in this file or in App.vue.
  *
  * Post actions call what the matching toolbar button or key calls.
+ *
+ * The menu also needs to know what's selected, so items can grey out (no
+ * post → no Publish) and labels can flip (Show/Hide Sidebar, Republish…).
+ * A watcher below pushes that to `set_menu_context` (menu.rs).
  */
 
 /** Listened to in App.vue itself: the five originals (new post, refresh,
@@ -44,6 +52,7 @@ export function useMenuActions(options: {
   rightTab: Ref<RightTab>
   filePreviewRef: Ref<PreviewHandle | null>
   sidebarCollapsed: Ref<boolean>
+  compactMode: Ref<boolean>
   showHelp: Ref<boolean>
   helpSection: Ref<HelpSection>
   /** Open-state of App.vue's own modals; any true blocks post actions. */
@@ -51,6 +60,7 @@ export function useMenuActions(options: {
 }) {
   const toasts = useToasts()
   const inspector = useInspector()
+  const { defaultEditor } = useAppConfig()
   const { selectedFile, rightTab } = options
 
   /** A sheet or modal is up, so a menu shortcut mustn't act on the post
@@ -93,16 +103,22 @@ export function useMenuActions(options: {
     ;(await withPreview())?.unpublish()
   }
 
-  /** Open the social-card (OG image) picker and roll a batch. OgImagePicker
-   *  listens for this; it isn't mounted for dispatch pieces, which
-   *  `handled` reports back. The picker lives in the inspector, so make
-   *  sure that is on screen first. */
-  async function generateOgForSelected() {
-    if (!(await withPreview())) return
-    if (!inspector.visible.value) {
+  /** withPreview(), plus the inspector on screen: the schedule picker and
+   *  the social-card picker live in it. */
+  async function withInspector(): Promise<PreviewHandle | null> {
+    const preview = await withPreview()
+    if (preview && !inspector.visible.value) {
       inspector.show()
       await nextTick()
     }
+    return preview
+  }
+
+  /** Open the social-card (OG image) picker and roll a batch. OgImagePicker
+   *  listens for this; it isn't mounted for dispatch pieces, which
+   *  `handled` reports back. */
+  async function generateOgForSelected() {
+    if (!(await withInspector())) return
     const detail = { handled: false }
     window.dispatchEvent(new CustomEvent('dispatch:generate-og', { detail }))
     if (!detail.handled) toasts.info('Social cards are for blog posts', 'Dispatch pieces use their chart image.')
@@ -114,6 +130,8 @@ export function useMenuActions(options: {
   }
 
   const actions: Record<string, () => unknown> = {
+    // App
+    'menu-check-updates': () => checkForUpdate({ manual: true }),
     // File
     'menu-open-in-obsidian': () => {
       const f = needFile()
@@ -123,7 +141,17 @@ export function useMenuActions(options: {
       const f = needFile()
       if (f) invoke('open_in_app', { path: f.path, app: 'Finder' }).catch(() => {})
     },
+    'menu-open-in-editor': () => {
+      const f = needFile()
+      if (f) invoke('open_in_app', { path: f.path, app: defaultEditor.value }).catch(() => {})
+    },
     'menu-open-site-preview': () => invoke('open_preview'),
+    'menu-copy-path': () => {
+      const f = needFile()
+      if (!f) return
+      navigator.clipboard.writeText(f.path)
+      toasts.success('Path copied')
+    },
     // View
     'menu-toggle-sidebar': () => (options.sidebarCollapsed.value = !options.sidebarCollapsed.value),
     'menu-toggle-inspector': () => inspector.toggle(),
@@ -134,7 +162,15 @@ export function useMenuActions(options: {
     'menu-panel-changed': () => (rightTab.value = 'modified'),
     'menu-panel-activity': () => (rightTab.value = 'activity'),
     // Publish (Publish ⌘↩ and Publish as Unlisted ⌘⇧↩ are in App.vue)
+    'menu-publish-later': async () => {
+      if (modalOpen()) return
+      ;(await withInspector())?.openSchedulePicker()
+    },
     'menu-unpublish': unpublishSelected,
+    'menu-syndicate': async () => {
+      if (modalOpen() || !needLive()) return
+      ;(await withPreview())?.openSyndication()
+    },
     'menu-view-on-site': () => {
       const f = needLive()
       if (f?.published_url) window.open(f.published_url, '_blank')
@@ -146,7 +182,6 @@ export function useMenuActions(options: {
       toasts.success('Link copied')
     },
     'menu-generate-og': generateOgForSelected,
-    'menu-show-journal': () => (rightTab.value = 'journal'),
     // Help
     'menu-show-help': () =>
       options.showHelp.value && options.helpSection.value === 'shortcuts'
@@ -154,6 +189,36 @@ export function useMenuActions(options: {
         : openHelp('shortcuts'),
     'menu-show-overview': () => openHelp('overview'),
   }
+
+  let lastContext = ''
+  // Keep the menubar's enabled states and labels in step with the window.
+  // `immediate` so the first build after launch isn't left all-enabled.
+  watch(
+    () => {
+      const f = selectedFile.value
+      const live = !!f?.published_url
+      return {
+        hasFile: !!f,
+        isLive: live,
+        canPublishUnlisted: !!f && !live && !f.unlisted && !f.password,
+        canSchedule: !!f && !live && f.is_safe && !f.publish_at,
+        canGenerateOg: !!f && f.content_type !== 'dispatch',
+        sidebarVisible: !options.sidebarCollapsed.value,
+        inspectorVisible: inspector.visible.value,
+        compact: options.compactMode.value,
+        editor: defaultEditor.value || '',
+      }
+    },
+    (ctx) => {
+      // The getter re-runs on any change to the selected post; only tell
+      // Rust when something the menu shows actually moved.
+      const key = JSON.stringify(ctx)
+      if (key === lastContext) return
+      lastContext = key
+      invoke('set_menu_context', { ctx }).catch(() => {})
+    },
+    { immediate: true, deep: true },
+  )
 
   const disposers: Array<() => void> = []
   onMounted(() => {

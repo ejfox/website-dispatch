@@ -173,6 +173,7 @@ const actions = computed<Action[]>(() => {
       section: 'Actions',
       icon: PhLink,
       enabled: hasFile,
+      shortcut: '⌘⌥C',
       synonyms: ['copy path'],
       run: () => f && navigator.clipboard.writeText(f.path),
     },

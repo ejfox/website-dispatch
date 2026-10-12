@@ -1057,7 +1057,16 @@ function copyUrlAndPassword() {
 }
 
 // Expose methods for parent component
-defineExpose({ openPublishConfirm: requestPublish, unpublish })
+/** Menu-bar entry points (useMenuActions). Each opens what the matching
+ *  inspector control opens; the menu enables them only when they apply. */
+function openSyndication() {
+  if (liveUrl.value) showSyndicationWizard.value = true
+}
+function openSchedulePicker() {
+  showSchedulePicker.value = true
+}
+
+defineExpose({ openPublishConfirm: requestPublish, unpublish, openSyndication, openSchedulePicker })
 
 async function openInObsidian() {
   await invoke('open_in_obsidian', { path: props.file.path })

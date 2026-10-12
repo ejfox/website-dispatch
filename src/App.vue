@@ -580,6 +580,7 @@ const { openHelp, unpublishSelected } = useMenuActions({
   rightTab,
   filePreviewRef,
   sidebarCollapsed,
+  compactMode,
   showHelp,
   helpSection,
   modalFlags: [showSettings, newPostOpen, paletteOpen, showHelp],
