@@ -41,7 +41,7 @@ import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
 import PublishingJournal from './components/PublishingJournal.vue'
 import ActivityFeed from './components/ActivityFeed.vue'
 import ModifiedPostsView from './components/ModifiedPostsView.vue'
-import SettingsModal from './components/SettingsModal.vue'
+import { openSettings } from './utils/openSettings'
 import CommandPalette from './components/CommandPalette.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ToastStack from './components/ToastStack.vue'
@@ -284,8 +284,8 @@ async function onPieceStarted(notePath: string) {
 const { cloudinaryConnected, obsidianConnected, analyticsConnected, gitBranch } =
   useConnectionStatus()
 
-// Settings modal
-const showSettings = ref(false)
+// Settings live in their own window (src/components/settings/). Every way
+// in goes through openSettings(); see src/utils/openSettings.ts.
 
 // FilePreview ref for Cmd+Enter publish
 const filePreviewRef = ref<InstanceType<typeof FilePreview> | null>(null)
@@ -465,7 +465,7 @@ async function showVaultMenu(e: MouseEvent) {
   }
   items_.push(
     await PredefinedMenuItem.new({ item: 'Separator' }),
-    await MenuItem.new({ text: 'Vault Settings…', action: () => (showSettings.value = true) }),
+    await MenuItem.new({ text: 'Vault Settings…', action: () => openSettings('general') }),
   )
   const menu = await Menu.new({ items: items_ })
   await menu.popup()
@@ -494,7 +494,7 @@ async function showMediaMenu(e: MouseEvent) {
   }
   items_.push(
     await PredefinedMenuItem.new({ item: 'Separator' }),
-    await MenuItem.new({ text: 'Media Settings…', action: () => (showSettings.value = true) }),
+    await MenuItem.new({ text: 'Media Settings…', action: () => openSettings('media') }),
   )
   const menu = await Menu.new({ items: items_ })
   await menu.popup()
@@ -512,7 +512,7 @@ async function showAnalyticsMenu(e: MouseEvent) {
     )
   }
   items_.push(
-    await MenuItem.new({ text: 'Analytics Settings…', action: () => (showSettings.value = true) }),
+    await MenuItem.new({ text: 'Analytics Settings…', action: () => openSettings('connections') }),
   )
   const menu = await Menu.new({ items: items_ })
   await menu.popup()
@@ -559,7 +559,6 @@ const { handleGlobalKey } = useKeyboardShortcuts({
   files,
   selectedFile,
   searchOpen: paletteOpen,
-  showSettings,
   newPostOpen,
   showHelp,
   rightTab,
@@ -582,7 +581,7 @@ const { openHelp, unpublishSelected } = useMenuActions({
   sidebarCollapsed,
   showHelp,
   helpSection,
-  modalFlags: [showSettings, newPostOpen, paletteOpen, showHelp],
+  modalFlags: [newPostOpen, paletteOpen, showHelp],
 })
 
 let unlistenSchedule: (() => void) | null = null
@@ -632,7 +631,9 @@ onMounted(async () => {
     compactMode.value = !compactMode.value
   }))
   track(listen('menu-search', () => openSearch()))
-  track(listen('menu-settings', () => (showSettings.value = true)))
+  track(listen('menu-settings', () => openSettings()))
+  // Saved from the Settings window (or anywhere): reload what depends on config.
+  track(listen('config-changed', () => onSettingsSaved()))
   // Publish menu (⌘↩ / ⌘⇧↩): open the review sheet for the selected post.
   // An open sheet handles menu-publish itself, so skip when any overlay is up.
   const overlayOpen = () => !!document.querySelector('[class$="-overlay"]')
@@ -983,7 +984,7 @@ onUnmounted(() => {
           aria-label="Refresh"
           @click="loadFiles"
         />
-        <UiButton variant="plain" :icon="PhGear" data-tip="Open settings (⌘,)" aria-label="Settings" @click="showSettings = true" />
+        <UiButton variant="plain" :icon="PhGear" data-tip="Open settings (⌘,)" aria-label="Settings" @click="openSettings()" />
       </div>
     </header>
 
@@ -1005,7 +1006,7 @@ onUnmounted(() => {
             unpublishSelected()
           }
         "
-        @open-settings="showSettings = true"
+        @open-settings="openSettings('general')"
       />
 
       <div class="right-panel">
@@ -1163,7 +1164,6 @@ onUnmounted(() => {
     </Transition>
 
     <!-- Settings Modal -->
-    <SettingsModal v-if="showSettings" @close="showSettings = false" @saved="onSettingsSaved" />
 
     <!-- Status Bar -->
     <div class="statusbar">

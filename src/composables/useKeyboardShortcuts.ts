@@ -7,7 +7,6 @@ export function useKeyboardShortcuts(options: {
   files: Ref<MarkdownFile[]>
   selectedFile: Ref<MarkdownFile | null>
   searchOpen: Ref<boolean>
-  showSettings: Ref<boolean>
   newPostOpen: Ref<boolean>
   showHelp: Ref<boolean>
   rightTab: Ref<'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'>
@@ -80,10 +79,6 @@ export function useKeyboardShortcuts(options: {
 
     if (options.searchOpen.value) {
       if (e.key === 'Escape') options.closeSearch()
-      return
-    }
-    if (options.showSettings.value) {
-      if (e.key === 'Escape') options.showSettings.value = false
       return
     }
     if (options.newPostOpen.value) {

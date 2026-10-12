@@ -4,12 +4,15 @@
   "local": true,
   "windows": [
     "main",
-    "preview"
+    "preview",
+    "settings"
   ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
     "core:window:allow-set-badge-count",
+    "core:window:allow-set-size",
+    "core:window:allow-set-title",
     "fs:allow-read-file",
     "fs:allow-write-file",
     "fs:allow-read-dir",

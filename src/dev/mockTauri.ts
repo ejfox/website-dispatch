@@ -228,6 +228,64 @@ const commands: Record<string, (args: any) => unknown> = {
   get_recent_files: () => files,
   get_file_content: ({ path }) => contents[path] ?? '',
   get_app_config: () => appConfig,
+  // Settings window (?mock&window=settings). Secrets come back masked, as
+  // from settings.rs; nothing real is stored.
+  get_settings: () => ({
+    config: {
+      ...JSON.parse(JSON.stringify(appConfig)),
+      media: {
+        primary: 'cloudinary',
+        mirrors: [],
+        cloudinary: { cloud_name: 'ejf', api_key: '\u2022\u2022\u2022\u20224821', api_secret: '\u2022\u2022\u2022\u20229f0c' },
+        r2: null,
+      },
+    },
+    config_path: '/Users/ej/Library/Application Support/com.ejfox.dispatch/config.json',
+    config_exists: true,
+    env: {
+      cloudinary: false,
+      r2: false,
+      mastodon_token: true,
+      mastodon_instance: null,
+      bluesky: false,
+      umami: true,
+      umami_url: 'https://umami.tools.ejfox.com',
+      obsidian_api_key: true,
+      alt_text_provider: 'anthropic',
+      dotenv_files: ['/Users/ej/code/website-dispatch/.env'],
+    },
+  }),
+  save_settings: ({ configData }) => {
+    const mask = (v: string) => (!v || v.startsWith('\u2022') ? v : '\u2022\u2022\u2022\u2022' + (v.length >= 12 ? v.slice(-4) : ''))
+    const c = JSON.parse(JSON.stringify(configData))
+    if (c.media?.cloudinary) {
+      c.media.cloudinary.api_key = mask(c.media.cloudinary.api_key)
+      c.media.cloudinary.api_secret = mask(c.media.cloudinary.api_secret)
+    }
+    if (c.media?.r2) {
+      c.media.r2.access_key_id = mask(c.media.r2.access_key_id)
+      c.media.r2.secret_access_key = mask(c.media.r2.secret_access_key)
+    }
+    console.info('[mock] save_settings')
+    return c
+  },
+  check_vault_folder: ({ path, publishableDirs }) =>
+    path.startsWith(VAULT)
+      ? { exists: true, is_obsidian_vault: true, folder_name: 'vault', missing_dirs: (publishableDirs as string[]).filter((d) => d !== 'blog') }
+      : { exists: false, is_obsidian_vault: false, folder_name: '', missing_dirs: [] },
+  check_publish_target: ({ repoPath, branch, contentPathPattern }) => ({
+    exists: repoPath.startsWith('/Users/ej/'),
+    is_git: repoPath.startsWith('/Users/ej/code'),
+    current_branch: 'main',
+    branch_exists: branch === 'main' || branch === 'dev',
+    on_branch: branch === 'main',
+    has_origin: true,
+    content_dir_exists: String(contentPathPattern).startsWith('content/blog'),
+    content_dir: String(contentPathPattern).split('/{year}')[0],
+  }),
+  check_app_installed: ({ appName }) => appName !== 'Sublime Text',
+  verify_mastodon: () => 'ej@mastodon.social (EJ Fox)',
+  open_settings_window: ({ pane }) => void window.open(`?mock&window=settings${pane ? `&pane=${pane}` : ''}`, 'settings', 'width=640,height=560'),
   get_git_status: () => gitStatus,
   check_obsidian_api: () => true,
   check_cloudinary_status: () => true,

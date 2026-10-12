@@ -1,0 +1,238 @@
+/* Settings window form styles. Global (not scoped) so every pane shares one
+ * form grid; every class is prefixed `st-` to stay out of the main app's way.
+ *
+ * Layout follows the macOS Settings form: a right-aligned label column, the
+ * controls left-aligned in the second column, one plain sentence of help
+ * under each control. 4/8pt spacing, semantic colors and the --label ladder
+ * from global.css. */
+
+.st-form {
+  display: grid;
+  grid-template-columns: 172px minmax(0, 1fr);
+  column-gap: var(--space-3);
+  row-gap: var(--space-4);
+  align-items: start;
+}
+
+.st-label {
+  grid-column: 1;
+  justify-self: end;
+  text-align: right;
+  font-size: 13px;
+  line-height: 22px; /* centers on a regular-size control */
+  color: var(--label);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.st-control {
+  grid-column: 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.st-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+}
+
+.st-line > .ui-btn {
+  flex: none;
+}
+
+/* A status line or path standing in for a control sits on the label's line. */
+.st-control > .st-note:first-child,
+.st-control > .st-path:first-child {
+  margin-top: 3px;
+}
+
+.st-help {
+  margin: 0;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--label-2);
+  max-width: 400px;
+}
+.st-help code,
+.st-note code {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 10px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--fill);
+}
+
+/* Section separator: a hairline across both columns, then a small heading. */
+.st-section {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--separator);
+  margin-top: var(--space-1);
+  padding-top: var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.st-section:first-child {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+.st-section h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label);
+}
+
+/* Text fields: macOS NSTextField proportions. */
+.st-input,
+.st-select {
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--label);
+  background: var(--control-bg);
+  border: 1px solid var(--separator);
+  border-radius: 5px;
+  min-width: 0;
+}
+.st-input {
+  width: 100%;
+}
+.st-input.is-mono {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 12px;
+}
+.st-input.is-short {
+  width: 160px;
+}
+.st-input::placeholder {
+  color: var(--label-3);
+}
+.st-input:focus,
+.st-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-focus);
+}
+.st-input[aria-invalid='true'] {
+  border-color: var(--status-broken);
+}
+.st-input:disabled {
+  color: var(--label-2);
+  background: var(--fill);
+}
+.st-select {
+  padding-right: 4px;
+}
+
+.st-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 22px;
+  color: var(--label);
+  cursor: default;
+}
+.st-check input {
+  margin: 0;
+}
+
+/* Inline validation / status line under a control. */
+.st-note {
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--label-2);
+  max-width: 420px;
+}
+.st-note::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--status-draft);
+}
+.st-note.is-ok::before { background: var(--status-live); }
+.st-note.is-warn::before { background: var(--status-attention); }
+.st-note.is-error::before { background: var(--status-broken); }
+.st-note.is-error { color: var(--ink-broken); }
+.st-note.is-plain::before { display: none; }
+
+/* Folder chips (publishable / hidden folders). */
+.st-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+.st-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 22px;
+  padding: 0 2px 0 8px;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--label);
+  background: var(--fill);
+  border-radius: 11px;
+}
+.st-chip.is-missing {
+  color: var(--ink-attention);
+  background: var(--tint-attention);
+}
+
+/* A bordered list (editors), like an NSTableView in a Settings pane. */
+.st-list {
+  width: 100%;
+  border: 1px solid var(--separator);
+  border-radius: 6px;
+  background: var(--control-bg);
+  overflow: hidden;
+}
+.st-list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  font-size: 13px;
+}
+.st-list-row + .st-list-row {
+  border-top: 1px solid var(--separator);
+}
+.st-list-row .st-grow {
+  flex: 1;
+  min-width: 0;
+}
+.st-muted {
+  color: var(--label-2);
+}
+.st-mono {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 11px;
+}
+.st-path {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--label-2);
+  word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+}

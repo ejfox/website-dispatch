@@ -196,8 +196,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* Top-anchored sheet, close to the titlebar like a real Mac sheet. Mirrors
- * SettingsModal. */
+/* Top-anchored sheet, close to the titlebar like a real Mac sheet. */
 .pub-overlay {
   position: fixed;
   inset: 0;

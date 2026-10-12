@@ -40,8 +40,23 @@ pub struct PostContent {
 // ---------------------------------------------------------------------------
 
 fn get_mastodon_config() -> Result<(String, String), String> {
-    let instance =
-        std::env::var("MASTODON_INSTANCE").unwrap_or_else(|_| "mastodon.social".to_string());
+    // MASTODON_INSTANCE in .env wins, then Settings → Connections, then the default.
+    let instance = std::env::var("MASTODON_INSTANCE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            crate::config::get()
+                .ok()
+                .and_then(|c| c.mastodon_instance)
+                .filter(|s| !s.trim().is_empty())
+        })
+        .map(|s| {
+            s.trim()
+                .trim_start_matches("https://")
+                .trim_end_matches('/')
+                .to_string()
+        })
+        .unwrap_or_else(|| "mastodon.social".to_string());
     let token = std::env::var("MASTODON_ACCESS_TOKEN")
         .map_err(|_| "MASTODON_ACCESS_TOKEN not set in .env".to_string())?;
     Ok((instance, token))
