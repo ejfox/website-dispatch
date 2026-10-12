@@ -47,7 +47,7 @@ import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { useLocalStorage, useElementSize } from '@vueuse/core'
 import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics, DeskToday } from '../types'
 import { useTagSuggestions } from '../composables/useTagSuggestions'
-import { usePublishing, usePostActions } from '../composables/usePublishFlow'
+import { usePublishing, usePostActions, deployFailureTitle } from '../composables/usePublishFlow'
 import type { ReviewMode } from '../utils/publishReview'
 import { useAppConfig, useGitStatus } from '../composables/useVaultData'
 
@@ -322,6 +322,7 @@ const {
   justPublishedGlow,
   currentDeploy,
   dismissDeploy,
+  recheckDeploy,
   showSuccess,
   successMessage,
   showPublishConfirm,
@@ -345,6 +346,10 @@ const {
   // Auto-fire webmentions after publish/republish. Bridgy Fed forwarding
   // is opt-in via Settings → Connections (default off).
   getTitle: () => props.file.title || slug.value || null,
+  // The toast outlives a file switch: only reopen the sheet for the same
+  // post, otherwise go back to it first.
+  onRetry: (isRepublish: boolean, path: string) =>
+    path === props.file.path ? requestPublish(isRepublish) : emit('jump-to-path', path),
   onPublishSuccess: (url: string) => afterPublish(url),
   // Webmentions wait for the deploy to be confirmed live (page answers 200),
   // and only if the review sheet's toggle was left on.
@@ -480,7 +485,11 @@ const deployStatusStore = useDeployStatus()
 const miniStatus = computed(() => {
   const phase = currentDeploy.value?.phase
   if (phase === 'deploying') return { key: 'deploying', word: 'Deploying…' }
-  if (phase === 'failed') return { key: 'broken', word: 'Not live' }
+  if (phase === 'hidden') return { key: 'scheduled', word: 'Deployed, hidden for now' }
+  if (phase === 'failed') {
+    const f = currentDeploy.value?.failure
+    return { key: f === 'timeout' || f === 'untracked' ? 'attention' : 'broken', word: deployFailureTitle(f) }
+  }
   if (isScheduled.value) return { key: 'scheduled', word: 'Scheduled' }
   if (isLive.value)
     return hasUnpublishedChanges.value
@@ -501,7 +510,11 @@ watch(showDraftPrompt, (open) => {
 
 // Dispatch pieces need image_alt with image (website contract). Generate and
 // save it before publishing rather than blocking.
-async function publishWithPrep(isRepublish: boolean, opts: { webmentions: boolean }, mode: ReviewMode) {
+async function publishWithPrep(
+  isRepublish: boolean,
+  opts: { webmentions: boolean; hiddenUntil: string | null },
+  mode: ReviewMode,
+) {
   if (props.file.content_type === 'dispatch') {
     try {
       const alt = await invoke<string | null>('ensure_image_alt', { path: props.file.path })
@@ -1274,7 +1287,8 @@ async function openPreview() {
             :file-path="file.path"
             :deploy="currentDeploy"
             :diff-open="diffOpen"
-            @dismiss-deploy="dismissDeploy(slug)"
+            @dismiss-deploy="dismissDeploy(file.path)"
+            @recheck-deploy="recheckDeploy(file.path)"
             @copy-url="copyUrl"
             @copy-url-password="copyUrlAndPassword"
             @republish="requestPublish(true)"
@@ -1336,7 +1350,7 @@ async function openPreview() {
               <!-- Secondary: the primary above is still on screen. -->
               <UiButton size="small" :disabled="!scheduleDate" label="Publish at this time" @click="schedulePublish" />
             </div>
-            <span class="insp-note">Dispatch publishes it at the time you pick (keep Dispatch running).</span>
+            <span class="insp-note">Dispatch publishes it at the time you pick, if it still has nothing to fix and isn’t a draft (keep Dispatch running).</span>
           </div>
         </section>
 
@@ -1544,7 +1558,7 @@ async function openPreview() {
       :target-id="getActiveTargetId() ?? null"
       :mode="publishConfirmMode"
       @close="closePublishConfirm"
-      @confirm="(o) => publishWithPrep(o.isUpdate, { webmentions: o.webmentions }, publishConfirmMode)"
+      @confirm="(o) => publishWithPrep(o.isUpdate, { webmentions: o.webmentions, hiddenUntil: o.hiddenUntil }, publishConfirmMode)"
     />
   </div>
 </template>

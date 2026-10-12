@@ -4,8 +4,9 @@
  * URL on one truncated line with a copy button. No tinted wash, no colored
  * bar — the dot carries the color, the same tokens the file list uses.
  *
- *   ● Live · Changed since live · Deploying… 1m20s · Not live (failed, with
- *   "View run") · Scheduled for … · Not published
+ *   ● Live · Changed since live · Deploying… 1m20s · Deployed, appears …
+ *   · Deploy failed / Not live yet / page isn’t loading (each says what to
+ *   do, with View run / Check again) · Scheduled for … · Not published
  *
  * Diff toggling is owned by the parent (`diffOpen` + `toggle-diff`) because
  * the diff itself renders above the post, where there's room for it.
@@ -15,7 +16,7 @@ import { CHANGED_LABEL, CHANGED_HINT, NOT_PUBLISHED_LABEL } from '../utils/vocab
 import { PhCopy, PhLockSimple } from '@phosphor-icons/vue'
 import { formatScheduledTime } from '../utils/formatting'
 import UiButton from './ui/UiButton.vue'
-import type { DeployState } from '../composables/usePublishFlow'
+import { deployFailureTitle, openExternal, type DeployState } from '../composables/usePublishFlow'
 
 const props = defineProps<{
   isLive: boolean
@@ -43,6 +44,7 @@ defineEmits<{
   republish: []
   'cancel-schedule': []
   'dismiss-deploy': []
+  'recheck-deploy': []
   'toggle-diff': []
 }>()
 
@@ -58,12 +60,32 @@ const state = computed<{ dot: Dot; word: string; hint?: string }>(() => {
     const elapsed = d.elapsedSecs ? ` ${fmtElapsed(d.elapsedSecs)}` : ''
     return { dot: 'deploying', word: `Deploying…${elapsed}` }
   }
-  if (d?.phase === 'failed') return { dot: 'broken', word: 'Not live' }
+  if (d?.phase === 'hidden') return { dot: 'scheduled', word: `Deployed, appears ${d.hiddenUntil ?? 'later'}` }
+  if (d?.phase === 'failed') {
+    // Still deploying, maybe: amber. A failed run or a dead page: red.
+    const dot = d.failure === 'timeout' || d.failure === 'untracked' ? 'attention' : 'broken'
+    return { dot, word: deployFailureTitle(d.failure) }
+  }
   if (props.isLive && props.hasUnpublishedChanges) return { dot: 'attention', word: CHANGED_LABEL, hint: CHANGED_HINT }
   if (props.isLive) return { dot: 'live', word: 'Live' }
   if (props.isScheduled) return { dot: 'scheduled', word: `Scheduled for ${formatScheduledTime(props.publishAt)}` }
   return { dot: 'draft', word: NOT_PUBLISHED_LABEL }
 })
+
+/** What to do about a deploy that didn't end live. */
+const nextStep = computed(() => {
+  switch (props.deploy?.failure) {
+    case 'run':
+      return 'Your post is pushed, so the next deploy that succeeds includes it. The run shows what broke.'
+    case 'timeout':
+      return 'Check again in a minute, or open the run.'
+    case 'unverified':
+      return 'Open the page to see what it shows, then check again.'
+    default:
+      return ''
+  }
+})
+const canRecheck = computed(() => props.deploy?.phase === 'failed' && !!props.deploy.sha && props.deploy.failure !== 'run')
 
 // The URL reads better without its scheme; the full thing is in the title.
 const displayUrl = computed(() => (props.liveUrl || '').replace(/^https?:\/\//, ''))
@@ -73,19 +95,13 @@ const displayUrl = computed(() => (props.liveUrl || '').replace(/^https?:\/\//, 
   <div class="status">
     <div class="status-line">
       <span class="status-dot" :data-status="state.dot" aria-hidden="true"></span>
-      <span class="status-word" :class="{ wraps: state.dot === 'scheduled' }" :title="state.hint">
+      <span
+        class="status-word"
+        :class="{ wraps: state.dot === 'scheduled' || deploy?.phase === 'failed' }"
+        :title="state.hint"
+      >
         {{ state.word }}
       </span>
-      <a v-if="deploy?.phase === 'failed'" :href="deploy.runUrl" target="_blank" rel="noopener" class="status-link">
-        View run
-      </a>
-      <UiButton
-        v-if="deploy?.phase === 'failed'"
-        size="small"
-        variant="plain"
-        label="Dismiss"
-        @click="$emit('dismiss-deploy')"
-      />
     </div>
 
     <!-- Pushed, not yet serving: which commit, and where to watch it. -->
@@ -93,7 +109,28 @@ const displayUrl = computed(() => (props.liveUrl || '').replace(/^https?:\/\//, 
       pushed {{ deploy.sha.slice(0, 7) }} ·
       <a :href="deploy.runUrl" target="_blank" rel="noopener">Actions</a>
     </div>
-    <div v-else-if="deploy?.phase === 'failed'" class="insp-note status-note">{{ deploy.message }}</div>
+    <template v-else-if="deploy?.phase === 'hidden'">
+      <div class="insp-note status-note">The site keeps it hidden until then. No webmentions were sent.</div>
+      <div class="status-line">
+        <UiButton size="small" variant="plain" class="status-plain" label="Dismiss" @click="$emit('dismiss-deploy')" />
+      </div>
+    </template>
+    <!-- Didn't end live: what happened, what to do, and the buttons for it. -->
+    <template v-else-if="deploy?.phase === 'failed'">
+      <div class="insp-note status-note">{{ deploy.message }} {{ nextStep }}</div>
+      <div class="status-line status-actions">
+        <UiButton v-if="canRecheck" size="small" label="Check again" @click="$emit('recheck-deploy')" />
+        <UiButton
+          v-if="deploy.failure === 'unverified'"
+          size="small"
+          variant="plain"
+          label="Open page"
+          @click="openExternal(deploy.url)"
+        />
+        <UiButton size="small" variant="plain" label="View run" @click="openExternal(deploy.runUrl)" />
+        <UiButton size="small" variant="plain" label="Dismiss" @click="$emit('dismiss-deploy')" />
+      </div>
+    </template>
 
     <!-- Scheduled: the time is on the status line; this undoes it. -->
     <div v-if="isScheduled && !isLive" class="status-line">
@@ -167,14 +204,17 @@ const displayUrl = computed(() => (props.liveUrl || '').replace(/^https?:\/\//, 
   white-space: normal;
 }
 
-.status-link,
+.status-actions {
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
 .status-note a {
   color: var(--label-2);
   text-decoration: none;
   font-size: 11px;
   flex-shrink: 0;
 }
-.status-link:hover,
 .status-note a:hover {
   color: var(--label);
   text-decoration: underline;

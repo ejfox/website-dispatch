@@ -171,7 +171,7 @@ pub(crate) fn sync_with_remote(repo_path: &str, branch: &str) -> Result<(), Stri
     .map(|_| ())
     .map_err(|e| {
         format!(
-            "Couldn't update {} from origin (nothing was published): {}",
+            "Couldn't update {} from origin, so nothing was published.\n{}",
             branch, e
         )
     })
@@ -179,7 +179,11 @@ pub(crate) fn sync_with_remote(repo_path: &str, branch: &str) -> Result<(), Stri
 
 /// Commit exactly `paths` (other staged or dirty files are left alone) and
 /// push to `origin <branch>`. Any failure is an error; a republish with no
-/// changes skips the commit and still pushes.
+/// changes skips the commit and still pushes, which is also how a publish
+/// whose push failed gets retried.
+///
+/// Errors lead with one plain sentence saying what state the repo is in,
+/// then git's own output on the next line (the UI splits on the newline).
 pub(crate) fn commit_and_push(
     repo_path: &str,
     branch: &str,
@@ -188,7 +192,8 @@ pub(crate) fn commit_and_push(
 ) -> Result<(), String> {
     let mut add = vec!["add", "-A", "--"];
     add.extend_from_slice(paths);
-    git_ok(repo_path, &add, LOCAL_TIMEOUT)?;
+    git_ok(repo_path, &add, LOCAL_TIMEOUT)
+        .map_err(|e| format!("Couldn't stage the change in git, so nothing was published.\n{}", e))?;
 
     let mut staged = vec!["diff", "--cached", "--quiet", "--"];
     staged.extend_from_slice(paths);
@@ -196,10 +201,20 @@ pub(crate) fn commit_and_push(
     if has_changes {
         let mut commit = vec!["commit", "-m", message, "--"];
         commit.extend_from_slice(paths);
-        git_ok(repo_path, &commit, LOCAL_TIMEOUT)?;
+        git_ok(repo_path, &commit, LOCAL_TIMEOUT).map_err(|e| {
+            format!(
+                "Git refused the commit (a hook?), so nothing was published.\n{}",
+                e
+            )
+        })?;
     }
 
-    git_ok(repo_path, &["push", "origin", branch], NETWORK_TIMEOUT)?;
+    git_ok(repo_path, &["push", "origin", branch], NETWORK_TIMEOUT).map_err(|e| {
+        format!(
+            "Committed, but the push to origin/{} failed, so the site hasn't changed. Trying again pushes it.\n{}",
+            branch, e
+        )
+    })?;
     Ok(())
 }
 
@@ -883,55 +898,136 @@ pub fn unpublish_file(slug: &str, target_id: Option<&str>) -> Result<(), String>
     Ok(())
 }
 
+/// Why a post whose Dispatch `publish_at` time has come must still not go out
+/// on its own: the same gate the review sheet applies to a first publish
+/// (lint), plus `draft: true`. None means publish it.
+pub fn scheduled_hold_reason(draft: bool, warnings: &[String]) -> Option<String> {
+    if draft {
+        return Some("it's still marked draft: true".into());
+    }
+    let lint: Vec<&str> = warnings
+        .iter()
+        .map(|w| w.trim_start_matches("[privacy]"))
+        .filter(|w| *w != "Modified since publish")
+        .collect();
+    if lint.is_empty() {
+        None
+    } else {
+        Some(format!("fix these first: {}", lint.join(", ")))
+    }
+}
+
+/// Dispatch's own "Publish later": at `publish_at`, publish with no one
+/// watching. It has no review sheet, so it applies the sheet's gate itself,
+/// says (once) when it can't publish, and watches the deploy like a manual
+/// publish so the notification says live or what went wrong.
 pub async fn run_schedule_checker(app_handle: tauri::AppHandle) {
+    use tauri_plugin_notification::NotificationExt;
     use tokio::time::{interval, Duration};
     let mut ticker = interval(Duration::from_secs(60));
+    // Paths already told about, so a stuck post notifies once, not every
+    // minute. Cleared when the post publishes or its time is changed.
+    let mut told: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    let notify_once = |told: &mut std::collections::HashMap<String, String>,
+                       path: &str,
+                       when: &str,
+                       title: &str,
+                       why: String| {
+        if told.get(path).map(String::as_str) == Some(when) {
+            return;
+        }
+        told.insert(path.to_string(), when.to_string());
+        log::warn!("Scheduled publish of {} didn't go out: {}", path, why);
+        let _ = app_handle
+            .notification()
+            .builder()
+            .title("Didn't publish on schedule")
+            .body(format!("\u{2018}{}\u{2019}: {}", title, why))
+            .show();
+        let _ = app_handle.emit(
+            "scheduled-publish-failed",
+            serde_json::json!({ "path": path, "title": title, "message": why }),
+        );
+    };
 
     loop {
         ticker.tick().await;
-        if let Ok(files) = crate::vault::get_recent_files(500) {
-            let now = chrono::Utc::now();
-            for file in files {
-                if let Some(ref publish_at_str) = file.publish_at {
-                    // Skip already-published files
-                    if file.published_url.is_some() {
-                        continue;
-                    }
-                    // Try parsing the scheduled datetime
-                    if let Ok(scheduled_time) = chrono::DateTime::parse_from_rfc3339(publish_at_str)
-                    {
-                        if now >= scheduled_time {
-                            let slug = file.filename.trim_end_matches(".md");
-                            log::warn!("Scheduled publish triggered for: {}", slug);
-                            let path = file.path.clone();
-                            match off_main(move || publish_file(&path, None)).await {
-                                Ok(Published { url, .. }) => {
-                                    // Remove publish_at from frontmatter
-                                    let _ = crate::vault::remove_frontmatter_field(
-                                        &file.path,
-                                        "publish_at",
-                                    );
-                                    // Emit event to frontend
-                                    let _ = app_handle.emit(
-                                        "scheduled-publish",
-                                        serde_json::json!({
-                                            "slug": slug,
-                                            "url": url,
-                                            "title": file.title
-                                        }),
-                                    );
-                                    log::warn!("Scheduled publish succeeded: {}", url);
-                                }
-                                Err(e) => {
-                                    log::warn!("Scheduled publish failed for {}: {}", slug, e);
-                                }
-                            }
-                        }
-                    }
+        let Ok(files) = crate::vault::get_recent_files(500) else {
+            continue;
+        };
+        let now = chrono::Utc::now();
+        for file in files {
+            let Some(ref publish_at_str) = file.publish_at else {
+                continue;
+            };
+            // Skip already-published files
+            if file.published_url.is_some() {
+                continue;
+            }
+            let Ok(scheduled_time) = chrono::DateTime::parse_from_rfc3339(publish_at_str) else {
+                continue;
+            };
+            if now < scheduled_time {
+                continue;
+            }
+            let slug = file.filename.trim_end_matches(".md").to_string();
+            let title = file.title.clone().unwrap_or_else(|| slug.clone());
+            if let Some(why) = scheduled_hold_reason(file.draft, &file.warnings) {
+                notify_once(&mut told, &file.path, publish_at_str, &title, why);
+                continue;
+            }
+            log::warn!("Scheduled publish triggered for: {}", slug);
+            let path = file.path.clone();
+            match off_main(move || publish_file(&path, None)).await {
+                Ok(Published { url, .. }) => {
+                    told.remove(&file.path);
+                    let _ = crate::vault::remove_frontmatter_field(&file.path, "publish_at");
+                    let _ = app_handle.emit(
+                        "scheduled-publish",
+                        serde_json::json!({ "slug": slug, "url": url, "title": file.title }),
+                    );
+                    log::warn!("Scheduled publish pushed: {}", url);
+                    watch_scheduled_deploy(app_handle.clone(), &file.path, url, title, file.password.is_some());
+                }
+                Err(e) => {
+                    let why = e.lines().next().unwrap_or(&e).to_string();
+                    notify_once(&mut told, &file.path, publish_at_str, &title, why);
                 }
             }
         }
     }
+}
+
+/// Follow a scheduled publish's deploy in the background; `wait_for_deploy`
+/// sends the "Live" / "Deploy problem" notification itself.
+fn watch_scheduled_deploy(app: tauri::AppHandle, source_path: &str, url: String, title: String, password: bool) {
+    let target = match config::resolve_target(None) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    // A site embargo (publishAt/date ahead) hides the page until then.
+    let hidden_until = fs::read_to_string(source_path).ok().and_then(|c| {
+        let (fm, _) = crate::vault::parse_frontmatter(&c);
+        embargo_from(&fm, chrono::Utc::now()).map(|w| w.raw)
+    });
+    tauri::async_runtime::spawn(async move {
+        let repo = target.repo_path.clone();
+        let Ok(Ok(sha)) = tauri::async_runtime::spawn_blocking(move || crate::deploy::head_sha(&repo)).await else {
+            return;
+        };
+        let _ = crate::deploy::wait_for_deploy(
+            app,
+            sha,
+            Some(url),
+            None,
+            None,
+            Some(title),
+            Some(password),
+            hidden_until,
+        )
+        .await;
+    });
 }
 
 #[cfg(test)]
@@ -1241,6 +1337,45 @@ mod tests {
         assert!(f
             .remote_file("main", "content/blog/2026/fresh.md")
             .is_none());
+    }
+
+    #[test]
+    fn failed_push_says_so_and_publishing_again_pushes_it() {
+        let f = Fixture::new("prepush", "main");
+        let hook = format!("{}/.git/hooks/pre-push", f.work);
+        fs::write(&hook, "#!/bin/sh\necho offline >&2\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let note = f.note("blog/2026/fresh.md");
+        let err = publish_blog(&f.target("main"), &f.vault, &note, "2026").unwrap_err();
+        // The first line is the sentence the UI shows; git's output follows.
+        let (head, detail) = err.split_once('\n').expect("sentence, then git output");
+        assert!(head.starts_with("Committed, but the push"), "{}", err);
+        assert!(detail.contains("offline"), "{}", err);
+        assert!(f.remote_file("main", "content/blog/2026/fresh.md").is_none());
+
+        fs::remove_file(&hook).unwrap();
+        publish_blog(&f.target("main"), &f.vault, &note, "2026").unwrap();
+        assert_eq!(
+            f.remote_file("main", "content/blog/2026/fresh.md").as_deref(),
+            Some("fresh\n")
+        );
+        // One commit, not two: the retry only pushed.
+        assert_eq!(sh(&f.work, &["log", "-2", "--format=%s"]), "Publish: fresh\nPublish: old");
+    }
+
+    #[test]
+    fn scheduled_publish_holds_for_drafts_and_lint() {
+        let none: Vec<String> = vec![];
+        assert_eq!(scheduled_hold_reason(false, &none), None);
+        // Being out of date with the live copy isn't a reason to hold.
+        assert_eq!(scheduled_hold_reason(false, &["Modified since publish".into()]), None);
+        assert!(scheduled_hold_reason(true, &none).unwrap().contains("draft"));
+        let why = scheduled_hold_reason(false, &["No date".into(), "Has TODOs".into()]).unwrap();
+        assert_eq!(why, "fix these first: No date, Has TODOs");
     }
 
     // ── publish_preview ──────────────────────────────────────────────────

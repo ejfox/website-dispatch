@@ -13,20 +13,39 @@ import type { ReviewMode } from '../utils/publishReview'
 
 /** A push is not a deploy. website2 builds in GitHub Actions (~3 min) and can
  *  roll back, so after `publish_file` returns we poll the site's healthcheck
- *  (Rust `wait_for_deploy`) and only then call the post live. */
+ *  (Rust `wait_for_deploy`) and only then call the post live.
+ *
+ *  `hidden`: the site embargoes the post (`publishAt`/`date` in the future),
+ *  so a confirmed deploy is the success and the page appears on its own.
+ *  `failed` carries why, so the UI can say what happened and what to do. */
 export interface DeployState {
   slug: string
   sha: string
   url: string
-  phase: 'deploying' | 'live' | 'failed'
+  phase: 'deploying' | 'live' | 'hidden' | 'failed'
+  /** Why it isn't live (phase `failed`):
+   *  run        GitHub's deploy failed or rolled back; the site kept the old version
+   *  timeout    the site never reported the commit; it may still be deploying
+   *  unverified the commit is deployed but the post URL didn't answer 200
+   *  untracked  pushed, but the commit couldn't be read to watch the deploy */
+  failure?: 'run' | 'timeout' | 'unverified' | 'untracked'
   message: string
   elapsedSecs: number
   runUrl: string
+  /** What `recheckDeploy` needs to watch the same push again (captured at
+   *  publish time: by the end you may have switched posts). */
+  title: string
+  password: boolean
+  unlisted: boolean
+  targetId?: string
+  isRepublish: boolean
+  webmentions: boolean
+  hiddenUntil: string | null
 }
 
 interface DeployResult {
   sha: string
-  phase: 'live' | 'deployed_unverified' | 'timeout' | 'failed'
+  phase: 'live' | 'hidden' | 'deployed_unverified' | 'timeout' | 'failed'
   ok: boolean
   message: string
   deployed_commit: string | null
@@ -36,10 +55,53 @@ interface DeployResult {
 
 const ACTIONS_URL = 'https://github.com/ejfox/website2/actions'
 
+const FAILURE_OF: Record<string, DeployState['failure']> = {
+  failed: 'run',
+  timeout: 'timeout',
+  deployed_unverified: 'unverified',
+}
+
+/** Headline for a deploy that didn't end live — the toast and the
+ *  inspector say the same thing. */
+export function deployFailureTitle(f: DeployState['failure']): string {
+  switch (f) {
+    case 'run':
+      return 'Deploy failed'
+    case 'timeout':
+      return 'Not live yet'
+    case 'unverified':
+      return 'Deployed, but the page isn’t loading'
+    default:
+      return 'Pushed, but not tracked'
+  }
+}
+
+/** Open a URL in the system browser. wry ignores `window.open`; the shell
+ *  plugin's injected script routes clicks on `<a target="_blank">`, so make
+ *  one and click it. */
+export function openExternal(url: string) {
+  const a = document.createElement('a')
+  a.href = url
+  a.target = '_blank'
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
 // Fire-and-forget native macOS system sound. Names map to files in
 // /System/Library/Sounds (Glass, Hero, Pop, Tink, Sosumi, Submarine, etc).
 function playSound(name: string) {
   invoke('play_system_sound', { name }).catch(() => {})
+}
+
+/** Rust errors put a plain sentence on the first line and git's own output
+ *  after it. Split them so the toast leads with the sentence. */
+function splitError(e: unknown): { message: string; detail?: string } {
+  const text = String(e).trim()
+  const nl = text.indexOf('\n')
+  if (nl > 0) return { message: text.slice(0, nl).trim(), detail: text.slice(nl + 1).trim() }
+  return { message: 'Didn’t publish', detail: text }
 }
 
 export function usePublishing(options: {
@@ -57,8 +119,10 @@ export function usePublishing(options: {
    *  Webmentions belong here — the page has to exist before discovery.
    *  `webmentions` is the review sheet's toggle for this publish. */
   onLive?: (url: string, opts: { webmentions: boolean }) => void
-  /** Post title, for the "is live" macOS notification. */
+  /** Post title, for the "is live" toast and macOS notification. */
   getTitle?: () => string | null
+  /** Reopen the review sheet for `path` (a failed push's "Try again…"). */
+  onRetry?: (isRepublish: boolean, path: string) => void
 }) {
   const publishing = ref(false)
   const justPublished = ref<string | null>(null)
@@ -91,7 +155,7 @@ export function usePublishing(options: {
     showPublishConfirm.value = false
   }
 
-  async function publish(isRepublish = false, opts: { webmentions?: boolean } = {}) {
+  async function publish(isRepublish = false, opts: { webmentions?: boolean; hiddenUntil?: string | null } = {}) {
     // In-flight guard: publishing commits + pushes, so a second call while the
     // first is still running would publish (and git-commit) the post twice.
     // The confirm button/Enter can both fire in the same burst before the modal
@@ -99,9 +163,11 @@ export function usePublishing(options: {
     if (publishing.value) return
     if (!isRepublish && !options.getFileIsSafe()) return
     publishing.value = true
+    const path = options.getFilePath()
+    const title = options.getTitle?.() || 'Your post'
     try {
       const url = await invoke<string>('publish_file', {
-        sourcePath: options.getFilePath(),
+        sourcePath: path,
         targetId: options.getActiveTargetId() || null,
       })
       justPublished.value = url
@@ -118,42 +184,85 @@ export function usePublishing(options: {
       }
 
       // Don't await: the deploy takes minutes and shouldn't lock the UI.
-      void watchDeploy(options.getFilePath(), url, options.getActiveTargetId(), isRepublish, opts.webmentions ?? true)
+      void watchDeploy({
+        slug: path,
+        url,
+        title,
+        password: options.isPasswordProtected(),
+        unlisted: options.isUnlisted(),
+        targetId: options.getActiveTargetId(),
+        isRepublish,
+        // Nothing to notify while the page is hidden.
+        webmentions: !opts.hiddenUntil && (opts.webmentions ?? true),
+        hiddenUntil: opts.hiddenUntil ?? null,
+      })
     } catch (e) {
-      toasts.error('Publish failed', String(e))
+      // Say what state things are in (Rust's first line), and offer the way
+      // back: the sheet re-checks everything before trying again.
+      const { message: msg, detail } = splitError(e)
+      playSound('Sosumi')
+      const id: number = toasts.push({
+        kind: 'error',
+        message: msg,
+        detail,
+        action: options.onRetry
+          ? {
+              label: 'Try again…',
+              run: () => {
+                toasts.dismiss(id)
+                options.onRetry!(isRepublish, path)
+              },
+            }
+          : undefined,
+        ttl: 0,
+      })
     }
     publishing.value = false
   }
 
-  async function watchDeploy(
-    slug: string,
-    url: string,
-    targetId: string | undefined,
-    isRepublish: boolean,
-    webmentions: boolean,
-  ) {
+  type Watch = Pick<
+    DeployState,
+    'slug' | 'url' | 'title' | 'password' | 'unlisted' | 'targetId' | 'isRepublish' | 'webmentions' | 'hiddenUntil'
+  >
+
+  async function watchDeploy(w: Watch) {
     let sha: string
     try {
-      sha = await invoke<string>('get_head_sha', { targetId: targetId || null })
+      sha = await invoke<string>('get_head_sha', { targetId: w.targetId || null })
     } catch (e) {
-      deploys.value[slug] = {
-        slug,
+      deploys.value[w.slug] = {
+        ...w,
         sha: '',
-        url,
         phase: 'failed',
+        failure: 'untracked',
         elapsedSecs: 0,
         runUrl: ACTIONS_URL,
-        message: `Pushed, but couldn't read the commit to track the deploy: ${e}`,
+        message: `It was pushed, but Dispatch couldn’t read the commit to follow the deploy (${e}). Check the site in a few minutes.`,
       }
       return
     }
+    await trackDeploy(w, sha, 360)
+  }
+
+  /** Watch the push of `sha` until the site serves it. Re-entrant: "Check
+   *  again" calls it with the same sha, replacing the failed state. */
+  async function trackDeploy(w: Watch, sha: string, timeoutSecs: number) {
+    const slug = w.slug
+    clearFailureToast(slug)
     deploys.value[slug] = {
       slug,
+      url: w.url,
+      title: w.title,
+      password: w.password,
+      unlisted: w.unlisted,
+      targetId: w.targetId,
+      isRepublish: w.isRepublish,
+      webmentions: w.webmentions,
+      hiddenUntil: w.hiddenUntil,
       sha,
-      url,
       phase: 'deploying',
       elapsedSecs: 0,
-      runUrl: ACTIONS_URL,
+      runUrl: deploys.value[slug]?.sha === sha ? deploys.value[slug].runUrl : ACTIONS_URL,
       message: `pushed ${sha.slice(0, 7)}`,
     }
 
@@ -168,18 +277,19 @@ export function usePublishing(options: {
     try {
       result = await invoke<DeployResult>('wait_for_deploy', {
         sha,
-        postUrl: url,
-        timeoutSecs: 360,
-        targetId: targetId || null,
-        title: options.getTitle?.() ?? null,
-        skipUrlCheck: options.isPasswordProtected(),
+        postUrl: w.url,
+        timeoutSecs,
+        targetId: w.targetId || null,
+        title: w.title,
+        skipUrlCheck: w.password,
+        hiddenUntil: w.hiddenUntil,
       })
     } catch (e) {
       result = {
         sha,
-        phase: 'failed',
+        phase: 'timeout',
         ok: false,
-        message: String(e),
+        message: `Dispatch lost track of the deploy: ${e}`,
         deployed_commit: null,
         url_status: null,
         run_url: ACTIONS_URL,
@@ -190,38 +300,94 @@ export function usePublishing(options: {
 
     const d = deploys.value[slug]
     // A newer publish of the same slug replaced this one — let it report.
-    if (!d || d.sha !== sha) return
+    if (!d || d.sha !== sha || d.phase !== 'deploying') return
     d.runUrl = result.run_url || ACTIONS_URL
     d.message = result.message
-    if (result.ok) {
+    if (result.ok && result.phase === 'hidden') {
+      d.phase = 'hidden'
+      playSound('Glass')
+      toasts.success(`“${w.title}” is deployed`, w.hiddenUntil ? `It appears ${w.hiddenUntil}` : undefined)
+    } else if (result.ok) {
       d.phase = 'live'
       playSound('Glass')
+      announceLive(w)
       if (slug === options.getFilePath()) {
-        const visibilityContext = options.isPasswordProtected()
-          ? ' (protected)'
-          : options.isUnlisted()
-            ? ' (unlisted)'
-            : ''
-        showSuccessToast(isRepublish ? 'Republished — live' : `Live${visibilityContext}`)
         justPublishedGlow.value = true
         setTimeout(() => {
           justPublishedGlow.value = false
         }, 1500)
       }
-      options.onLive?.(url, { webmentions })
+      options.onLive?.(w.url, { webmentions: w.webmentions })
     } else {
       d.phase = 'failed'
-      toasts.error('Deploy not confirmed', result.message)
+      d.failure = FAILURE_OF[result.phase] ?? 'timeout'
+      playSound('Sosumi')
+      const id: number = (failureToast[slug] = toasts.push({
+        kind: 'error',
+        message: `${deployFailureTitle(d.failure)}: “${w.title}”`,
+        detail: result.message,
+        action:
+          d.failure === 'run'
+            ? { label: 'View run', run: () => openExternal(d.runUrl) }
+            : {
+                label: 'Check again',
+                run: () => {
+                  toasts.dismiss(id)
+                  void recheckDeploy(slug)
+                },
+              },
+        ttl: 0,
+      }))
     }
   }
 
+  // One failure toast per post: a re-check or a dismiss in the inspector
+  // takes the stale one with it.
+  const failureToast: Record<string, number> = {}
+  function clearFailureToast(slug: string) {
+    if (failureToast[slug] !== undefined) toasts.dismiss(failureToast[slug])
+    delete failureToast[slug]
+  }
+
+  /** The it's-live moment: which post, where, and the link one click away.
+   *  Shown whichever post is selected now; the deploy took minutes. */
+  function announceLive(w: Watch) {
+    const visibility = w.password ? ' (protected)' : w.unlisted ? ' (unlisted)' : ''
+    const id: number = toasts.push({
+      kind: 'success',
+      message: w.isRepublish ? `“${w.title}” is updated${visibility}` : `“${w.title}” is live${visibility}`,
+      detail: w.url.replace(/^https?:\/\//, ''),
+      action: {
+        label: 'Copy link',
+        run: async () => {
+          await navigator.clipboard.writeText(w.url).catch(() => {})
+          toasts.dismiss(id)
+          toasts.success('Copied link', w.url)
+        },
+      },
+      ttl: 8000,
+    })
+  }
+
+  /** "Check again" on a deploy that timed out or whose page didn't answer:
+   *  watch the same commit again, briefly (it's usually already there). */
+  async function recheckDeploy(slug: string) {
+    const d = deploys.value[slug]
+    if (!d || !d.sha || d.phase === 'deploying') return
+    await trackDeploy(d, d.sha, 180)
+  }
+
   function dismissDeploy(slug: string) {
+    clearFailureToast(slug)
     delete deploys.value[slug]
   }
 
   /** Confirmed from the review sheet in `unlisted` mode: write
    *  `unlisted: true`, then publish. */
-  async function publishUnlisted(isRepublish = false, opts: { webmentions?: boolean } = {}) {
+  async function publishUnlisted(
+    isRepublish = false,
+    opts: { webmentions?: boolean; hiddenUntil?: string | null } = {},
+  ) {
     if (!isRepublish && !options.getFileIsSafe()) return
     try {
       await invoke('set_frontmatter', { path: options.getFilePath(), key: 'unlisted', value: 'true' })
@@ -257,6 +423,7 @@ export function usePublishing(options: {
     justPublishedGlow,
     currentDeploy,
     dismissDeploy,
+    recheckDeploy,
     showSuccess,
     successMessage,
     showPublishConfirm,

@@ -62,7 +62,7 @@ function thumbSrc(url: string): string {
   return url
 }
 
-const { phaseFor } = useDeployStatus()
+const { phaseFor, deployStatus } = useDeployStatus()
 
 const filter = ref<'all' | 'published' | 'drafts' | 'scheduled' | 'photos'>('all')
 const sort = ref<'recent' | 'created' | 'title' | 'words'>('recent')
@@ -261,6 +261,7 @@ function formatTitle(file: MarkdownFile): string {
 type RowState =
   | 'deploying'
   | 'failed'
+  | 'stalled'
   | 'privacy'
   | 'modified'
   | 'live'
@@ -275,7 +276,11 @@ function lintWarnings(file: MarkdownFile): string[] {
 function rowState(file: MarkdownFile): RowState | null {
   const deploy = phaseFor(file.path)
   if (deploy === 'deploying') return 'deploying'
-  if (deploy === 'failed') return 'failed'
+  if (deploy === 'failed') {
+    // Timed out / untracked: may still land, so amber, not red.
+    const f = deployStatus.value[file.path]?.failure
+    return f === 'timeout' || f === 'untracked' ? 'stalled' : 'failed'
+  }
   const lint = lintWarnings(file)
   if (lint.some((w) => w.startsWith('[privacy]'))) return 'privacy'
   if (file.published_url && file.warnings?.includes(MODIFIED)) return 'modified'
@@ -294,6 +299,7 @@ function rowState(file: MarkdownFile): RowState | null {
 const ROW_STATUS: Record<RowState, string> = {
   deploying: 'deploying',
   failed: 'broken',
+  stalled: 'attention',
   privacy: 'broken',
   modified: 'attention',
   lint: 'attention',
@@ -313,6 +319,8 @@ function rowStateLabel(file: MarkdownFile): string {
       return 'Deploying'
     case 'failed':
       return 'Deploy failed'
+    case 'stalled':
+      return 'Not live yet'
     case 'privacy':
       return 'Privacy warning'
     case 'lint':

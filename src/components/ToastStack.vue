@@ -110,9 +110,13 @@ const iconFor = {
   font-size: 11px;
   color: var(--text-secondary);
   font-family: 'SF Mono', monospace;
-  white-space: nowrap;
+  /* Errors put the "what happened" sentence here: let it wrap, up to three
+   * lines (the full text is in the tooltip and Copy Error). */
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .toast-action,

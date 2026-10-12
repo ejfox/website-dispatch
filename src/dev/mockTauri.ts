@@ -16,6 +16,13 @@
  *   ?mock&file=N     show fixture N (0 live photo post · 1 not published ·
  *                    2 live, changed since live · 3 scheduled)
  *   ?mock&overlay    at a narrow width, also open the inspector overlay
+ *
+ * Publishing (nothing leaves the browser): the review sheet reads a fake
+ * `publish_preview`, and confirming it plays a fake deploy.
+ *   &deploy=live|failed|timeout|unverified|hidden   how the deploy ends
+ *                                                   (default live)
+ *   &push=fail       publish_file fails the way a rejected push does
+ *   &embargo         the post has a future publishAt (sheet says Schedule)
  */
 import type { MarkdownFile, Backlink, LocalMediaRef, AppConfig, GitStatus, PostAnalytics } from '../types'
 
@@ -223,6 +230,66 @@ function emit(event: string, payload: unknown = null) {
   for (const id of listeners.get(event) ?? []) callbacks.get(id)?.({ event, id: nextEvent++, payload })
 }
 
+// ── Publishing (fake) ───────────────────────────────────────────────────────
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const MOCK_SHA = 'd57aecc4ff85880009177738ccd95fc05d3ffa78'
+function mockUrl(path: string) {
+  const f = files.find((x) => x.path === path)
+  return f?.published_url ?? `https://ejfox.com/blog/2026/${(f?.filename ?? 'post.md').replace(/\.md$/, '')}`
+}
+function mockPreview({ sourcePath }: { sourcePath: string }) {
+  const f = files.find((x) => x.path === sourcePath)!
+  const embargo = params.has('embargo')
+    ? { key: 'publishAt', raw: '2026-10-14T09:00:00-04:00', utc: '2099-10-14T13:00:00Z', date_only: false }
+    : null
+  return {
+    title: f.title ?? f.filename,
+    slug: f.filename.replace(/\.md$/, ''),
+    kind: 'blog',
+    is_update: !!f.published_url,
+    url: mockUrl(sourcePath),
+    rel_path: `content/blog/2026/${f.filename}`,
+    repo_name: 'website2',
+    repo_path: '/Users/ej/code/website2',
+    branch: 'main',
+    current_branch: 'main',
+    on_branch: true,
+    other_uncommitted: 0,
+    clobber_ok: true,
+    visibility: 'public',
+    embargo,
+    dispatch_schedule: null,
+    webmentions_after_live: true,
+    bridgy_fed: false,
+    syndication: [],
+    deploy_estimate_secs: 180,
+    blocked: null,
+  }
+}
+async function mockWaitForDeploy({ sha, hiddenUntil }: { sha: string; hiddenUntil: string | null }) {
+  for (const s of [10, 20, 30]) {
+    await sleep(700)
+    emit('deploy-progress', { sha, elapsed_secs: s, deployed_commit: 'a30dc6fb', message: `deploying ${sha.slice(0, 7)}` })
+  }
+  const outcome = hiddenUntil ? 'hidden' : (params.get('deploy') ?? 'live')
+  const run = 'https://github.com/ejfox/website2/actions/runs/1'
+  const r = (phase: string, ok: boolean, message: string) => ({
+    sha, phase, ok, message, deployed_commit: 'd57aecc4', url_status: ok ? 200 : 404, run_url: run,
+  })
+  switch (outcome) {
+    case 'failed':
+      return r('failed', false, 'GitHub’s deploy run ended in failure, so the site kept the previous version.')
+    case 'timeout':
+      return r('timeout', false, 'After 6 min the site still runs a30dc6fb, not d57aecc. The deploy may be queued or slow.')
+    case 'unverified':
+      return r('deployed_unverified', false, 'The site runs your commit (d57aecc4), but the post’s URL answered HTTP 404.')
+    case 'hidden':
+      return r('hidden', true, `Deployed. The site keeps it hidden until ${hiddenUntil}.`)
+    default:
+      return r('live', true, 'Live')
+  }
+}
+
 // ── invoke ──────────────────────────────────────────────────────────────────
 const commands: Record<string, (args: any) => unknown> = {
   get_recent_files: () => files,
@@ -244,6 +311,15 @@ const commands: Record<string, (args: any) => unknown> = {
   ],
   get_post_pageview_series: () => series,
   is_vue_page: () => false,
+  publish_preview: mockPreview,
+  publish_file: async ({ sourcePath }) => {
+    await sleep(900)
+    if (params.get('push') === 'fail')
+      throw "Committed, but the push to origin/main failed, so the site hasn't changed. Trying again pushes it.\ngit push origin main failed: fatal: unable to access 'https://github.com/ejfox/website2.git/': Could not resolve host: github.com"
+    return mockUrl(sourcePath)
+  },
+  get_head_sha: () => MOCK_SHA,
+  wait_for_deploy: mockWaitForDeploy,
   get_publish_diff: ({ filePath }) => ({
     has_diff: true,
     source_path: filePath,
