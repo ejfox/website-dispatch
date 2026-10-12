@@ -64,6 +64,7 @@ export function useKeyboardShortcuts(options: {
     if (
       (e.metaKey || e.ctrlKey) &&
       e.key === 'Enter' &&
+      !e.shiftKey && // ⌘⇧↩ is Publish as Unlisted; when the menu greys it out it must not fall into this
       options.selectedFile.value &&
       !document.querySelector('[class$="-overlay"]')
     ) {

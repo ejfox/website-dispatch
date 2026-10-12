@@ -163,17 +163,33 @@ fn apply_context(menu: &Menu<tauri::Wry>, ctx: &MenuContext) {
 
     relabel(
         "publish",
-        if ctx.is_live { "Republish\u{2026}" } else { "Publish\u{2026}" },
+        if ctx.is_live {
+            "Republish\u{2026}"
+        } else {
+            "Publish\u{2026}"
+        },
     );
-    let editor = if ctx.editor.is_empty() { "Editor" } else { ctx.editor.as_str() };
+    let editor = if ctx.editor.is_empty() {
+        "Editor"
+    } else {
+        ctx.editor.as_str()
+    };
     relabel("open_in_editor", &format!("Open in {editor}"));
     relabel(
         "toggle_sidebar",
-        if ctx.sidebar_visible { "Hide Sidebar" } else { "Show Sidebar" },
+        if ctx.sidebar_visible {
+            "Hide Sidebar"
+        } else {
+            "Show Sidebar"
+        },
     );
     relabel(
         "toggle_inspector",
-        if ctx.inspector_visible { "Hide Inspector" } else { "Show Inspector" },
+        if ctx.inspector_visible {
+            "Hide Inspector"
+        } else {
+            "Show Inspector"
+        },
     );
     if let Some(MenuItemKind::Check(c)) = get("toggle_compact") {
         let _ = c.set_checked(ctx.compact);
@@ -242,7 +258,13 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
                     .and_then(|n| n.to_str())
                     .unwrap_or(path.as_str())
                     .to_string();
-                MenuItem::with_id(handle, format!("recent:{}", path), label, true, None::<&str>)
+                MenuItem::with_id(
+                    handle,
+                    format!("recent:{}", path),
+                    label,
+                    true,
+                    None::<&str>,
+                )
             })
             .collect::<tauri::Result<Vec<_>>>()?
     };
@@ -453,7 +475,13 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     }
 
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, "tray_quit", "Quit Dispatch", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(
+        app,
+        "tray_quit",
+        "Quit Dispatch",
+        true,
+        None::<&str>,
+    )?)?;
     Ok(menu)
 }
 
@@ -535,7 +563,12 @@ pub const MENU_EVENT_IDS: &[&str] = &[
 
 /// Items handled entirely in Rust (no frontend event).
 #[cfg(test)]
-const RUST_HANDLED_IDS: &[&str] = &["settings", "clear_recent_files", "open_docs", "report_issue"];
+const RUST_HANDLED_IDS: &[&str] = &[
+    "settings",
+    "clear_recent_files",
+    "open_docs",
+    "report_issue",
+];
 
 /// Handle custom menu item clicks by emitting events to the frontend.
 pub fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
@@ -689,12 +722,17 @@ mod tests {
             .into_iter()
             .filter(|ev| !frontend.contains(ev.as_str()))
             .collect();
-        assert!(missing.is_empty(), "menu events with no listener: {:?}", missing);
+        assert!(
+            missing.is_empty(),
+            "menu events with no listener: {:?}",
+            missing
+        );
     }
 
     /// Every custom item built in `build_app_menu` is either forwarded to
     /// the frontend or handled in Rust. Catches an item added to the menu
-    /// but to neither list (a click that does nothing).
+    /// but to neither list (a click that does nothing). Build custom items
+    /// via `item()` so this check sees them.
     #[test]
     fn every_menu_item_is_handled() {
         let src = include_str!("menu.rs");
@@ -710,7 +748,26 @@ mod tests {
                 unhandled.push(id.to_string());
             }
         }
-        assert!(unhandled.is_empty(), "menu items nobody handles: {:?}", unhandled);
+        assert!(
+            unhandled.is_empty(),
+            "menu items nobody handles: {:?}",
+            unhandled
+        );
+    }
+
+    /// The exact shape useMenuActions.ts sends. A rename on either side would
+    /// otherwise fail silently (the invoke's error is only logged), leaving
+    /// every item enabled with default labels.
+    #[test]
+    fn menu_context_parses_frontend_payload() {
+        let ctx: super::MenuContext = serde_json::from_str(
+            r#"{"hasFile":true,"isLive":false,"canPublishUnlisted":true,"canSchedule":false,
+                "canGenerateOg":true,"sidebarVisible":false,"inspectorVisible":true,
+                "compact":true,"editor":"iA Writer"}"#,
+        )
+        .expect("frontend payload parses");
+        assert!(ctx.has_file && !ctx.is_live && !ctx.sidebar_visible && ctx.compact);
+        assert_eq!(ctx.editor, "iA Writer");
     }
 
     /// "Cmd+Shift+O" and "Shift+CmdOrCtrl+O" are the same chord.
@@ -759,6 +816,10 @@ mod tests {
             .map(|(id, _)| *id)
             .filter(|id| !build.contains(&format!("\"{id}\"")))
             .collect();
-        assert!(stale.is_empty(), "accelerators for missing items: {:?}", stale);
+        assert!(
+            stale.is_empty(),
+            "accelerators for missing items: {:?}",
+            stale
+        );
     }
 }

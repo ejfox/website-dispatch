@@ -92,7 +92,7 @@ const actions = computed<Action[]>(() => {
     },
     {
       id: 'publish',
-      label: isLive ? 'Republish' : 'Publish',
+      label: isLive ? 'Republish…' : 'Publish…',
       hint: f ? f.title || f.filename : 'no file selected',
       section: 'Actions',
       icon: PhRocket,

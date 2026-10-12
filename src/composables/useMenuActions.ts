@@ -215,7 +215,7 @@ export function useMenuActions(options: {
       const key = JSON.stringify(ctx)
       if (key === lastContext) return
       lastContext = key
-      invoke('set_menu_context', { ctx }).catch(() => {})
+      invoke('set_menu_context', { ctx }).catch((e) => console.warn('[menu] set_menu_context failed', e))
     },
     { immediate: true, deep: true },
   )
