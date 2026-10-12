@@ -8,7 +8,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { MarkdownFile, PublishPreview } from '../types'
-import { composeReview, type ReviewMode } from '../utils/publishReview'
+import { composeReview, hiddenUntil, type ReviewMode } from '../utils/publishReview'
 import UiButton from './ui/UiButton.vue'
 
 const props = withDefaults(
@@ -23,7 +23,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   close: []
-  confirm: [opts: { isUpdate: boolean; webmentions: boolean }]
+  confirm: [opts: { isUpdate: boolean; webmentions: boolean; hiddenUntil: string | null }]
 }>()
 
 const loading = ref(false)
@@ -65,7 +65,13 @@ async function load() {
 function submit() {
   if (!props.show || !canSubmit.value || !preview.value) return
   submitting.value = true
-  emit('confirm', { isUpdate: preview.value.is_update, webmentions: sendWebmentions.value })
+  const hidden = hiddenUntil(preview.value)
+  emit('confirm', {
+    isUpdate: preview.value.is_update,
+    // The toggle isn't shown for a hidden post: nothing goes out for it.
+    webmentions: !hidden && sendWebmentions.value,
+    hiddenUntil: hidden,
+  })
   emit('close')
 }
 

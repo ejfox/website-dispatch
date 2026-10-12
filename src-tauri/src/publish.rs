@@ -171,7 +171,7 @@ pub(crate) fn sync_with_remote(repo_path: &str, branch: &str) -> Result<(), Stri
     .map(|_| ())
     .map_err(|e| {
         format!(
-            "Couldn't update {} from origin (nothing was published): {}",
+            "Couldn't update {} from origin, so nothing was published.\n{}",
             branch, e
         )
     })
@@ -179,7 +179,11 @@ pub(crate) fn sync_with_remote(repo_path: &str, branch: &str) -> Result<(), Stri
 
 /// Commit exactly `paths` (other staged or dirty files are left alone) and
 /// push to `origin <branch>`. Any failure is an error; a republish with no
-/// changes skips the commit and still pushes.
+/// changes skips the commit and still pushes, which is also how a publish
+/// whose push failed gets retried.
+///
+/// Errors lead with one plain sentence saying what state the repo is in,
+/// then git's own output on the next line (the UI splits on the newline).
 pub(crate) fn commit_and_push(
     repo_path: &str,
     branch: &str,
@@ -188,7 +192,8 @@ pub(crate) fn commit_and_push(
 ) -> Result<(), String> {
     let mut add = vec!["add", "-A", "--"];
     add.extend_from_slice(paths);
-    git_ok(repo_path, &add, LOCAL_TIMEOUT)?;
+    git_ok(repo_path, &add, LOCAL_TIMEOUT)
+        .map_err(|e| format!("Couldn't stage the change in git, so nothing was published.\n{}", e))?;
 
     let mut staged = vec!["diff", "--cached", "--quiet", "--"];
     staged.extend_from_slice(paths);
@@ -196,10 +201,20 @@ pub(crate) fn commit_and_push(
     if has_changes {
         let mut commit = vec!["commit", "-m", message, "--"];
         commit.extend_from_slice(paths);
-        git_ok(repo_path, &commit, LOCAL_TIMEOUT)?;
+        git_ok(repo_path, &commit, LOCAL_TIMEOUT).map_err(|e| {
+            format!(
+                "Git refused the commit (a hook?), so nothing was published.\n{}",
+                e
+            )
+        })?;
     }
 
-    git_ok(repo_path, &["push", "origin", branch], NETWORK_TIMEOUT)?;
+    git_ok(repo_path, &["push", "origin", branch], NETWORK_TIMEOUT).map_err(|e| {
+        format!(
+            "Committed, but the push to origin/{} failed, so the site hasn't changed. Trying again pushes it.\n{}",
+            branch, e
+        )
+    })?;
     Ok(())
 }
 
@@ -1241,6 +1256,34 @@ mod tests {
         assert!(f
             .remote_file("main", "content/blog/2026/fresh.md")
             .is_none());
+    }
+
+    #[test]
+    fn failed_push_says_so_and_publishing_again_pushes_it() {
+        let f = Fixture::new("prepush", "main");
+        let hook = format!("{}/.git/hooks/pre-push", f.work);
+        fs::write(&hook, "#!/bin/sh\necho offline >&2\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let note = f.note("blog/2026/fresh.md");
+        let err = publish_blog(&f.target("main"), &f.vault, &note, "2026").unwrap_err();
+        // The first line is the sentence the UI shows; git's output follows.
+        let (head, detail) = err.split_once('\n').expect("sentence, then git output");
+        assert!(head.starts_with("Committed, but the push"), "{}", err);
+        assert!(detail.contains("offline"), "{}", err);
+        assert!(f.remote_file("main", "content/blog/2026/fresh.md").is_none());
+
+        fs::remove_file(&hook).unwrap();
+        publish_blog(&f.target("main"), &f.vault, &note, "2026").unwrap();
+        assert_eq!(
+            f.remote_file("main", "content/blog/2026/fresh.md").as_deref(),
+            Some("fresh\n")
+        );
+        // One commit, not two: the retry only pushed.
+        assert_eq!(sh(&f.work, &["log", "-2", "--format=%s"]), "Publish: fresh\nPublish: old");
     }
 
     // ── publish_preview ──────────────────────────────────────────────────

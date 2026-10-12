@@ -67,6 +67,16 @@ export function formatWhen(w: WhenField): string {
   }).format(when)
 }
 
+/** When the site will start showing this post, as display text, or null when
+ *  it shows as soon as the deploy lands. The deploy watcher uses it to call a
+ *  hidden-until-then deploy a success instead of a 404. */
+export function hiddenUntil(p: PublishPreview, now = Date.now()): string | null {
+  const w = p.embargo
+  if (!w) return null
+  if (!w.utc) return w.raw
+  return Date.parse(w.utc) > now ? formatWhen(w) : null
+}
+
 function minutes(secs: number): number {
   return Math.max(1, Math.round(secs / 60))
 }
@@ -233,7 +243,7 @@ export function composeReview(
     // The deploy watcher only calls a post live when its URL answers 200, and
     // an embargoed post 404s until its time, so nothing is sent for it.
     webmentions: embargoed
-      ? 'No webmentions go out on their own: the page is hidden until then. Resend them from the post once it appears.'
+      ? 'No webmentions will be sent: the page is hidden until then.'
       : webmentionLine(p, send, visibility),
     webmentionsApply: !embargoed && p.webmentions_after_live,
     undo: `You can unpublish later; that deploys again (~${mins} min).`,
