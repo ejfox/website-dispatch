@@ -45,7 +45,7 @@ import { openSettings } from './utils/openSettings'
 import CommandPalette from './components/CommandPalette.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ToastStack from './components/ToastStack.vue'
-import { useLocalStorage } from '@vueuse/core'
+import { useDebounceFn, useLocalStorage } from '@vueuse/core'
 import type { MarkdownFile } from './types'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
 import { useAppConfig, useConnectionStatus } from './composables/useVaultData'
@@ -601,6 +601,7 @@ function onSettingsSaved() {
   loadFiles()
   refreshMediaStatus()
 }
+const reloadAfterSettings = useDebounceFn(onSettingsSaved, 600)
 
 onMounted(async () => {
   loadFiles()
@@ -633,7 +634,8 @@ onMounted(async () => {
   track(listen('menu-search', () => openSearch()))
   track(listen('menu-settings', () => openSettings()))
   // Saved from the Settings window (or anywhere): reload what depends on config.
-  track(listen('config-changed', () => onSettingsSaved()))
+  // Settings save on every change, so coalesce a burst into one rescan.
+  track(listen('config-changed', reloadAfterSettings))
   // Publish menu (⌘↩ / ⌘⇧↩): open the review sheet for the selected post.
   // An open sheet handles menu-publish itself, so skip when any overlay is up.
   const overlayOpen = () => !!document.querySelector('[class$="-overlay"]')

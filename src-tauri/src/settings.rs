@@ -62,6 +62,9 @@ pub fn open_window(app: &AppHandle, pane: Option<&str>) -> Result<(), String> {
         .resizable(false)
         .maximizable(false)
         .minimizable(false)
+        // Same origin as the main window, so per-Mac prefs in localStorage
+        // (like "Open to") are shared.
+        .use_https_scheme(true)
         .focused(true)
         .center();
     // Unified titlebar + toolbar like a native Settings window: the webview
