@@ -32,8 +32,11 @@ export interface DeployState {
   message: string
   elapsedSecs: number
   runUrl: string
-  /** What `recheckDeploy` needs to watch the same push again. */
+  /** What `recheckDeploy` needs to watch the same push again (captured at
+   *  publish time: by the end you may have switched posts). */
   title: string
+  password: boolean
+  unlisted: boolean
   targetId?: string
   isRepublish: boolean
   webmentions: boolean
@@ -71,6 +74,19 @@ export function deployFailureTitle(f: DeployState['failure']): string {
     default:
       return 'Pushed, but not tracked'
   }
+}
+
+/** Open a URL in the system browser. wry ignores `window.open`; the shell
+ *  plugin's injected script routes clicks on `<a target="_blank">`, so make
+ *  one and click it. */
+export function openExternal(url: string) {
+  const a = document.createElement('a')
+  a.href = url
+  a.target = '_blank'
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
 }
 
 // Fire-and-forget native macOS system sound. Names map to files in
@@ -172,6 +188,8 @@ export function usePublishing(options: {
         slug: path,
         url,
         title,
+        password: options.isPasswordProtected(),
+        unlisted: options.isUnlisted(),
         targetId: options.getActiveTargetId(),
         isRepublish,
         // Nothing to notify while the page is hidden.
@@ -202,7 +220,10 @@ export function usePublishing(options: {
     publishing.value = false
   }
 
-  type Watch = Pick<DeployState, 'slug' | 'url' | 'title' | 'targetId' | 'isRepublish' | 'webmentions' | 'hiddenUntil'>
+  type Watch = Pick<
+    DeployState,
+    'slug' | 'url' | 'title' | 'password' | 'unlisted' | 'targetId' | 'isRepublish' | 'webmentions' | 'hiddenUntil'
+  >
 
   async function watchDeploy(w: Watch) {
     let sha: string
@@ -232,6 +253,8 @@ export function usePublishing(options: {
       slug,
       url: w.url,
       title: w.title,
+      password: w.password,
+      unlisted: w.unlisted,
       targetId: w.targetId,
       isRepublish: w.isRepublish,
       webmentions: w.webmentions,
@@ -258,7 +281,7 @@ export function usePublishing(options: {
         timeoutSecs,
         targetId: w.targetId || null,
         title: w.title,
-        skipUrlCheck: options.isPasswordProtected(),
+        skipUrlCheck: w.password,
         hiddenUntil: w.hiddenUntil,
       })
     } catch (e) {
@@ -305,7 +328,7 @@ export function usePublishing(options: {
         detail: result.message,
         action:
           d.failure === 'run'
-            ? { label: 'View run', run: () => void window.open(d.runUrl, '_blank') }
+            ? { label: 'View run', run: () => openExternal(d.runUrl) }
             : {
                 label: 'Check again',
                 run: () => {
@@ -329,7 +352,7 @@ export function usePublishing(options: {
   /** The it's-live moment: which post, where, and the link one click away.
    *  Shown whichever post is selected now; the deploy took minutes. */
   function announceLive(w: Watch) {
-    const visibility = options.isPasswordProtected() ? ' (protected)' : options.isUnlisted() ? ' (unlisted)' : ''
+    const visibility = w.password ? ' (protected)' : w.unlisted ? ' (unlisted)' : ''
     const id: number = toasts.push({
       kind: 'success',
       message: w.isRepublish ? `“${w.title}” is updated${visibility}` : `“${w.title}” is live${visibility}`,

@@ -16,7 +16,7 @@ import { CHANGED_LABEL, CHANGED_HINT, NOT_PUBLISHED_LABEL } from '../utils/vocab
 import { PhCopy, PhLockSimple } from '@phosphor-icons/vue'
 import { formatScheduledTime } from '../utils/formatting'
 import UiButton from './ui/UiButton.vue'
-import { deployFailureTitle, type DeployState } from '../composables/usePublishFlow'
+import { deployFailureTitle, openExternal, type DeployState } from '../composables/usePublishFlow'
 
 const props = defineProps<{
   isLive: boolean
@@ -47,10 +47,6 @@ defineEmits<{
   'recheck-deploy': []
   'toggle-diff': []
 }>()
-
-function openExternal(url: string) {
-  window.open(url, '_blank')
-}
 
 function fmtElapsed(secs: number) {
   return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, '0')}s`
@@ -113,9 +109,12 @@ const displayUrl = computed(() => (props.liveUrl || '').replace(/^https?:\/\//, 
       pushed {{ deploy.sha.slice(0, 7) }} ·
       <a :href="deploy.runUrl" target="_blank" rel="noopener">Actions</a>
     </div>
-    <div v-else-if="deploy?.phase === 'hidden'" class="insp-note status-note">
-      The site keeps it hidden until then. No webmentions were sent.
-    </div>
+    <template v-else-if="deploy?.phase === 'hidden'">
+      <div class="insp-note status-note">The site keeps it hidden until then. No webmentions were sent.</div>
+      <div class="status-line">
+        <UiButton size="small" variant="plain" class="status-plain" label="Dismiss" @click="$emit('dismiss-deploy')" />
+      </div>
+    </template>
     <!-- Didn't end live: what happened, what to do, and the buttons for it. -->
     <template v-else-if="deploy?.phase === 'failed'">
       <div class="insp-note status-note">{{ deploy.message }} {{ nextStep }}</div>
