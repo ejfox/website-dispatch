@@ -13,6 +13,9 @@ import StatusBanner from './StatusBanner.vue'
 import MetadataPanel from './MetadataPanel.vue'
 import ActionToolbar from './ActionToolbar.vue'
 import UiButton from './ui/UiButton.vue'
+import InlineTip from './ui/InlineTip.vue'
+import { useTip, invalidateTip, requestHelp } from '../composables/useTips'
+import { CHANGED_HINT } from '../utils/vocab'
 import PublishConfirmModal from './PublishConfirmModal.vue'
 import PublishDiffPanel from './PublishDiffPanel.vue'
 import WebmentionStatus from './WebmentionStatus.vue'
@@ -931,6 +934,37 @@ const missingAltTextCount = computed(() => {
   return match ? parseInt(match[1]) : 0
 })
 
+// ── First-use tips (see composables/useTips.ts) ───────────────────────────
+// Each shows only in its context, one at a time, and retires once you do the
+// thing it describes.
+// Two placements share the 'inspector' tip: inside the inspector when it's
+// open, and under the one-line bar (whose Details button opens it) when it's
+// hidden. Opening it by hand (Details, the tab-strip toggle, ⌥⌘I) retires it.
+const inspectorTip = useTip('inspector', () => inspector.visible.value)
+const inspectorHiddenTip = useTip('inspector', () => !inspector.visible.value)
+watch([inspector.open, inspector.overlay], ([o, ov], [po, pov]) => {
+  if (o !== po || (ov && !pov)) invalidateTip('inspector')
+})
+const publishTip = useTip('publish', () => !isLive.value && props.file.is_safe && !props.file.publish_at)
+const changedTip = useTip('changed', () => isLive.value && hasUnpublishedChanges.value)
+const altTextTip = useTip('alt-text', () => missingAltTextCount.value > 0 && inspector.visible.value)
+// The social-card picker remembers whether it's folded; the tip only makes
+// sense while it is.
+const ogCollapsed = useLocalStorage('dispatch-og-collapsed', true)
+const socialCardTip = useTip(
+  'social-card',
+  () => !!slug.value && props.file.content_type !== 'dispatch' && ogCollapsed.value && inspector.visible.value,
+)
+const syndicateTip = useTip(
+  'syndicate',
+  () => isLive.value && !hasUnpublishedChanges.value && !props.file.password && inspector.visible.value,
+)
+watch(showPublishConfirm, (open) => open && invalidateTip('publish'))
+watch([diffOpen, publishing], ([d, p]) => (d || p) && isLive.value && invalidateTip('changed'))
+watch(showAltTextReviewer, (open) => open && invalidateTip('alt-text'))
+watch(ogCollapsed, (c) => !c && invalidateTip('social-card'))
+watch(showSyndicationWizard, (open) => open && invalidateTip('syndicate'))
+
 // ── Photo-post treatment ─────────────────────────────────────────────────
 // A post the vault marks `type: photos` (content_type set in vault.rs). These
 // get a contact-sheet gallery up top + a media/alt-text-first summary banner.
@@ -1128,6 +1162,10 @@ async function openPreview() {
       />
     </div>
 
+    <InlineTip v-if="!inspector.visible.value && inspectorHiddenTip.show.value" class="mini-tip" @close="inspectorHiddenTip.close()">
+      Status, links, photos and the social card are under Details, or press <kbd>⌥⌘I</kbd>.
+    </InlineTip>
+
     <div ref="splitRef" class="preview-split" :class="{ 'is-narrow': inspector.narrow.value }">
       <!-- ── The post ─────────────────────────────────────────────────────── -->
       <div class="preview">
@@ -1270,6 +1308,10 @@ async function openPreview() {
 
       <!-- ── Inspector ────────────────────────────────────────────────────── -->
       <aside v-if="inspector.visible.value" class="inspector" :style="inspectorStyle" aria-label="Inspector">
+        <InlineTip v-if="inspectorTip.show.value" class="insp-tip" @close="inspectorTip.close()">
+          This is the Inspector: where the post stands, what to fix, and how to share it
+          (<kbd>⌥⌘I</kbd> hides it).
+        </InlineTip>
         <!-- Status -->
         <section class="insp-section">
           <StatusBanner
@@ -1304,10 +1346,22 @@ async function openPreview() {
             :sending="sendingWebmentions"
             @resend="triggerWebmentions({ bridgyFed: appConfig?.webmentions_bridgy_fed === true, force: true })"
           />
+          <InlineTip v-if="changedTip.show.value" @close="changedTip.close()">
+            {{ CHANGED_HINT }}: See changes shows the diff, and Update live post sends your edits.
+          </InlineTip>
         </section>
 
         <!-- Actions: the one primary, then Open in / Share / More -->
         <section class="insp-section">
+          <InlineTip
+            v-if="publishTip.show.value"
+            action="How publishing works"
+            @close="publishTip.close()"
+            @action="requestHelp('overview')"
+          >
+            Publish shows you a review, then commits the note to the site’s repo and pushes it, and
+            ejfox.com has it about 3 minutes later.
+          </InlineTip>
           <ActionToolbar
             :enabled-editors="enabledEditors"
             :publish-targets="publishTargets"
@@ -1334,6 +1388,10 @@ async function openPreview() {
             @publish-unlisted="requestPublish(false, 'unlisted')"
             @toggle-schedule="showSchedulePicker = !showSchedulePicker"
           />
+          <InlineTip v-if="syndicateTip.show.value" @close="syndicateTip.close()">
+            Bluesky and Mastodon only hear about a post when you send it with Syndicate, the last button
+            under Share.
+          </InlineTip>
 
           <!-- Schedule Picker (More › Publish later…) -->
           <div v-if="showSchedulePicker" class="schedule-picker">
@@ -1413,6 +1471,9 @@ async function openPreview() {
                 @click.stop="showAltTextReviewer = true"
               />
             </div>
+            <InlineTip v-if="altTextTip.show.value" class="insp-inline-tip" @close="altTextTip.close()">
+              Describe drafts alt text for each image with AI, and nothing is saved until you approve it.
+            </InlineTip>
 
             <!-- Analytics (Umami, last 30 days) while the post is live. -->
             <template v-if="isLive && (postStats || loadingStats)">
@@ -1491,6 +1552,10 @@ async function openPreview() {
 
         <!-- Social card. Shows for any post with a usable slug, not just live
              ones — picking an OG before publish is part of the publish flow. -->
+        <InlineTip v-if="socialCardTip.show.value" class="insp-tip" @close="socialCardTip.close()">
+          The social card is the picture people see when this link is shared; open Social card below to
+          pick one.
+        </InlineTip>
         <OgImagePicker v-if="slug && file.content_type !== 'dispatch'" :slug="slug" @picked="() => {}" />
       </aside>
     </div>
@@ -1625,6 +1690,19 @@ async function openPreview() {
   border-left: 1px solid var(--separator);
   background: var(--bg-solid);
 }
+/* First-use tips that sit between inspector sections. */
+.insp-tip {
+  flex-shrink: 0;
+  margin: var(--space-3) var(--gutter) 0;
+}
+.mini-tip {
+  flex-shrink: 0;
+  margin: var(--space-2) var(--space-3) 0;
+}
+.insp-inline-tip {
+  margin-top: var(--space-1);
+}
+
 /* The last section's hairline would double the panel's bottom edge. */
 .inspector > :last-child {
   border-bottom: none;

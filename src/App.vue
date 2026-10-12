@@ -45,6 +45,8 @@ import SettingsModal from './components/SettingsModal.vue'
 import CommandPalette from './components/CommandPalette.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ToastStack from './components/ToastStack.vue'
+import InlineTip from './components/ui/InlineTip.vue'
+import { useTip, invalidateTip, recordTipEvent, tipEventCount, helpRequest } from './composables/useTips'
 import { useLocalStorage } from '@vueuse/core'
 import type { MarkdownFile } from './types'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
@@ -554,6 +556,26 @@ function jumpToSlug(slug: string) {
   }
 }
 
+// ── First-use tips anchored to window chrome (see composables/useTips.ts) ──
+// ⌘K: offered after a few posts have been opened by hand, retired the first
+// time the palette opens, however it was opened.
+const postsOpened = ref(tipEventCount('post-opened'))
+watch(
+  () => selectedFile.value?.path,
+  (path, prev) => {
+    if (path && prev !== undefined) {
+      recordTipEvent('post-opened')
+      postsOpened.value = tipEventCount('post-opened')
+    }
+  },
+)
+const paletteTip = useTip('palette', () => postsOpened.value >= 4 && !paletteOpen.value)
+watch(paletteOpen, (open) => open && invalidateTip('palette'))
+
+// Drag-and-drop upload is invisible until you try it: say so on the Media tab.
+const dropTip = useTip('drop-media', () => rightTab.value === 'media')
+watch(dragActive, (on) => on && invalidateTip('drop-media'))
+
 // Keyboard shortcuts composable
 const { handleGlobalKey } = useKeyboardShortcuts({
   files,
@@ -584,6 +606,9 @@ const { openHelp, unpublishSelected } = useMenuActions({
   helpSection,
   modalFlags: [showSettings, newPostOpen, paletteOpen, showHelp],
 })
+
+// A tip's "How publishing works" link (useTips.requestHelp).
+watch(helpRequest, (r) => r && openHelp(r.section))
 
 let unlistenSchedule: (() => void) | null = null
 
@@ -993,7 +1018,12 @@ onUnmounted(() => {
       </div>
       <div class="titlebar-btns">
         <UiButton variant="plain" :icon="PhPlus" data-tip="Create a new post (⌘N)" aria-label="New post" @click="openNewPost" />
-        <UiButton variant="plain" :icon="PhMagnifyingGlass" data-tip="Find a post or run a command (⌘K)" aria-label="Search posts and commands" @click="openSearch" />
+        <span class="tip-anchor">
+          <UiButton variant="plain" :icon="PhMagnifyingGlass" data-tip="Find a post or run a command (⌘K)" aria-label="Search posts and commands" @click="openSearch" />
+          <InlineTip v-if="paletteTip.show.value" anchor="below-end" class="palette-tip" @close="paletteTip.close()">
+            Press <kbd>⌘K</kbd> to jump to any post, or to run any command by typing its name.
+          </InlineTip>
+        </span>
         <UiButton
           variant="plain"
           :icon="PhArrowsClockwise"
@@ -1113,14 +1143,18 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <MediaLibraryModal
-            v-else-if="rightTab === 'media'"
-            :selected-file="selectedFile"
-            :inline="true"
-            @close="rightTab = 'preview'"
-            @select="(asset) => copyToClipboard(asset.secure_url)"
-            @insert="handleInsertMedia"
-          />
+          <template v-else-if="rightTab === 'media'">
+            <InlineTip v-if="dropTip.show.value" class="media-tip" @close="dropTip.close()">
+              Drag images or video onto this window to upload them and put the markdown on your clipboard.
+            </InlineTip>
+            <MediaLibraryModal
+              :selected-file="selectedFile"
+              :inline="true"
+              @close="rightTab = 'preview'"
+              @select="(asset) => copyToClipboard(asset.secure_url)"
+              @insert="handleInsertMedia"
+            />
+          </template>
 
           <ActivityFeed
             v-else-if="rightTab === 'activity'"
@@ -1580,6 +1614,16 @@ onUnmounted(() => {
 .shortcut-row span {
   margin-left: 4px;
   opacity: 0.7;
+}
+
+/* First-use tips anchored to chrome. */
+.tip-anchor {
+  position: relative;
+  display: inline-flex;
+}
+.media-tip {
+  flex-shrink: 0;
+  margin: var(--space-2) var(--space-3) 0;
 }
 
 /* Status Bar */

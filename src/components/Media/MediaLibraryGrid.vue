@@ -77,6 +77,14 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
 
   <div v-if="loading && assets.length === 0" class="loading">Loading...</div>
 
+  <!-- Nothing to show: say why, and how things get here. -->
+  <div v-else-if="!error && assets.length === 0" class="grid-empty">
+    <div class="grid-empty-title">{{ showUnusedOnly ? 'Every file here is used in a post' : 'No media here yet' }}</div>
+    <div v-if="!showUnusedOnly" class="grid-empty-sub">
+      Drag images or video onto the window to upload them, or try another folder or search.
+    </div>
+  </div>
+
   <div v-else class="assets-grid">
     <div
       v-for="(asset, i) in assets"
@@ -127,6 +135,28 @@ async function showAssetContextMenu(asset: CloudinaryAsset, e: MouseEvent) {
   color: var(--danger);
   text-align: center;
   font-size: 12px;
+}
+
+.grid-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.grid-empty-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.grid-empty-sub {
+  max-width: 280px;
 }
 
 .loading {

@@ -22,6 +22,8 @@ import {
   PhClockCounterClockwise,
 } from '@phosphor-icons/vue'
 import UiButton from './ui/UiButton.vue'
+import InlineTip from './ui/InlineTip.vue'
+import { useTip } from '../composables/useTips'
 import type { MarkdownFile } from '../types'
 import { useAppConfig } from '../composables/useVaultData'
 import { CHANGED_LABEL, CHANGED_PILL, CHANGED_HINT, NOT_PUBLISHED_LABEL } from '../utils/vocab'
@@ -38,6 +40,13 @@ const emit = defineEmits<{
   'request-unpublish': [file: MarkdownFile]
   'open-settings': []
 }>()
+
+// First-use tip: what the row dots and pills mean. Shows once the vault has
+// both live and unpublished posts, so the legend has something to point at.
+const statesTip = useTip(
+  'list-states',
+  () => props.files.some((f) => f.published_url) && props.files.some((f) => !f.published_url),
+)
 
 const { appConfig, defaultEditor } = useAppConfig()
 const vaultPath = computed(() => appConfig.value?.vault.path || '')
@@ -517,6 +526,10 @@ async function startWindowDrag(e: MouseEvent) {
     </div>
 
     <div v-else class="list">
+      <InlineTip v-if="statesTip.show.value" class="list-tip" @close="statesTip.close()">
+        A green dot means the post is live on ejfox.com, orange or red means it needs a look, and no dot
+        means it isn’t published yet.
+      </InlineTip>
       <template v-for="group in groupedFiles" :key="group.label">
         <div
           v-if="group.label"
@@ -618,19 +631,19 @@ async function startWindowDrag(e: MouseEvent) {
                   }}{{ (file.word_count - file.published_word_count).toLocaleString() }}w
                 </span>
               </span>
-              <span v-else-if="file.published_url && file.password" class="protected-badge">
+              <span v-else-if="file.published_url && file.password" class="protected-badge" data-tip="Live, behind a password">
                 <PhLockSimple :size="9" weight="bold" />
                 PROTECTED
               </span>
-              <span v-else-if="file.published_url && file.unlisted" class="unlisted-badge">
+              <span v-else-if="file.published_url && file.unlisted" class="unlisted-badge" data-tip="Live, but left off listings and feeds">
                 <PhEye :size="9" weight="bold" />
                 UNLISTED
               </span>
-              <span v-else-if="file.published_url" class="live-badge">
+              <span v-else-if="file.published_url" class="live-badge" data-tip="On ejfox.com and matches your vault">
                 <PhCheckCircle :size="9" weight="fill" />
                 LIVE
               </span>
-              <span v-else-if="file.publish_at" class="scheduled-badge">
+              <span v-else-if="file.publish_at" class="scheduled-badge" data-tip="Dispatch publishes it at the set time, while it’s open">
                 <PhClock :size="9" weight="bold" />
                 PUBLISH LATER
               </span>
@@ -873,6 +886,11 @@ async function startWindowDrag(e: MouseEvent) {
   to {
     transform: rotate(360deg);
   }
+}
+
+.list-tip {
+  flex-shrink: 0;
+  margin: var(--space-2) var(--space-2) var(--space-1);
 }
 
 .list {
