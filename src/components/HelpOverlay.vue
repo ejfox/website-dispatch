@@ -46,7 +46,10 @@ watch(
   () => props.show,
   (open) => {
     if (open) window.addEventListener('keydown', onKey, true)
-    else window.removeEventListener('keydown', onKey, true)
+    else {
+      window.removeEventListener('keydown', onKey, true)
+      tipsReset.value = false
+    }
   },
   { immediate: true },
 )

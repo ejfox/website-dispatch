@@ -45,7 +45,7 @@ const emit = defineEmits<{
 // both live and unpublished posts, so the legend has something to point at.
 const statesTip = useTip(
   'list-states',
-  () => !props.loading && props.files.some((f) => f.published_url) && props.files.some((f) => !f.published_url),
+  () => props.files.some((f) => f.published_url) && props.files.some((f) => !f.published_url),
 )
 
 const { appConfig, defaultEditor } = useAppConfig()

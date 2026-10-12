@@ -1125,8 +1125,7 @@ onUnmounted(() => {
 
           <template v-else-if="rightTab === 'media'">
             <InlineTip v-if="dropTip.show.value" class="media-tip" @close="dropTip.close()">
-              Drag images or video onto this window to upload them. The markdown to paste lands on your
-              clipboard.
+              Drag images or video onto this window to upload them and put the markdown on your clipboard.
             </InlineTip>
             <MediaLibraryModal
               :selected-file="selectedFile"

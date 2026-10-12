@@ -1296,8 +1296,8 @@ async function openPreview() {
       <!-- ── Inspector ────────────────────────────────────────────────────── -->
       <aside v-if="inspector.visible.value" class="inspector" :style="inspectorStyle" aria-label="Inspector">
         <InlineTip v-if="inspectorTip.show.value" class="insp-tip" @close="inspectorTip.close()">
-          This is the Inspector: where the post stands, what to fix, and how to share it. Hide it with
-          <kbd>⌥⌘I</kbd>.
+          This is the Inspector: where the post stands, what to fix, and how to share it
+          (<kbd>⌥⌘I</kbd> hides it).
         </InlineTip>
         <!-- Status -->
         <section class="insp-section">
@@ -1333,7 +1333,7 @@ async function openPreview() {
             @resend="triggerWebmentions({ bridgyFed: appConfig?.webmentions_bridgy_fed === true, force: true })"
           />
           <InlineTip v-if="changedTip.show.value" @close="changedTip.close()">
-            {{ CHANGED_HINT }}. See changes shows the diff; Update live post sends your edits.
+            {{ CHANGED_HINT }}: See changes shows the diff, and Update live post sends your edits.
           </InlineTip>
         </section>
 
@@ -1345,7 +1345,7 @@ async function openPreview() {
             @close="publishTip.close()"
             @action="requestHelp('overview')"
           >
-            Publish shows you a review first, then commits the note to the site’s repo and pushes it.
+            Publish shows you a review, then commits the note to the site’s repo and pushes it, and
             ejfox.com has it about 3 minutes later.
           </InlineTip>
           <ActionToolbar
@@ -1458,7 +1458,7 @@ async function openPreview() {
               />
             </div>
             <InlineTip v-if="altTextTip.show.value" class="insp-inline-tip" @close="altTextTip.close()">
-              Describe drafts alt text for each image with AI. Nothing is written until you approve it.
+              Describe drafts alt text for each image with AI, and nothing is saved until you approve it.
             </InlineTip>
 
             <!-- Analytics (Umami, last 30 days) while the post is live. -->
@@ -1539,7 +1539,7 @@ async function openPreview() {
         <!-- Social card. Shows for any post with a usable slug, not just live
              ones — picking an OG before publish is part of the publish flow. -->
         <InlineTip v-if="socialCardTip.show.value" class="insp-tip" @close="socialCardTip.close()">
-          The social card is the picture people see when this link is shared. Open Social card below to
+          The social card is the picture people see when this link is shared; open Social card below to
           pick one.
         </InlineTip>
         <OgImagePicker v-if="slug && file.content_type !== 'dispatch'" :slug="slug" @picked="() => {}" />
