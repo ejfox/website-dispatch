@@ -18,7 +18,8 @@ import {
   PhClockCounterClockwise,
 } from '@phosphor-icons/vue'
 import type { MarkdownFile } from '../types'
-import { usePaletteHistory } from '../composables/useUiState'
+import { usePaletteHistory, useToasts } from '../composables/useUiState'
+import { resetTips } from '../composables/useTips'
 import { useAppConfig } from '../composables/useVaultData'
 import { CHANGED_LABEL, CHANGED_PILL, NOT_PUBLISHED_LABEL, SITE_PREVIEW_LABEL, SITE_PREVIEW_HINT } from '../utils/vocab'
 
@@ -40,6 +41,7 @@ interface Action {
   run: () => unknown
 }
 
+const toasts = useToasts()
 const props = defineProps<{
   show: boolean
   files: MarkdownFile[]
@@ -194,6 +196,18 @@ const actions = computed<Action[]>(() => {
       enabled: true,
       synonyms: ['help', 'explain', 'pipeline', 'deploy', 'schedule', 'webmentions'],
       run: () => emit('showHelp', 'overview'),
+    },
+    {
+      id: 'reset_tips',
+      label: 'Show Tips Again',
+      section: 'Actions',
+      icon: PhCommand,
+      enabled: true,
+      synonyms: ['tips', 'onboarding', 'hints', 'reset', 'tutorial'],
+      run: () => {
+        resetTips()
+        toasts.info('Tips will show again as you go')
+      },
     },
     {
       id: 'panel_desk',

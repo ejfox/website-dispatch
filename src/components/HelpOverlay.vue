@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { watch, onUnmounted } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 import { PhCursor, PhKeyboard, PhEye, PhCheckCircle, PhNewspaper, PhRocket, PhSquaresFour } from '@phosphor-icons/vue'
 import { useAppConfig } from '../composables/useVaultData'
 import { CHANGED_LABEL, SITE_PREVIEW_LABEL } from '../utils/vocab'
+import { resetTips } from '../composables/useTips'
 
 // One overlay, two pages: how publishing works, and every shortcut. `?`,
 // ⌘/ and Help › Keyboard Shortcuts open the shortcuts; Help › How Dispatch
@@ -22,6 +23,13 @@ const section = defineModel<'overview' | 'shortcuts'>('section', { default: 'sho
 const emit = defineEmits<{ close: [] }>()
 
 const { defaultEditor } = useAppConfig()
+
+// Forget closed first-use tips; they come back one at a time, in context.
+const tipsReset = ref(false)
+function showTipsAgain() {
+  resetTips()
+  tipsReset.value = true
+}
 
 // The global key handler stands down while any *-overlay is open, so this
 // overlay owns its own keys.
@@ -246,6 +254,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKey, true))
         </div>
         <div class="help-hint">
           <button class="link-btn" @click="section = 'overview'">How Dispatch publishes →</button>
+          ·
+          <button class="link-btn" @click="showTipsAgain">{{ tipsReset ? 'Tips will show again' : 'Show tips again' }}</button>
           ·
           <kbd>?</kbd>
           or
