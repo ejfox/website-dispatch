@@ -35,6 +35,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [file: MarkdownFile]
+  /** Open the publish review sheet for this file (App.vue › openReviewSheet). */
+  'request-publish': [file: MarkdownFile, mode: 'publish' | 'unlisted']
   'request-unpublish': [file: MarkdownFile]
   'open-settings': []
 }>()
@@ -390,32 +392,65 @@ async function showContextMenu(file: MarkdownFile, e: MouseEvent) {
   // clicked, even if a different file was previously selected.
   emit('select', file)
 
+  // Same verbs, labels and (display-only) shortcuts as the menu bar
+  // (src-tauri/src/menu.rs), so the two teach each other. Publishing always
+  // goes through the review sheet, hence the ellipses.
   const isLive = !!file.published_url
-  const items = [
-    await MenuItem.new({ text: 'Open in Obsidian', action: () => invoke('open_in_obsidian', { path: file.path }) }),
+  const sep = () => PredefinedMenuItem.new({ item: 'Separator' })
+  const items: (MenuItem | PredefinedMenuItem)[] = [
+    await MenuItem.new({
+      text: 'Open in Obsidian',
+      accelerator: 'CmdOrCtrl+Shift+O',
+      action: () => invoke('open_in_obsidian', { path: file.path }),
+    }),
     await MenuItem.new({
       text: `Open in ${defaultEditor.value}`,
       action: () => invoke('open_in_app', { path: file.path, app: defaultEditor.value }),
     }),
     await MenuItem.new({
       text: 'Reveal in Finder',
+      accelerator: 'CmdOrCtrl+Shift+R',
       action: () => invoke('open_in_app', { path: file.path, app: 'Finder' }).catch(() => {}),
     }),
-    await PredefinedMenuItem.new({ item: 'Separator' }),
-    await MenuItem.new({ text: 'Copy Path', action: () => navigator.clipboard.writeText(file.path) }),
+    await sep(),
+    await MenuItem.new({
+      text: isLive ? 'Republish…' : 'Publish…',
+      accelerator: 'CmdOrCtrl+Return',
+      action: () => emit('request-publish', file, 'publish'),
+    }),
   ]
+  if (!isLive && !file.unlisted && !file.password) {
+    items.push(
+      await MenuItem.new({
+        text: 'Publish as Unlisted…',
+        accelerator: 'CmdOrCtrl+Shift+Return',
+        action: () => emit('request-publish', file, 'unlisted'),
+      }),
+    )
+  }
   if (isLive) {
     items.push(
-      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await sep(),
       await MenuItem.new({ text: 'View on Site', action: () => window.open(file.published_url!, '_blank') }),
       await MenuItem.new({
-        text: 'Copy Link',
+        text: 'Copy Public URL',
+        accelerator: 'CmdOrCtrl+Shift+L',
         action: () => navigator.clipboard.writeText(file.published_url!),
       }),
-      await MenuItem.new({
-        text: 'Unpublish…',
-        action: () => emit('request-unpublish', file),
-      }),
+    )
+  }
+  items.push(
+    await sep(),
+    await MenuItem.new({
+      text: 'Copy File Path',
+      accelerator: 'CmdOrCtrl+Alt+C',
+      action: () => navigator.clipboard.writeText(file.path),
+    }),
+  )
+  if (isLive) {
+    items.push(
+      await sep(),
+      await MenuItem.new({ text: 'Unpublish…', action: () => emit('request-unpublish', file) }),
     )
   }
   const menu = await Menu.new({ items })

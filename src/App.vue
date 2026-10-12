@@ -1000,6 +1000,7 @@ onUnmounted(() => {
             rightTab = 'preview'
           }
         "
+        @request-publish="(f, mode) => openReviewSheet(f, mode)"
         @request-unpublish="
           (f) => {
             selectedFile = f
