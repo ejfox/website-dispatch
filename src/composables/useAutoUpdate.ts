@@ -9,8 +9,10 @@ import { useToasts } from './useUiState'
  *
  * Silent on no-update / network errors. Idempotent — safe to call from
  * onMounted; the updater plugin caches a single in-flight request.
+ * `manual` (Dispatch › Check for Updates…) reports those outcomes too, so
+ * the menu item never looks dead.
  */
-export async function checkForUpdate() {
+export async function checkForUpdate({ manual = false }: { manual?: boolean } = {}) {
   const toasts = useToasts()
   let update: Update | null = null
   try {
@@ -18,9 +20,13 @@ export async function checkForUpdate() {
   } catch (e) {
     // Common, expected: offline, GitHub rate-limited, no signed releases yet.
     console.debug('[updater] check failed:', e)
+    if (manual) toasts.error('Couldn’t check for updates', String(e))
     return
   }
-  if (!update) return
+  if (!update) {
+    if (manual) toasts.success('Dispatch is up to date')
+    return
+  }
 
   const id = toasts.push({
     kind: 'info',

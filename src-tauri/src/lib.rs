@@ -1215,6 +1215,7 @@ pub fn run() {
             upload_og_image,
             play_system_sound,
             record_recent_file,
+            menu::set_menu_context,
             clear_recent_files,
             set_proxy_icon,
             set_document_dirty,

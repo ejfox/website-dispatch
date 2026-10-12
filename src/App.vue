@@ -602,6 +602,7 @@ const { openHelp, unpublishSelected } = useMenuActions({
   rightTab,
   filePreviewRef,
   sidebarCollapsed,
+  compactMode,
   showHelp,
   helpSection,
   modalFlags: [showSettings, newPostOpen, paletteOpen, showHelp],
@@ -1049,6 +1050,7 @@ onUnmounted(() => {
             rightTab = 'preview'
           }
         "
+        @request-publish="(f, mode) => openReviewSheet(f, mode)"
         @request-unpublish="
           (f) => {
             selectedFile = f

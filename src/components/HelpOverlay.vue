@@ -205,9 +205,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKey, true))
             <div class="help-row"><kbd>o</kbd> or <kbd>&#8984;&#8679;O</kbd><span>open in Obsidian</span></div>
             <div class="help-row"><kbd>i</kbd><span>open in {{ defaultEditor }}</span></div>
             <div class="help-row"><kbd>&#8984;&#8679;R</kbd><span>reveal in Finder</span></div>
+            <div class="help-row"><kbd>&#8984;&#8997;C</kbd><span>copy file path</span></div>
             <div class="help-row"><kbd>p</kbd><span>{{ SITE_PREVIEW_LABEL.toLowerCase() }}</span></div>
             <div class="help-row"><kbd>v</kbd><span>view on site</span></div>
-            <div class="help-row"><kbd>c</kbd> or <kbd>&#8984;&#8679;L</kbd><span>copy live URL</span></div>
+            <div class="help-row"><kbd>c</kbd> or <kbd>&#8984;&#8679;L</kbd><span>copy public URL</span></div>
           </div>
           <div class="help-section">
             <div class="help-section-title">
@@ -223,7 +224,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey, true))
             <div class="help-row"><kbd>d</kbd><span>Desk</span></div>
             <div class="help-row"><kbd>&#8984;1</kbd><span>Preview</span></div>
             <div class="help-row"><kbd>&#8984;2</kbd> or <kbd>m</kbd><span>Media</span></div>
-            <div class="help-row"><kbd>&#8984;3</kbd> <kbd>&#8984;J</kbd> or <kbd>J</kbd><span>Journal</span></div>
+            <div class="help-row"><kbd>&#8984;3</kbd> or <kbd>J</kbd><span>Journal</span></div>
             <div class="help-row"><kbd>&#8984;4</kbd><span>{{ CHANGED_LABEL }}</span></div>
             <div class="help-row"><kbd>&#8984;5</kbd><span>Activity</span></div>
           </div>

@@ -94,7 +94,7 @@ const actions = computed<Action[]>(() => {
     },
     {
       id: 'publish',
-      label: isLive ? 'Republish' : 'Publish',
+      label: isLive ? 'Republish…' : 'Publish…',
       hint: f ? f.title || f.filename : 'no file selected',
       section: 'Actions',
       icon: PhRocket,
@@ -175,6 +175,7 @@ const actions = computed<Action[]>(() => {
       section: 'Actions',
       icon: PhLink,
       enabled: hasFile,
+      shortcut: '⌘⌥C',
       synonyms: ['copy path'],
       run: () => f && navigator.clipboard.writeText(f.path),
     },
