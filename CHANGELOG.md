@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.8.2 — 2026-10-11
+
+The native-Mac release: a real icon, a real Settings window, a full menu bar,
+tips that teach the app in context, and a publish flow that ends honestly.
+
+### Added
+- **A postmark app icon** (and a matching menu-bar icon) on the standard
+  macOS icon grid, legible down to 16px. Candidates live in `design/icon-candidates/`.
+- **Settings is its own window** (⌘,) with General, Publishing, Media,
+  Connections and Advanced panes. Changes apply as you make them, every
+  setting has a one-sentence explanation, folders and branch are checked
+  inline, and Test buttons reuse the media/Umami/Mastodon/Obsidian probes.
+  Stored secrets are only ever shown as their last 4 characters.
+- **First-use tips**, TipKit-style: one at a time, only in context, retired
+  once you do the thing. Explains the status dots, the Inspector, what
+  Publish does, changed-since-live, alt text, the social card, Syndicate,
+  media drag-to-upload and ⌘K. Help › Show Tips Again brings them back.
+- **Empty states** for Media and Journal that say what to do.
+- **Menu bar**: items grey out and relabel with context (Publish… →
+  Republish…, Show/Hide Sidebar and Inspector, ✓ Compact Rows), plus Check
+  for Updates…, Open in your editor, Copy File Path ⌥⌘C, Publish Later…,
+  Syndicate…, Dispatch Documentation, and a right-click menu on posts that
+  matches the menu bar. A test fails on any shortcut collision.
+- **"It's live"**: a toast with the post's title, URL and Copy link.
+
+### Fixed
+- Scheduled posts no longer finish as "Not live" with an error (their URL
+  404s by design); they end as "Deployed, appears <time>".
+- Deploy failures are split into run failed / timed out / page not
+  answering, each with a next step. Dismiss on a failed deploy works.
+- A failed push says the commit is safe and Try again re-pushes it.
+- Publish later now holds drafts and lint failures, notifies once, follows
+  the deploy, and no longer retries silently every minute forever.
+- The Mastodon server setting is actually read.
+- ⌘, opens only Settings, not the hidden main window too.
+- **"No posts found" after reinstalling.** Unsigned builds get a new
+  identity each time, so macOS silently blocked the iCloud Drive vault.
+  `scripts/install-local.sh` builds, keeps the installed `.env`, and signs
+  with your Apple Development certificate so the permission sticks.
+- Frontend errors now go to `dispatch.log` (release builds have no devtools).
+
+### Changed
+- Show Publishing Journal ⌘J is gone (⌘3 already opens the Journal).
+
+## 0.8.1 — 2026-10-11
+
+The clarity release: Dispatch says what it's about to do, every shortcut
+works, things have one name each, and color means something.
+
+### Added — Review before publishing
+- **A review sheet that states the consequences**, built from a new
+  `publish_preview` (same checks as publish, writes nothing): where the post
+  will live, that it goes to website2 on `main` and is live in ~3 minutes,
+  who can see it, whether anything is posted to Bluesky/Mastodon, and how to
+  undo. If it can't publish (wrong branch, conflicts, edited outside
+  Dispatch) it says why in plain words, and says nothing was written.
+- **Every publish path goes through it**: toolbar, the "Changed since live"
+  banner and tab, Unlisted, the palette and the Publish menu. Bulk republish
+  gets one sheet listing every post. Lint issues are explained in the sheet.
+- The type-the-slug step is gone: publishing is reversible, so the sentence
+  and one button are the confirmation.
+- **"How Dispatch publishes"** under Help and `?`: what publishing does,
+  what's never published, unlisted vs password, Publish later vs Schedule
+  (with the time-zone gotcha), and when webmentions go out.
+
+### Fixed — Shortcuts
+- **⌘↩ and most menu shortcuts did nothing.** macOS gives menu shortcuts to
+  the native menu first, and 11 menu items had no listener. All are wired,
+  each shortcut has one owner, and a test fails if a menu item has none.
+- ⌘1–⌘5 now run left to right across the tabs (⌘3 is Journal everywhere).
+
+### Changed — One name per thing
+- Modified → **Changed since live**; the Drafts filter → **Not published**;
+  the external preview → **Open site preview**; Dispatch's own timer →
+  **Publish later…** (Schedule now only means the site's `publishAt`).
+- Empty states that teach (no vault, empty filter, nothing selected, Desk
+  setup), and a hover hint plus `aria-label` on every icon-only control.
+
+### Changed — Color
+- **One color per status**, from the macOS system palette: live green,
+  needs-attention orange, broken red, scheduled purple, draft gray, and
+  deploying as a pulsing dot in your accent color. Status color only on
+  dots and pills, never text.
+- Your accent color is reserved for selection, focus and the primary
+  button. Removed per-tab hues, the green preview wash and the age bar.
+  Fixed unreadable selected rows in light mode, invisible palette pills,
+  and the media library / social-card picker ignoring light mode.
+- Rows show deploying and failed state live.
+
 ## 0.8.0 — 2026-10-11
 
 Publishing actually works again, waits for the site to really be live,

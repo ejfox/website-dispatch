@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { parseDate } from '../utils/formatting'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { PhCheck, PhX, PhClock, PhPaperPlaneTilt, PhArrowRight, PhArrowLeft } from '@phosphor-icons/vue'
 import OgImagePicker from './OgImagePicker.vue'
+import UiButton from './ui/UiButton.vue'
 
 interface NewQueueItem {
   post_slug: string
@@ -207,7 +209,9 @@ function getScheduledAt(platform: string): string | null {
 function formatSchedule(platform: string): string {
   const at = getScheduledAt(platform)
   if (!at) return 'Manual'
-  const diff = new Date(at).getTime() - Date.now()
+  const when = parseDate(at)
+  if (!when) return 'Manual'
+  const diff = when.getTime() - Date.now()
   if (diff < 60000) return 'Now'
   if (diff < 3600000) return `In ${Math.round(diff / 60000)}m`
   if (diff < 86400000) return `In ${Math.round(diff / 3600000)}h`
@@ -313,7 +317,7 @@ function openUrl(url: string) {
         <PhPaperPlaneTilt :size="16" weight="fill" class="header-icon" />
         <h2>Syndicate</h2>
         <span class="step-indicator">{{ step < 6 ? `Step ${step} of 5` : 'Done' }}</span>
-        <button class="close-btn" @click="$emit('close')"><PhX :size="14" weight="bold" /></button>
+        <UiButton variant="plain" :icon="PhX" aria-label="Close" data-tip="Close" @click="$emit('close')" />
       </div>
 
       <!-- Error -->
@@ -475,43 +479,39 @@ function openUrl(url: string) {
 
       <!-- Footer -->
       <div class="modal-footer">
-        <button v-if="step > 1 && step < 6" class="btn secondary" @click="step--">
-          <PhArrowLeft :size="12" />
-          Back
-        </button>
+        <UiButton v-if="step > 1 && step < 6" :icon="PhArrowLeft" label="Back" @click="step--" />
         <div class="footer-spacer"></div>
-        <button
+        <UiButton
           v-if="step < 5"
-          class="btn primary"
+          variant="primary"
           :disabled="step === 1 && selectedPlatforms.length === 0"
           @click="step++"
         >
           Next
-          <PhArrowRight :size="12" />
-        </button>
+          <PhArrowRight :size="14" weight="bold" aria-hidden="true" />
+        </UiButton>
         <template v-else-if="step === 5">
-          <button
+          <UiButton
             v-if="canPostNow"
-            class="btn secondary"
             :disabled="posting || selectedPlatforms.length === 0"
+            label="Dry run"
             data-tip="Build every payload without sending anything"
             @click="postNow(true)"
-          >
-            Dry run
-          </button>
-          <button class="btn secondary" :disabled="queuing || posting" @click="queueAll">
-            {{ queuing ? 'Queuing...' : `Queue ${selectedPlatforms.length}` }}
-          </button>
-          <button
+          />
+          <UiButton
+            :disabled="queuing || posting"
+            :label="queuing ? 'Queuing…' : `Queue ${selectedPlatforms.length}`"
+            @click="queueAll"
+          />
+          <UiButton
             v-if="canPostNow"
-            class="btn primary"
+            variant="primary"
             :disabled="posting || selectedPlatforms.length === 0"
+            :label="posting ? 'Posting…' : 'Post now'"
             @click="postNow(false)"
-          >
-            {{ posting ? 'Posting...' : 'Post now' }}
-          </button>
+          />
         </template>
-        <button v-else class="btn primary" @click="$emit('close')">Done</button>
+        <UiButton v-else variant="primary" label="Done" @click="$emit('close')" />
       </div>
     </div>
   </div>
@@ -521,7 +521,7 @@ function openUrl(url: string) {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
   z-index: 200;
   display: flex;
@@ -532,18 +532,18 @@ function openUrl(url: string) {
   width: 480px;
   max-width: 95vw;
   max-height: 85vh;
-  background: rgba(30, 30, 34, 0.95);
+  background: var(--modal-bg);
   backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--separator);
   border-radius: 12px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 .modal-header {
   padding: 14px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--separator);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -561,23 +561,10 @@ function openUrl(url: string) {
   font-size: 10px;
   color: var(--text-tertiary);
 }
-.close-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: flex;
-}
-.close-btn:hover {
-  color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.05);
-}
 .error-banner {
   padding: 8px 16px;
   background: color-mix(in srgb, var(--danger) 15%, transparent);
-  border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+  border-bottom: 1px solid color-mix(in srgb, var(--status-broken) 25%, transparent);
   color: var(--danger);
   font-size: 11px;
 }
@@ -605,14 +592,14 @@ function openUrl(url: string) {
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--fill);
+  border: 1px solid var(--separator);
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
 }
 .platform-option:hover {
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: var(--label-3);
 }
 .platform-option.disabled {
   opacity: 0.4;
@@ -637,7 +624,7 @@ function openUrl(url: string) {
   color: var(--warning);
 }
 .platform-status.soon {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--fill);
   color: var(--text-tertiary);
 }
 
@@ -651,16 +638,16 @@ function openUrl(url: string) {
   padding: 4px 12px;
   font-size: 10px;
   font-family: inherit;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--fill);
   color: var(--text-tertiary);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--separator);
   border-radius: 4px;
   cursor: pointer;
   text-transform: capitalize;
 }
 .tab-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 .platform-textarea {
@@ -669,9 +656,9 @@ function openUrl(url: string) {
   font-family: inherit;
   line-height: 1.5;
   padding: 10px;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--control-bg);
   color: var(--text-primary);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--separator);
   border-radius: 6px;
   resize: vertical;
   outline: none;
@@ -698,8 +685,8 @@ function openUrl(url: string) {
 .media-option {
   padding: 8px 12px;
   font-size: 11px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--fill);
+  border: 1px solid var(--separator);
   border-radius: 6px;
   cursor: pointer;
 }
@@ -710,7 +697,7 @@ function openUrl(url: string) {
 .promo-preview img {
   width: 100%;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--separator);
 }
 .promo-loading {
   font-size: 11px;
@@ -729,8 +716,8 @@ function openUrl(url: string) {
   align-items: flex-start;
   gap: 10px;
   padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--fill);
+  border: 1px solid var(--separator);
   border-radius: 6px;
   cursor: pointer;
 }
@@ -755,8 +742,8 @@ function openUrl(url: string) {
 }
 .review-card {
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--fill);
+  border: 1px solid var(--separator);
   border-radius: 6px;
 }
 .review-header {
@@ -787,7 +774,7 @@ function openUrl(url: string) {
 .card-preview {
   display: flex;
   gap: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--separator);
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 4px;
@@ -795,7 +782,7 @@ function openUrl(url: string) {
 .card-preview img {
   width: 120px;
   object-fit: cover;
-  background: #fff;
+  background: var(--under-page);
   flex-shrink: 0;
 }
 .card-text {
@@ -844,7 +831,7 @@ function openUrl(url: string) {
   font-size: 9px;
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--fill);
   color: var(--text-tertiary);
 }
 .result-pill[data-status='posted'] {
@@ -877,7 +864,7 @@ function openUrl(url: string) {
   font-size: 9px;
   max-height: 180px;
   overflow: auto;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--control-bg);
   padding: 8px;
   border-radius: 4px;
   white-space: pre-wrap;
@@ -905,42 +892,13 @@ function openUrl(url: string) {
 
 /* Footer */
 .modal-footer {
-  padding: 12px 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: var(--space-3) var(--gutter);
+  border-top: 1px solid var(--separator);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .footer-spacer {
   flex: 1;
-}
-.btn {
-  padding: 6px 14px;
-  font-size: 11px;
-  font-weight: 500;
-  border-radius: 6px;
-  cursor: pointer;
-  border: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.btn.secondary {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-secondary);
-}
-.btn.secondary:hover {
-  background: var(--hover-bg);
-}
-.btn.primary {
-  background: var(--accent);
-  color: #fff;
-}
-.btn.primary:hover {
-  background: var(--accent-strong);
-}
-.btn.primary:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 </style>

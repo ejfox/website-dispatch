@@ -39,6 +39,7 @@ mod publish; // Handles git operations to publish posts to your website
 mod publish_guard; // Hard refusal of week-notes/, drafts/, type: weeknote
 mod publish_diff; // Computes a line-level diff between vault source and the published copy
 mod r2; // Cloudflare R2 (S3-compatible) uploader with hand-rolled SigV4
+mod settings; // The Settings window + its config/validation commands
 mod syndication; // Post-publish social distribution (Mastodon, etc.)
 mod syndication_queue; // Scheduled syndication queue with background sender
 mod vault; // Scans your Obsidian vault for markdown files
@@ -146,6 +147,17 @@ impl Config {
 
 // Get a list of recent markdown files from the vault
 // Returns Result<success_type, error_type> - Rust forces you to handle errors
+/// Frontend errors land in dispatch.log; release builds have no devtools.
+#[tauri::command]
+fn log_frontend(level: String, message: String) {
+    let msg: String = message.chars().take(2000).collect();
+    if level == "error" {
+        log::error!("[webview] {msg}");
+    } else {
+        log::warn!("[webview] {msg}");
+    }
+}
+
 #[tauri::command]
 fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
     // Call the function from the vault module
@@ -246,6 +258,17 @@ fn publish_file_blocking(
     Ok(url)
 }
 
+// What publishing this note would do, stated before anything is written:
+// destination, new vs update, branch and clobber checks, visibility, embargo,
+// webmentions and syndication. Reads only (git status, no pull).
+#[tauri::command]
+async fn publish_preview(
+    source_path: String,
+    target_id: Option<String>,
+) -> Result<publish::PublishPreview, String> {
+    publish::off_main(move || publish::publish_preview(&source_path, target_id.as_deref())).await
+}
+
 // Unpublish a file (move from blog/ to drafts/ in the website repo)
 #[tauri::command]
 async fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), String> {
@@ -332,14 +355,19 @@ fn open_in_terminal(path: String, cmd: String) -> Result<(), String> {
 
 // --- CONFIG COMMANDS ---
 
+// Secrets are masked to their last 4 on the way out and restored on the way
+// back in, so no webview ever holds a stored key in full (see config.rs).
 #[tauri::command]
 fn get_app_config() -> Result<config::AppConfig, String> {
-    config::get()
+    config::get().map(|c| config::masked(&c))
 }
 
 #[tauri::command]
-fn save_app_config(config_data: config::AppConfig) -> Result<(), String> {
-    config::update(config_data)
+fn save_app_config(app: tauri::AppHandle, config_data: config::AppConfig) -> Result<(), String> {
+    use tauri::Emitter;
+    config::update_from_ui(config_data)?;
+    let _ = app.emit(settings::CHANGED_EVENT, ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -893,18 +921,27 @@ fn generate_promo_image(title: String, url: String) -> Result<String, String> {
 }
 
 // Generate 4 OG image variants for a post
+//
+// async + spawn_blocking: a sync command runs on the main thread, so the
+// node render froze the whole window (beachball) for as long as it ran.
 #[tauri::command]
-fn generate_og_variants(
+async fn generate_og_variants(
     slug: String,
     batch: Option<u32>,
 ) -> Result<syndication::OgImageVariants, String> {
-    syndication::generate_og_variants(&slug, batch.unwrap_or(0))
+    tauri::async_runtime::spawn_blocking(move || {
+        syndication::generate_og_variants(&slug, batch.unwrap_or(0))
+    })
+    .await
+    .map_err(|e| format!("OG render task failed: {}", e))?
 }
 
 // Upload a picked OG image variant to Cloudinary
 #[tauri::command]
-fn upload_og_image(file_path: String, slug: String) -> Result<String, String> {
-    syndication::upload_og_image(&file_path, &slug)
+async fn upload_og_image(file_path: String, slug: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || syndication::upload_og_image(&file_path, &slug))
+        .await
+        .map_err(|e| format!("OG upload task failed: {}", e))?
 }
 
 // List all folders in Cloudinary (for folder picker UI)
@@ -1061,6 +1098,9 @@ pub fn run() {
                 syndication_queue::run_syndication_scheduler(syndication_handle).await;
             });
 
+            // Settings window opens on `menu:settings` from anywhere.
+            settings::register(app.handle());
+
             // Build tray icon with menu
             menu::build_tray(app)?;
 
@@ -1095,6 +1135,7 @@ pub fn run() {
             get_file_content,
             append_to_file,
             publish_file,
+            publish_preview,
             unpublish_file,
             get_git_status,
             deploy::get_head_sha,
@@ -1170,9 +1211,18 @@ pub fn run() {
             upload_og_image,
             play_system_sound,
             record_recent_file,
+            menu::set_menu_context,
+            log_frontend,
             clear_recent_files,
             set_proxy_icon,
             set_document_dirty,
+            settings::open_settings_window,
+            settings::get_settings,
+            settings::save_settings,
+            settings::reveal_config_file,
+            settings::check_vault_folder,
+            settings::check_publish_target,
+            settings::check_app_installed,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

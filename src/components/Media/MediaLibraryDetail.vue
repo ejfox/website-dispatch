@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { PhX } from '@phosphor-icons/vue'
+import UiButton from '../ui/UiButton.vue'
 interface CloudinaryAsset {
   public_id: string
   secure_url: string
@@ -37,7 +39,7 @@ const emit = defineEmits<{
     <div v-if="show && asset" class="detail-panel">
       <div class="detail-header">
         <h3>{{ asset.public_id.split('/').pop() }}</h3>
-        <button @click="emit('close')" class="close-btn">✕</button>
+        <UiButton variant="plain" :icon="PhX" aria-label="Close details" data-tip="Close details" @click="emit('close')" />
       </div>
 
       <div class="detail-preview">
@@ -68,8 +70,8 @@ const emit = defineEmits<{
       </div>
 
       <div class="detail-actions">
-        <button @click="emit('copyMarkdown', asset)" class="action-btn primary">Copy Markdown</button>
-        <button @click="emit('copyUrl', asset)" class="action-btn">Copy URL</button>
+        <UiButton size="small" label="Copy Markdown" @click="emit('copyMarkdown', asset)" />
+        <UiButton size="small" label="Copy URL" @click="emit('copyUrl', asset)" />
       </div>
 
       <div class="detail-usage">
@@ -96,8 +98,8 @@ const emit = defineEmits<{
 .detail-panel {
   /* Width driven by parent MediaLibraryModal's CSS custom property. */
   width: var(--media-detail-width, 300px);
-  background: #141416;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--control-bg);
+  border-left: 1px solid var(--separator);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -116,7 +118,7 @@ const emit = defineEmits<{
 
 .detail-header {
   padding: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--separator);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -130,22 +132,8 @@ const emit = defineEmits<{
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-.close-btn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  font-size: 14px;
-  padding: 4px 8px;
-}
-
-.close-btn:hover {
-  color: var(--text-primary);
-}
-
 .detail-preview {
-  background: #0a0a0a;
+  background: var(--under-page);
   padding: 12px;
   display: flex;
   align-items: center;
@@ -160,7 +148,7 @@ const emit = defineEmits<{
 
 .detail-meta {
   padding: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--separator);
 }
 
 .meta-row {
@@ -175,38 +163,15 @@ const emit = defineEmits<{
 }
 
 .detail-actions {
-  padding: 12px;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--separator);
 }
-
-.action-btn {
+.detail-actions :deep(.ui-btn) {
   width: 100%;
-  padding: 8px;
-  font-size: 11px;
-  background: rgba(255, 255, 255, 0.08);
-  border: none;
-  border-radius: 5px;
-  color: var(--text-primary);
-  cursor: pointer;
 }
-
-.action-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.action-btn.primary {
-  background: rgba(255, 255, 255, 0.15);
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-.action-btn.primary:hover {
-  background: rgba(255, 255, 255, 0.22);
-}
-
 .detail-usage {
   flex: 1;
   overflow-y: auto;
@@ -239,7 +204,7 @@ const emit = defineEmits<{
   justify-content: space-between;
   align-items: center;
   padding: 6px 8px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--fill);
   border-radius: 4px;
   font-size: 10px;
 }
@@ -259,7 +224,7 @@ const emit = defineEmits<{
 
 .detail-url {
   padding: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--separator);
 }
 
 .detail-url input {
@@ -267,8 +232,8 @@ const emit = defineEmits<{
   padding: 8px;
   font-size: 9px;
   font-family: 'SF Mono', monospace;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--control-bg);
+  border: 1px solid var(--separator);
   border-radius: 4px;
   color: var(--text-secondary);
   cursor: text;

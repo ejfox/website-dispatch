@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { parseDate } from '../utils/formatting'
 import { ref, onMounted, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -43,6 +44,7 @@ async function showHeatmapCellMenu(cell: { date: string; count: number }, e: Mou
 }
 
 import { PhBroadcast, PhArrowCounterClockwise, PhTrash } from '@phosphor-icons/vue'
+import UiButton from './ui/UiButton.vue'
 
 interface JournalEntry {
   id: number
@@ -68,7 +70,9 @@ function formatWords(n: number): string {
 }
 
 function formatAge(ts: string): string {
-  const seconds = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
+  const then = parseDate(ts)
+  if (!then) return ''
+  const seconds = Math.floor((Date.now() - then.getTime()) / 1000)
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)
@@ -145,13 +149,11 @@ const heatmapMax = computed(() => Math.max(...Array.from(heatmapData.value.value
 
 function heatmapColor(count: number): string {
   if (count < 0) return 'transparent' // future
-  if (count === 0) return 'rgba(255, 255, 255, 0.04)'
+  if (count === 0) return 'var(--fill)'
   const t = Math.min(count / heatmapMax.value, 1)
-  // Green ramp: dim -> bright
-  if (t <= 0.25) return 'rgba(48, 209, 88, 0.2)'
-  if (t <= 0.5) return 'rgba(48, 209, 88, 0.4)'
-  if (t <= 0.75) return 'rgba(48, 209, 88, 0.65)'
-  return 'rgba(48, 209, 88, 0.9)'
+  // One-hue ramp from --ramp (dim -> bright); tracks light/dark.
+  const pct = t <= 0.25 ? 25 : t <= 0.5 ? 45 : t <= 0.75 ? 70 : 95
+  return `color-mix(in srgb, var(--ramp) ${pct}%, transparent)`
 }
 
 async function loadData() {
@@ -209,8 +211,11 @@ onMounted(async () => {
     <div class="activity-section">
       <div class="section-label">Recent activity</div>
       <div v-if="entries.length === 0" class="empty-log">
-        <p>No publishing activity yet.</p>
-        <button v-if="!backfilling" @click="doBackfill" class="backfill-btn">Import from git history</button>
+        <p>No publishes logged yet.</p>
+        <p class="empty-log-sub">
+          Every publish and unpublish lands here by day. Posts that were live before Dispatch can be imported.
+        </p>
+        <UiButton v-if="!backfilling" size="small" class="backfill-btn" label="Import from git history" @click="doBackfill" />
         <span v-else class="backfill-loading">Importing...</span>
       </div>
       <div v-else class="activity-log">
@@ -292,7 +297,7 @@ onMounted(async () => {
 }
 
 .heatmap-cell.today {
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  box-shadow: inset 0 0 0 1px var(--label-2);
 }
 
 /* Section Labels */
@@ -382,19 +387,17 @@ onMounted(async () => {
   font-size: 11px;
 }
 
-.backfill-btn {
-  margin-top: 8px;
-  padding: 5px 12px;
-  font-size: 10px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  cursor: pointer;
+.empty-log p {
+  margin: 0;
+}
+.empty-log .empty-log-sub {
+  max-width: 300px;
+  margin: var(--space-1) auto 0;
+  line-height: 1.45;
 }
 
-.backfill-btn:hover {
-  background: var(--hover-bg);
+.backfill-btn {
+  margin-top: var(--space-2);
 }
 
 .backfill-loading {

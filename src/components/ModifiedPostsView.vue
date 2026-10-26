@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CHANGED_LABEL, CHANGED_HINT } from '../utils/vocab'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import {
@@ -9,24 +10,31 @@ import {
   PhArrowFatLineDown,
   PhPencilSimple,
 } from '@phosphor-icons/vue'
+import UiButton from './ui/UiButton.vue'
 import PublishDiffPanel from './PublishDiffPanel.vue'
+import BulkRepublishSheet from './BulkRepublishSheet.vue'
 import type { MarkdownFile } from '../types'
 import { useToasts } from '../composables/useUiState'
 
 /**
  * Triage view for posts where the vault source has diverged from the live
  * copy. Shows every MODIFIED post in one place with inline diff + per-row
- * Republish, plus a "Republish all" bulk action gated behind a confirm.
+ * Republish, plus "Republish all". A row's Republish opens that post's
+ * review sheet in the Preview tab (same path as the toolbar, with deploy
+ * tracking); "Republish all" gets one sheet listing every post.
  */
 
 const props = defineProps<{ files: MarkdownFile[] }>()
-const emit = defineEmits<{ 'select-file': [file: MarkdownFile]; published: [] }>()
+const emit = defineEmits<{
+  'select-file': [file: MarkdownFile]
+  'review-file': [file: MarkdownFile]
+  published: []
+}>()
 
 const toasts = useToasts()
 
 const sort = ref<'most-recent-edit' | 'biggest-delta' | 'oldest-publish'>('most-recent-edit')
 const expandedDiffs = ref<Set<string>>(new Set())
-const publishingPaths = ref<Set<string>>(new Set())
 const bulkPublishing = ref(false)
 const showBulkConfirm = ref(false)
 
@@ -73,41 +81,20 @@ function toggleDiff(file: MarkdownFile) {
   expandedDiffs.value = new Set(expandedDiffs.value)
 }
 
-async function republishOne(file: MarkdownFile) {
-  if (publishingPaths.value.has(file.path)) return
-  publishingPaths.value.add(file.path)
-  publishingPaths.value = new Set(publishingPaths.value)
-  try {
-    await invoke('publish_file', {
-      sourcePath: file.path,
-      targetId: null,
-    })
-    toasts.success(`Republished ${file.title || file.filename}`)
-    emit('published')
-  } catch (e: any) {
-    toasts.error('Republish failed', typeof e === 'string' ? e : (e?.message ?? String(e)))
-  } finally {
-    publishingPaths.value.delete(file.path)
-    publishingPaths.value = new Set(publishingPaths.value)
-  }
-}
-
-async function republishAll() {
+async function republishAll(paths: string[]) {
   if (bulkPublishing.value) return
   bulkPublishing.value = true
-  showBulkConfirm.value = false
-  const list = [...modifiedFiles.value]
   let ok = 0
   let fail = 0
-  for (const file of list) {
+  for (const path of paths) {
     try {
       await invoke('publish_file', {
-        sourcePath: file.path,
+        sourcePath: path,
         targetId: null,
       })
       ok++
     } catch (e) {
-      console.warn('bulk republish failed for', file.path, e)
+      console.warn('bulk republish failed for', path, e)
       fail++
     }
   }
@@ -139,28 +126,28 @@ function formatAge(ts: number): string {
 <template>
   <div class="modified-view">
     <div class="modified-header">
-      <h2>Modified posts <span class="count">{{ modifiedFiles.length }}</span></h2>
+      <h2 :data-tip="CHANGED_HINT">{{ CHANGED_LABEL }} <span class="count">{{ modifiedFiles.length }}</span></h2>
       <div class="header-actions">
         <select v-model="sort" class="sort-select" data-no-drag>
           <option value="most-recent-edit">Recently edited</option>
           <option value="biggest-delta">Biggest delta</option>
           <option value="oldest-publish">Oldest publish</option>
         </select>
-        <button
+        <!-- This view's one primary action. -->
+        <UiButton
           v-if="modifiedFiles.length > 0"
-          class="bulk-btn"
+          variant="primary"
           :disabled="bulkPublishing"
+          :label="bulkPublishing ? 'Republishing…' : `Republish all (${modifiedFiles.length})`"
           @click="showBulkConfirm = true"
-        >
-          {{ bulkPublishing ? 'Republishing…' : `Republish all (${modifiedFiles.length})` }}
-        </button>
+        />
       </div>
     </div>
 
     <div v-if="modifiedFiles.length === 0" class="empty-state">
       <PhArrowsClockwise :size="32" weight="duotone" class="empty-icon" />
-      <div class="empty-title">Nothing diverged</div>
-      <div class="empty-sub">Every live post matches your vault. Nice.</div>
+      <div class="empty-title">Everything matches</div>
+      <div class="empty-sub">Every live post is the same in your vault and on ejfox.com. Edit one in Obsidian and it shows up here.</div>
     </div>
 
     <div v-else class="modified-list">
@@ -199,34 +186,27 @@ function formatAge(ts: number): string {
             </div>
           </div>
           <div class="row-actions">
-            <button class="row-btn ghost" @click="toggleDiff(file)" data-no-drag>
-              <PhCaretDown
-                :size="10"
-                weight="bold"
-                class="caret"
-                :class="{ open: expandedDiffs.has(file.path) }"
-              />
-              {{ expandedDiffs.has(file.path) ? 'Hide diff' : 'Diff' }}
-            </button>
-            <a
+            <UiButton
+              variant="plain"
+              size="small"
+              :icon="PhCaretDown"
+              class="diff-btn"
+              :class="{ open: expandedDiffs.has(file.path) }"
+              :label="expandedDiffs.has(file.path) ? 'Hide diff' : 'Diff'"
+              data-no-drag
+              @click="toggleDiff(file)"
+            />
+            <UiButton
               v-if="file.published_url"
               :href="file.published_url"
-              target="_blank"
-              class="row-btn ghost icon-only"
+              variant="plain"
+              size="small"
+              :icon="PhArrowSquareUpRight"
+              aria-label="View live"
               data-tip="View live"
               data-no-drag
-            >
-              <PhArrowSquareUpRight :size="11" weight="bold" />
-            </a>
-            <button
-              class="row-btn primary"
-              :disabled="publishingPaths.has(file.path)"
-              @click="republishOne(file)"
-              data-no-drag
-            >
-              <PhArrowsClockwise :size="11" weight="bold" />
-              {{ publishingPaths.has(file.path) ? '…' : 'Republish' }}
-            </button>
+            />
+            <UiButton size="small" :icon="PhArrowsClockwise" label="Republish" data-no-drag @click="emit('review-file', file)" />
           </div>
         </div>
         <PublishDiffPanel
@@ -238,25 +218,12 @@ function formatAge(ts: number): string {
       </div>
     </div>
 
-    <!-- Bulk confirm -->
-    <Transition name="confirm">
-      <div v-if="showBulkConfirm" class="bulk-confirm-overlay" @click.self="showBulkConfirm = false">
-        <div class="bulk-confirm">
-          <h3>Republish {{ modifiedFiles.length }} posts?</h3>
-          <p>
-            This will run the full publish flow on every modified post — git commits,
-            pushes, the works. Webmentions will fire for each. There's no
-            undo. Are you sure?
-          </p>
-          <div class="bulk-confirm-actions">
-            <button class="btn secondary" @click="showBulkConfirm = false">Cancel</button>
-            <button class="btn primary" @click="republishAll">
-              Republish {{ modifiedFiles.length }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
+    <BulkRepublishSheet
+      :show="showBulkConfirm"
+      :files="modifiedFiles"
+      @close="showBulkConfirm = false"
+      @confirm="republishAll"
+    />
   </div>
 </template>
 
@@ -282,8 +249,8 @@ function formatAge(ts: number): string {
   flex: 1;
 }
 .modified-header .count {
-  color: var(--warning);
-  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: var(--label);
+  background: var(--tint-attention);
   padding: 2px 7px;
   border-radius: 999px;
   font-size: 11px;
@@ -306,25 +273,6 @@ function formatAge(ts: number): string {
   border-radius: 4px;
   font-family: inherit;
   cursor: pointer;
-}
-
-.bulk-btn {
-  padding: 4px 10px;
-  font-size: 10px;
-  font-weight: 500;
-  background: var(--warning);
-  color: #000;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: inherit;
-}
-.bulk-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--warning) 88%, white);
-}
-.bulk-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .empty-state {
@@ -438,118 +386,14 @@ function formatAge(ts: number): string {
 .row-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
-.row-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 9px;
-  font-size: 10px;
-  font-weight: 500;
-  border-radius: 4px;
-  cursor: pointer;
-  border: none;
-  font-family: inherit;
-  text-decoration: none;
-  transition: background 0.12s;
-}
-.row-btn.icon-only {
-  padding: 4px 6px;
-}
-.row-btn.ghost {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-}
-.row-btn.ghost:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-.row-btn.primary {
-  background: var(--accent);
-  color: var(--accent-contrast);
-}
-.row-btn.primary:hover:not(:disabled) {
-  background: var(--accent-strong);
-}
-.row-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.row-btn .caret {
+.diff-btn :deep(.ui-btn-icon) {
   transition: transform 0.15s;
 }
-.row-btn .caret.open {
+.diff-btn.open :deep(.ui-btn-icon) {
   transform: rotate(180deg);
-}
-
-.bulk-confirm-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 600;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.bulk-confirm {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-light);
-  border-radius: 10px;
-  padding: 24px;
-  max-width: 460px;
-  box-shadow: var(--shadow-lg, 0 24px 48px rgba(0, 0, 0, 0.4));
-}
-.bulk-confirm h3 {
-  margin: 0 0 10px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.bulk-confirm p {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin: 0 0 16px;
-  line-height: 1.5;
-}
-.bulk-confirm-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-.bulk-confirm .btn {
-  padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 6px;
-  border: none;
-  cursor: pointer;
-  font-family: inherit;
-}
-.bulk-confirm .btn.secondary {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-}
-.bulk-confirm .btn.secondary:hover {
-  background: var(--hover-bg);
-}
-.bulk-confirm .btn.primary {
-  background: var(--accent);
-  color: var(--accent-contrast);
-}
-.bulk-confirm .btn.primary:hover {
-  background: var(--accent-strong);
-}
-
-.confirm-enter-active,
-.confirm-leave-active {
-  transition: opacity 0.15s ease;
-}
-.confirm-enter-from,
-.confirm-leave-to {
-  opacity: 0;
 }
 </style>
