@@ -98,7 +98,9 @@ async function main() {
       log(false, 'preview server produced NO html (render failed or timed out)')
       process.exit(1)
     }
-    if (!html.includes('Smoke Test')) {
+    // Not the "# Smoke Test" heading: since 2026-10-11 website2 drops an
+    // opening heading that repeats the title (the page header shows it).
+    if (!html.includes('A blockquote.') || !html.includes('internal-link')) {
       log(false, `rendered html missing expected content. Got: ${html.slice(0, 120)}`)
       process.exit(1)
     }
