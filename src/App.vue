@@ -304,6 +304,15 @@ async function openReviewSheet(file: MarkdownFile | null = null, mode: 'publish'
   filePreviewRef.value?.openPublishConfirm?.(!!target.published_url, mode)
 }
 
+// Palette → Preview's inline diff. The Preview pane may not be mounted yet
+// (another tab was showing), so switch first and toggle once it exists.
+async function toggleDiffFromPalette() {
+  paletteOpen.value = false
+  rightTab.value = 'preview'
+  await nextTick()
+  filePreviewRef.value?.toggleDiff?.()
+}
+
 // App config (shared singleton)
 const { appConfig, fetchConfig: loadConfig } = useAppConfig()
 
@@ -971,6 +980,7 @@ onUnmounted(() => {
           openReviewSheet()
         }
       "
+      @toggle-diff="toggleDiffFromPalette"
     />
 
     <!-- New Post Modal -->

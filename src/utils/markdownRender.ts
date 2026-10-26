@@ -70,12 +70,18 @@ renderWorker.addEventListener('messageerror', () => {
 // under a second, so anything past this means the worker is wedged.
 const RENDER_TIMEOUT_MS = 10000
 
-export function renderMarkdownInWorker(content: string, baseUrl: string): {
+export function renderMarkdownInWorker(
+  content: string,
+  baseUrl: string,
+  /** `passive` renders don't claim the "active" slot, so a side render (the
+   *  diff mode's published copy) never makes the main Preview render stale. */
+  opts: { passive?: boolean } = {},
+): {
   id: number
   promise: Promise<string>
 } {
   const id = ++nextRenderId
-  activeRenderId = id
+  if (!opts.passive) activeRenderId = id
   // A module-load crash kills the worker permanently — every later postMessage
   // just goes nowhere and times out after 10s. Once we know it's dead, fail
   // fast so we hit the server fallback immediately instead of stalling.

@@ -136,6 +136,8 @@ export interface PublishDiff {
   lines_removed: number
   hunks: DiffHunk[]
   error: string | null
+  /** Published copy's markdown body (frontmatter stripped); null if none. */
+  published_body: string | null
 }
 
 export type MediaDestinationKind = 'cloudinary' | 'r2'

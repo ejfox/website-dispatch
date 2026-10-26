@@ -56,6 +56,7 @@ const emit = defineEmits<{
   showHelp: [section: 'overview' | 'shortcuts']
   togglePanel: [panel: 'desk' | 'preview' | 'media' | 'journal' | 'modified' | 'activity']
   publish: []
+  toggleDiff: []
 }>()
 
 const { defaultEditor } = useAppConfig()
@@ -71,6 +72,7 @@ const actions = computed<Action[]>(() => {
   const f = props.selectedFile
   const hasFile = !!f
   const isLive = !!f?.published_url
+  const isModified = isLive && !!f?.warnings.includes('Modified since publish')
   return [
     {
       id: 'new_post',
@@ -102,6 +104,17 @@ const actions = computed<Action[]>(() => {
       shortcut: '⌘↩',
       synonyms: ['ship', 'send', 'push', 'release', 'go-live'],
       run: () => emit('publish'),
+    },
+    {
+      id: 'toggle_diff',
+      label: 'Diff: What Publishing Would Change',
+      hint: isModified ? 'vault → live, inline in Preview' : 'live copy matches the vault',
+      section: 'Actions',
+      icon: PhEye,
+      enabled: isModified,
+      shortcut: 'D',
+      synonyms: ['diff', 'changes', 'compare', 'what changed', 'modified', 'see changes'],
+      run: () => emit('toggleDiff'),
     },
     {
       id: 'open_obsidian',
