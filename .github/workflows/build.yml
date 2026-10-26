@@ -1,0 +1,51 @@
+name: Build
+
+# Builds Dispatch on every push to main and every PR, with no secrets: an
+# UNSIGNED Dispatch.app + DMG, uploaded as a workflow artifact. Signed,
+# notarized, auto-updating releases are release.yml (needs the Apple/Tauri
+# secrets listed there).
+#
+# Opening an unsigned build: right-click Dispatch.app → Open, once.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      # 22, not release.yml's 20: test:unit uses --experimental-strip-types.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:unit
+
+      # beforeBuildCommand runs the Vite build. No APPLE_* env, so no
+      # signing; no TAURI_SIGNING_PRIVATE_KEY, so no updater artifacts.
+      - run: npx tauri build --bundles app,dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Dispatch-${{ github.sha }}
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          retention-days: 14
+          if-no-files-found: error
