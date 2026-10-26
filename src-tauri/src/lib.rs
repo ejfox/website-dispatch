@@ -428,45 +428,21 @@ fn convert_to_vue_page(slug: String, hue: u32) -> Result<String, String> {
         .first()
         .ok_or_else(|| "No publish target configured".to_string())?;
 
-    let vue_path = format!("{}/pages/blog/{}.vue", target.repo_path, slug);
-
-    if std::path::Path::new(&vue_path).exists() {
-        return Err(format!("Already a Vue page: {}", vue_path));
+    // The website repo owns this: `yarn crown` moves the post's prose into
+    // pages/blog/{slug}.vue and leaves the .md as a frontmatter stub. Running
+    // it here (rather than keeping a copy of its template) means Dispatch and
+    // the CLI can't drift apart.
+    let output = std::process::Command::new(crate::bin_paths::node())
+        .current_dir(&target.repo_path)
+        .args(["scripts/author/crown.mjs", &slug, "--hue", &hue.to_string()])
+        .output()
+        .map_err(|e| format!("Failed to run yarn crown: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(stderr.trim().to_string());
     }
 
-    // Derive names from slug
-    let name = slug.split('/').next_back().unwrap_or(&slug);
-    let title_case: String = name
-        .replace('-', " ")
-        .split_whitespace()
-        .map(|w| {
-            let mut c = w.chars();
-            match c.next() {
-                None => String::new(),
-                Some(f) => f.to_uppercase().to_string() + c.as_str(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    let body_class = format!("{}-takeover", name);
-    let css_class = format!("{}-page", name);
-
-    // Load template at compile time and interpolate placeholders
-    let template = include_str!("../templates/crowned-post.vue")
-        .replace("__SLUG__", &slug)
-        .replace("__HUE__", &hue.to_string())
-        .replace("__TITLE__", &title_case)
-        .replace("__BODY_CLASS__", &body_class)
-        .replace("__CSS_CLASS__", &css_class);
-
-    // Create directory and write file
-    let parent = std::path::Path::new(&vue_path)
-        .parent()
-        .ok_or_else(|| "Invalid path".to_string())?;
-    fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
-    fs::write(&vue_path, template).map_err(|e| format!("Failed to write crowned post: {}", e))?;
-
-    Ok(vue_path)
+    Ok(format!("{}/pages/blog/{}.vue", target.repo_path, slug))
 }
 
 // --- ANALYTICS COMMANDS ---
