@@ -68,7 +68,7 @@ pub fn public_url(domain: &str, slug: &str) -> String {
     format!("{}/dispatch/{}", domain, slug)
 }
 
-/// (url, mtime, content) of the published copy, mirroring vault::find_published_info.
+/// (url, date, content) of the published copy, mirroring vault::find_published_info.
 pub fn find_published(
     target: &PublishTarget,
     slug: &str,
@@ -78,15 +78,11 @@ pub fn find_published(
     if !p.exists() {
         return (None, None, None);
     }
-    let mtime = fs::metadata(p)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs());
+    let content = fs::read_to_string(p).ok();
     (
         Some(public_url(&target.domain, slug)),
-        mtime,
-        fs::read_to_string(p).ok(),
+        content.as_deref().and_then(crate::vault::published_date_of),
+        content,
     )
 }
 
@@ -185,7 +181,7 @@ mod tests {
         fs::create_dir_all(repo.join(CONTENT_DIR)).unwrap();
         fs::write(
             repo.join("content/dispatch/piece.md"),
-            "---\ntitle: P\n---\nbody",
+            "---\ntitle: P\ndate: 2026-01-02\n---\nbody",
         )
         .unwrap();
         let target = PublishTarget {

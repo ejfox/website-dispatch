@@ -358,6 +358,18 @@ const commands: Record<string, (args: any) => unknown> = {
   check_cloudinary_status: () => true,
   check_analytics_status: () => true,
   check_media_status: () => ({ cloudinary: true, r2: false, primary: 'cloudinary', mirrors: [] }),
+  // &upload=fail makes the image well's upload fail.
+  media_upload: async ({ filePath }) => {
+    await new Promise((r) => setTimeout(r, 400))
+    if (params.get('upload') === 'fail') return { success: false, error: 'Cloudinary said no' }
+    return { success: true, asset: { url: `https://res.cloudinary.com/mock/${filePath.split('/').pop()}` }, mirrors: [] }
+  },
+  upload_local_media: () => 0,
+  alt_for_url: () => 'A chart with four bars',
+  desk_available: () => params.has('desk'),
+  activate_app: ({ app }) => void ((window as any).__activated = app),
+  'plugin:dialog|open': () => ['/Users/ej/Desktop/Screenshot.png'],
+  'plugin:clipboard-manager|write_text': ({ text }) => void ((window as any).__clipboard = text),
   get_backlinks: ({ filename }) => backlinks[files.find((f) => f.filename === filename)?.path ?? ''] ?? [],
   get_local_media: ({ path }) => localMedia[path] ?? [],
   get_post_analytics: () => analytics,

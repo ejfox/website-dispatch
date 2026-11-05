@@ -12,6 +12,7 @@ import OgImagePicker from './OgImagePicker.vue'
 import StatusBanner from './StatusBanner.vue'
 import MetadataPanel from './MetadataPanel.vue'
 import ActionToolbar from './ActionToolbar.vue'
+import ImageWell from './ImageWell.vue'
 import UiButton from './ui/UiButton.vue'
 import InlineTip from './ui/InlineTip.vue'
 import { useTip, invalidateTip, requestHelp } from '../composables/useTips'
@@ -51,12 +52,14 @@ import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { useLocalStorage, useElementSize } from '@vueuse/core'
 import type { MarkdownFile, Backlink, LocalMediaRef, PostAnalytics, DeskToday, PublishDiff } from '../types'
 import { useTagSuggestions } from '../composables/useTagSuggestions'
+import { useImageUpload } from '../composables/useImageUpload'
 import { usePublishing, usePostActions, deployFailureTitle } from '../composables/usePublishFlow'
 import type { ReviewMode } from '../utils/publishReview'
 import { useAppConfig, useGitStatus } from '../composables/useVaultData'
 
 const props = defineProps<{ file: MarkdownFile }>()
 const emit = defineEmits<{ published: []; 'jump-to-path': [path: string] }>()
+const { chooseAndUpload } = useImageUpload()
 
 // Config (shared singleton)
 const { appConfig, enabledEditors, publishTargets, hasMultipleTargets } = useAppConfig()
@@ -1250,6 +1253,7 @@ async function openPreview() {
         :label="publishing ? 'Publishing…' : isLive ? 'Update live post…' : file.is_safe ? 'Publish…' : 'See what to fix…'"
         @click="requestPublish(isLive)"
       />
+      <UiButton variant="plain" size="small" label="Add image…" @click="chooseAndUpload(file)" />
       <UiButton
         variant="plain"
         size="small"
@@ -1555,6 +1559,8 @@ async function openPreview() {
             <span class="insp-note">Dispatch publishes it at the time you pick, if it still has nothing to fix and isn’t a draft (keep Dispatch running).</span>
           </div>
         </section>
+
+        <ImageWell :file="file" />
 
         <!-- Details -->
         <section class="insp-section">

@@ -29,14 +29,12 @@ import { ref, reactive, computed, watch, onUnmounted, getCurrentInstance, type R
 /** Every tip, in priority order. The copy lives at the call site; this is
  *  the registry the arbiter ranks by. */
 export const TIPS = [
-  'list-states',
   'inspector',
   'publish',
   'changed',
   'alt-text',
   'social-card',
   'syndicate',
-  'drop-media',
   'palette',
 ] as const
 export type TipId = (typeof TIPS)[number]

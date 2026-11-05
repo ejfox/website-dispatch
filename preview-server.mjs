@@ -133,7 +133,9 @@ async function processWithWebsite2(filePath) {
   const convertScript = await resolveConvertScript()
   return new Promise((resolve, reject) => {
     // Use the preview-convert.mjs wrapper script
-    const child = spawn('node', [convertScript, filePath], {
+    // process.execPath, not 'node': a Dock launch has a minimal PATH, where a
+    // bare 'node' dies with ENOENT and takes this server down with it.
+    const child = spawn(process.execPath, [convertScript, filePath], {
       cwd: WEBSITE2_PATH,
       env: { ...process.env, NODE_NO_WARNINGS: '1' }
     })

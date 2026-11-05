@@ -1,3 +1,4 @@
+import { deskAvailable } from './useDesk'
 import { nextTick, onMounted, onUnmounted, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -157,7 +158,9 @@ export function useMenuActions(options: {
     // View
     'menu-toggle-sidebar': () => (options.sidebarCollapsed.value = !options.sidebarCollapsed.value),
     'menu-toggle-inspector': () => inspector.toggle(),
-    'menu-panel-desk': () => (rightTab.value = 'desk'),
+    'menu-panel-desk': () => {
+      if (deskAvailable.value) rightTab.value = 'desk'
+    },
     'menu-panel-preview': () => (rightTab.value = 'preview'),
     'menu-panel-media': () => (rightTab.value = 'media'),
     'menu-panel-journal': () => (rightTab.value = 'journal'),

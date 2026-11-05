@@ -83,9 +83,7 @@ pub fn get_config() -> Result<CloudinaryConfig, String> {
         "Cloudinary credentials not configured. Open Settings → Media and fill in cloud name, API key, and API secret.",
     )?;
     if creds.cloud_name.is_empty() || creds.api_key.is_empty() || creds.api_secret.is_empty() {
-        return Err(
-            "Cloudinary credentials incomplete. Open Settings → Media to fix.".into(),
-        );
+        return Err("Cloudinary credentials incomplete. Open Settings → Media to fix.".into());
     }
     Ok(CloudinaryConfig {
         cloud_name: creds.cloud_name,
@@ -123,8 +121,8 @@ fn get_resource_type(path: &str) -> &'static str {
         // accepted by Cloudinary's image endpoint, so classify them as images
         // (the previous "raw" classification made uploads fail silently with
         // a misleading error).
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" | "heic" | "heif"
-        | "avif" => "image",
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" | "heic"
+        | "heif" | "avif" => "image",
         _ => "raw",
     }
 }
@@ -430,9 +428,43 @@ pub async fn check_credentials() -> bool {
     (list_assets(Some("image"), Some(1), None).await).is_ok()
 }
 
+/// An iA Writer Content Block: a line that is only a media path, with an
+/// optional caption. Dragging an image into iA writes one, e.g.
+/// `photo.png`, `images/a.jpg (Data Flow)` or `a.png "Caption"`.
+/// Returns (path, caption).
+fn parse_content_block(line: &str) -> Option<(String, Option<String>)> {
+    let line = line.trim();
+    if line.contains("](")
+        || line.contains("://")
+        || line.starts_with(['#', '<', '!', '>', '-', '*'])
+    {
+        return None;
+    }
+
+    let mut path = line;
+    let mut caption = None;
+    for (open, close) in [(" \"", '"'), (" '", '\''), (" (", ')')] {
+        if line.ends_with(close) {
+            if let Some(at) = line.rfind(open) {
+                path = line[..at].trim_end();
+                caption = Some(line[at + open.len()..line.len() - 1].to_string());
+                break;
+            }
+        }
+    }
+
+    let ext = Path::new(path).extension()?.to_str()?.to_lowercase();
+    let is_media = matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "heic" | "heif" | "avif" | "bmp" | "tiff"
+    ) || is_video_extension(path);
+    is_media.then(|| (path.to_string(), caption))
+}
+
 /// Extract local media references from markdown content
 pub fn extract_local_media(content: &str, source_dir: &str) -> Vec<LocalMediaRef> {
     let mut refs = Vec::new();
+    let mut in_code = false;
 
     // Shared compiled regex patterns
     let md_image_re = &*crate::patterns::MD_IMAGE;
@@ -440,9 +472,32 @@ pub fn extract_local_media(content: &str, source_dir: &str) -> Vec<LocalMediaRef
     let html_video_re = &*crate::patterns::HTML_VIDEO;
 
     for (line_num, line) in content.lines().enumerate() {
+        if line.trim_start().starts_with("```") {
+            in_code = !in_code;
+        }
+
         // Skip lines with cloudinary URLs or https URLs
         if line.contains("cloudinary") {
             continue;
+        }
+
+        if !in_code {
+            if let Some((path, caption)) = parse_content_block(line) {
+                refs.push(LocalMediaRef {
+                    original_text: line.trim().to_string(),
+                    media_type: if is_video_extension(&path) {
+                        "video"
+                    } else {
+                        "image"
+                    }
+                    .to_string(),
+                    resolved_path: resolve_path(&path, source_dir),
+                    path,
+                    alt_text: caption,
+                    line_number: line_num + 1,
+                });
+                continue;
+            }
         }
 
         // Markdown images: ![alt](path)
@@ -612,4 +667,52 @@ pub async fn list_folders() -> Result<Vec<String>, String> {
         .collect();
 
     Ok(folders)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_line_ia_writer_writes_for_a_dragged_screenshot() {
+        // macOS puts U+202F before PM in screenshot names.
+        let line = "screenshot 2026-10-02 at 2.21.28\u{202f}PM.png";
+        let (path, caption) = parse_content_block(line).unwrap();
+        assert_eq!(path, line);
+        assert_eq!(caption, None);
+    }
+
+    #[test]
+    fn reads_content_block_captions() {
+        for line in [
+            "images/a.jpg (Data Flow)",
+            "images/a.jpg \"Data Flow\"",
+            "images/a.jpg 'Data Flow'",
+        ] {
+            let (path, caption) = parse_content_block(line).unwrap();
+            assert_eq!(path, "images/a.jpg");
+            assert_eq!(caption.as_deref(), Some("Data Flow"));
+        }
+    }
+
+    #[test]
+    fn prose_and_markdown_are_not_content_blocks() {
+        for line in [
+            "I took a nice photo.",
+            "![a](b.png)",
+            "https://x.com/a.png",
+            "- list.png",
+            "# t.png",
+        ] {
+            assert!(parse_content_block(line).is_none(), "{line}");
+        }
+    }
+
+    #[test]
+    fn content_blocks_in_code_fences_are_left_alone() {
+        let refs = extract_local_media("```\nphoto.png\n```\n\nreal.png\n", "/nowhere");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].path, "real.png");
+        assert_eq!(refs[0].resolved_path, None);
+    }
 }

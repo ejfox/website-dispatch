@@ -10,6 +10,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { MarkdownFile, PublishPreview } from '../types'
 import { composeReview, hiddenUntil, type ReviewMode } from '../utils/publishReview'
 import UiButton from './ui/UiButton.vue'
+import { useAppConfig } from '../composables/useVaultData'
 
 const props = withDefaults(
   defineProps<{
@@ -25,6 +26,8 @@ const emit = defineEmits<{
   close: []
   confirm: [opts: { isUpdate: boolean; webmentions: boolean; hiddenUntil: string | null }]
 }>()
+
+const { defaultEditor } = useAppConfig()
 
 const loading = ref(false)
 const loadError = ref<string | null>(null)
@@ -168,7 +171,7 @@ onUnmounted(() => {
               </label>
 
               <div v-if="review.notes.length" class="pub-notes">
-                <p class="pub-line pub-muted">Still in the text (updates go through anyway):</p>
+                <p class="pub-line pub-muted">Still in the text (this won’t stop it):</p>
                 <ul class="pub-issues">
                   <li v-for="note in review.notes" :key="note">{{ note }}</li>
                 </ul>
@@ -185,6 +188,12 @@ onUnmounted(() => {
             {{ review?.blocker || loadError ? 'Close' : 'Cancel' }}
             <kbd>esc</kbd>
           </UiButton>
+          <UiButton
+            v-if="review?.blockerList.length"
+            variant="primary"
+            :label="`Open in ${defaultEditor}`"
+            @click="invoke('open_in_app', { path: file.path, app: defaultEditor }); $emit('close')"
+          />
           <UiButton
             v-if="review && !review.blocker"
             ref="primaryBtn"

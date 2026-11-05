@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { checkDesk, deskAvailable } from '../../composables/useDesk'
 import { computed, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -68,17 +69,16 @@ onMounted(async () => {
 })
 
 // ── Open to (per-Mac, lives in localStorage like before) ────────────────────
-// 'preview' isn't offered: App.vue treats a stored 'preview' as the old
-// default and lands on the Desk anyway.
-const homeTab = useLocalStorage<string>('dispatch-home-tab', 'desk')
-const homeOptions = [
-  { id: 'desk', label: 'Desk' },
+const homeTab = useLocalStorage<string>('dispatch-open-to', 'preview')
+void checkDesk()
+const homeOptions = computed(() => [
+  { id: 'preview', label: 'Your post' },
+  ...(deskAvailable.value ? [{ id: 'desk', label: 'Desk' }] : []),
   { id: 'journal', label: 'Journal' },
   { id: 'modified', label: 'Changed since live' },
   { id: 'media', label: 'Media' },
   { id: 'activity', label: 'Activity' },
-]
-if (!homeOptions.some((o) => o.id === homeTab.value)) homeTab.value = 'desk'
+])
 
 // ── Editors ─────────────────────────────────────────────────────────────────
 const enabledEditors = computed(() => (config.value?.editors ?? []).filter((e) => e.enabled))

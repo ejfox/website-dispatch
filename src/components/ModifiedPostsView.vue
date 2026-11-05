@@ -88,6 +88,7 @@ async function republishAll(paths: string[]) {
   let fail = 0
   for (const path of paths) {
     try {
+      await invoke('upload_local_media', { path })
       await invoke('publish_file', {
         sourcePath: path,
         targetId: null,

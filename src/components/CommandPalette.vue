@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { deskAvailable } from '../composables/useDesk'
 import { ref, computed, watch, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import {
   PhFile,
   PhRocket,
+  PhImageSquare,
   PhLink,
   PhFolder,
   PhArrowsClockwise,
@@ -57,6 +59,7 @@ const emit = defineEmits<{
   togglePanel: [panel: 'desk' | 'preview' | 'media' | 'journal' | 'modified' | 'activity']
   publish: []
   toggleDiff: []
+  addImage: []
 }>()
 
 const { defaultEditor } = useAppConfig()
@@ -104,6 +107,16 @@ const actions = computed<Action[]>(() => {
       shortcut: '⌘↩',
       synonyms: ['ship', 'send', 'push', 'release', 'go-live'],
       run: () => emit('publish'),
+    },
+    {
+      id: 'add_image',
+      label: 'Add Image…',
+      hint: `upload, then ⌘V in ${defaultEditor.value}`,
+      section: 'Actions',
+      icon: PhImageSquare,
+      enabled: true,
+      synonyms: ['screenshot', 'photo', 'picture', 'upload', 'media', 'insert'],
+      run: () => emit('addImage'),
     },
     {
       id: 'toggle_diff',
@@ -228,7 +241,7 @@ const actions = computed<Action[]>(() => {
       label: 'Show Desk',
       section: 'Actions',
       icon: PhFile,
-      enabled: true,
+      enabled: deskAvailable.value,
       shortcut: 'd',
       synonyms: ['desk', 'bench', 'today'],
       run: () => emit('togglePanel', 'desk'),

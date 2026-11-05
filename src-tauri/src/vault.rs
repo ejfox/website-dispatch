@@ -140,8 +140,7 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .to_string();
             let slug = filename.trim_end_matches(".md");
 
-            let (published_url, published_date, published_content) = if content_type == "dispatch"
-            {
+            let (published_url, published_date, published_content) = if content_type == "dispatch" {
                 config::default_target()
                     .map(|t| crate::dispatch::find_published(&t, slug))
                     .unwrap_or((None, None, None))
@@ -155,6 +154,14 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .unwrap_or_default();
 
             let mut warnings = check_warnings(&body, &frontmatter, title.is_some(), content_type);
+            apply_local_media_warnings(
+                &mut warnings,
+                &body,
+                &path
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+            );
 
             // Check if content actually differs from published version
             if let Some(ref pub_content) = published_content {
@@ -187,7 +194,7 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 modified,
                 word_count: body.split_whitespace().count(),
                 published_word_count,
-                is_safe: warnings.is_empty(),
+                is_safe: !warnings.iter().any(|w| is_blocking_warning(w)),
                 warnings,
                 published_url,
                 published_date,
@@ -270,6 +277,44 @@ fn parse_weeknote_filename(path: &Path) -> Option<u64> {
     Some(dt.and_utc().timestamp() as u64)
 }
 
+/// When a live post went out, from its own `date`. Not the repo file's mtime:
+/// any pull or fresh checkout restamps every file, and old posts then claim
+/// they were published an hour ago.
+pub(crate) fn published_date_of(content: &str) -> Option<u64> {
+    let (frontmatter, _) = parse_frontmatter(content);
+    let date = frontmatter.get("date")?;
+    parse_iso_date(date.trim().trim_matches(|c| c == '"' || c == '\''))
+}
+
+/// Local media Dispatch can upload at publish isn't a problem, it's a job. A
+/// bare filename line it can't find is: that would go live as plain text.
+fn apply_local_media_warnings(warnings: &mut Vec<String>, body: &str, note_dir: &str) {
+    let local = crate::cloudinary::extract_local_media(body, note_dir);
+    if local.is_empty() {
+        return;
+    }
+    if local.iter().all(|r| r.resolved_path.is_some()) {
+        warnings.retain(|w| !matches!(w.as_str(), "Local images" | "Local media" | "Local video"));
+        warnings.push("Images to upload".into());
+    } else if local.iter().any(|r| {
+        r.resolved_path.is_none()
+            && !r.original_text.starts_with("![")
+            && !r.original_text.starts_with('<')
+    }) && !warnings.iter().any(|w| w == "Local images")
+    {
+        warnings.push("Local images".into());
+    }
+}
+
+/// Would this warning break the live post? Everything else is advice and
+/// never stops a publish. Mirrors `isBlockingWarning` in src/utils/lint.ts.
+fn is_blocking_warning(warning: &str) -> bool {
+    !matches!(
+        warning,
+        "Modified since publish" | "Has TODOs" | "Long link text" | "Images to upload"
+    ) && !warning.starts_with("Missing alt text")
+}
+
 fn parse_iso_date(date_str: &str) -> Option<u64> {
     // Parse ISO 8601 dates like "2024-01-01T00:00:00-05:00" or "2024-01-01"
     use chrono::{DateTime, NaiveDate};
@@ -336,11 +381,8 @@ fn find_published_info_inner(
                 let path = Path::new(&file_path);
                 if path.exists() {
                     let url = format!("{}/blog/{}/{}", target.domain, dir_name, slug);
-                    let date = fs::metadata(path)
-                        .and_then(|m| m.modified())
-                        .map(|t| get_timestamp(Ok(t)))
-                        .ok();
                     let published_content = fs::read_to_string(path).ok();
+                    let date = published_content.as_deref().and_then(published_date_of);
                     return (Some(url), date, published_content);
                 }
             }
@@ -799,6 +841,41 @@ fn check_privacy(body: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn published_date_comes_from_the_post_not_the_file() {
+        let content = "---\ndate: 2019-03-01T16:00:00-05:00\n---\n\nBody";
+        assert_eq!(published_date_of(content), Some(1551474000));
+        assert_eq!(published_date_of("---\ntitle: x\n---\n\nBody"), None);
+    }
+
+    #[test]
+    fn a_found_content_block_is_a_job_and_a_lost_one_blocks() {
+        let dir = std::env::temp_dir().join(format!("dispatch-cb-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.png"), b"x").unwrap();
+        let dir_str = dir.to_string_lossy().to_string();
+
+        let mut found = Vec::new();
+        apply_local_media_warnings(&mut found, "words\n\na.png\n", &dir_str);
+        assert_eq!(found, vec!["Images to upload".to_string()]);
+        assert!(found.iter().all(|w| !is_blocking_warning(w)));
+
+        let mut lost = Vec::new();
+        apply_local_media_warnings(&mut lost, "words\n\ngone.png\n", &dir_str);
+        assert_eq!(lost, vec!["Local images".to_string()]);
+        assert!(is_blocking_warning(&lost[0]));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_breaking_warnings_block() {
+        assert!(!is_blocking_warning("Has TODOs"));
+        assert!(!is_blocking_warning("Missing alt text (2)"));
+        assert!(!is_blocking_warning("Modified since publish"));
+        assert!(is_blocking_warning("Local images"));
+        assert!(is_blocking_warning("Broken link"));
+    }
 
     #[test]
     fn test_add_tag_to_file() {

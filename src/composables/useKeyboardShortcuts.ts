@@ -2,6 +2,7 @@ import { ref, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { MarkdownFile } from '../types'
 import { useAppConfig } from './useVaultData'
+import { deskAvailable } from './useDesk'
 
 export function useKeyboardShortcuts(options: {
   files: Ref<MarkdownFile[]>
@@ -131,7 +132,7 @@ export function useKeyboardShortcuts(options: {
     // d - back to the Desk (universal navigation)
     if (e.key === 'd' && !e.metaKey && !e.ctrlKey) {
       e.preventDefault()
-      options.rightTab.value = 'desk'
+      if (deskAvailable.value) options.rightTab.value = 'desk'
       return
     }
 

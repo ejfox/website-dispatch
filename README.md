@@ -59,7 +59,7 @@ Cloudinary cloud name and analytics URL are configured here. API secrets (Cloudi
 
 ## The Desk
 
-Dispatch opens on **the Desk**: the chart-desk feed from `~/.local/bin/desk today` — the streak, the week, the making
+With chart-desk installed, **the Desk** tab appears (Settings can open to it): the chart-desk feed from `~/.local/bin/desk today` — the streak, the week, the making
 slot, and today's bench (chart, finding, angles, the question for you, fact-check status), plus on-deck stories.
 
 - **Start piece** (`⏎`) runs `desk dispatch <bench> --json`, which writes a `draft: true` piece into the vault's

@@ -31,17 +31,17 @@ mod media; // Multi-destination upload orchestrator (Cloudinary / R2 / both)
 mod menu; // Application menu bar builder
 mod obsidian; // Talks to Obsidian's Local REST API for backlinks
 mod omnipublish; // Fan-out syndication to every network with retry, idempotency, write-back
-mod utm; // UTM-tagged share links (Umami attribution)
 mod open; // Open files in Obsidian, editors, terminal
 mod patterns; // Shared compiled regex patterns (LazyLock statics)
 mod preview; // Manages a local Node.js server for previewing posts
 mod publish; // Handles git operations to publish posts to your website
-mod publish_guard; // Hard refusal of week-notes/, drafts/, type: weeknote
 mod publish_diff; // Computes a line-level diff between vault source and the published copy
+mod publish_guard; // Hard refusal of week-notes/, drafts/, type: weeknote
 mod r2; // Cloudflare R2 (S3-compatible) uploader with hand-rolled SigV4
 mod settings; // The Settings window + its config/validation commands
 mod syndication; // Post-publish social distribution (Mastodon, etc.)
 mod syndication_queue; // Scheduled syndication queue with background sender
+mod utm; // UTM-tagged share links (Umami attribution)
 mod vault; // Scans your Obsidian vault for markdown files
 mod vault_watcher; // fs::notify-driven auto-refresh on vault changes
 mod webmention; // IndieWeb webmention sending
@@ -79,11 +79,11 @@ pub struct MarkdownFile {
 
     // `usize` is an unsigned integer sized for your platform (64-bit on modern machines)
     // Used for counting/indexing
-    pub word_count: usize, // Number of words in the post body
+    pub word_count: usize,                   // Number of words in the post body
     pub published_word_count: Option<usize>, // Word count of the live/published version, if any
 
     // `bool` is true or false
-    pub is_safe: bool, // True if no warnings (safe to publish)
+    pub is_safe: bool, // True if nothing would break the live post
 
     pub warnings: Vec<String>, // List of issues: ["No date", "Has TODOs"]
 
@@ -178,7 +178,10 @@ fn get_file_content(path: String) -> Result<String, String> {
         .and_then(|n| n.to_str())
         .unwrap_or(&path);
     let bytes = result.as_ref().map(|s| s.len()).unwrap_or(0);
-    eprintln!("[perf] get_file_content {} {:.1}ms ({} bytes)", name, ms, bytes);
+    eprintln!(
+        "[perf] get_file_content {} {:.1}ms ({} bytes)",
+        name, ms, bytes
+    );
     result
 }
 
@@ -208,18 +211,12 @@ fn append_to_file(path: String, content: String) -> Result<(), String> {
 // Returning means *pushed*, not live — the macOS "live" notification fires
 // from deploy::wait_for_deploy once the site actually serves the commit.
 #[tauri::command]
-async fn publish_file(
-    source_path: String,
-    target_id: Option<String>,
-) -> Result<String, String> {
+async fn publish_file(source_path: String, target_id: Option<String>) -> Result<String, String> {
     // git + network work: keep it off the UI thread.
     publish::off_main(move || publish_file_blocking(source_path, target_id)).await
 }
 
-fn publish_file_blocking(
-    source_path: String,
-    target_id: Option<String>,
-) -> Result<String, String> {
+fn publish_file_blocking(source_path: String, target_id: Option<String>) -> Result<String, String> {
     // The destination (and slug) is derived from the vault path in one place.
     let publish::Published {
         url,
@@ -347,6 +344,77 @@ fn open_in_app(path: String, app: String) -> Result<(), String> {
     open::open_in_app(&path, &app)
 }
 
+#[tauri::command]
+fn activate_app(app: String) -> Result<(), String> {
+    open::activate_app(&app)
+}
+
+/// Publish step: upload every local image the note uses and rewrite those
+/// lines, so a dragged-in screenshot goes live as a real image. Stops on the
+/// first failure, keeping what already uploaded, so nothing goes live broken.
+#[tauri::command]
+async fn upload_local_media(path: String) -> Result<usize, String> {
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let dir = std::path::Path::new(&path)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let vault = config::get()?.vault.path;
+    let relative = dir
+        .strip_prefix(&vault)
+        .unwrap_or(&dir)
+        .trim_start_matches('/');
+    let folder = relative
+        .split('/')
+        .find(|p| p.len() == 4 && p.chars().all(|c| c.is_ascii_digit()));
+    let folder = folder.map_or_else(|| relative.to_string(), |year| format!("blog/{}", year));
+
+    let mut fixes: Vec<(String, String)> = Vec::new();
+    let mut failure = None;
+    for mut media in cloudinary::extract_local_media(&content, &dir) {
+        let Some(file) = media.resolved_path.clone() else {
+            continue;
+        };
+        let uploaded = cloudinary::upload_file(&file, Some(&folder), None).await?;
+        let Some(asset) = uploaded.asset.filter(|_| uploaded.success) else {
+            failure = Some(format!(
+                "Couldn't upload {}: {}",
+                media.path,
+                uploaded.error.unwrap_or_else(|| "unknown error".into())
+            ));
+            break;
+        };
+        if media.media_type == "image" && media.alt_text.as_deref().unwrap_or("").is_empty() {
+            media.alt_text = alttext::generate_alt_for_url(&asset.secure_url)
+                .await
+                .ok()
+                .map(|alt| alt.replace(['[', ']', '\n'], " "));
+        }
+        fixes.push((
+            media.original_text.clone(),
+            cloudinary::generate_replacement(&media, &asset),
+        ));
+    }
+
+    if !fixes.is_empty() {
+        cloudinary::apply_fixes_to_file(&path, &fixes)?;
+    }
+    match failure {
+        Some(message) => Err(message),
+        None => Ok(fixes.len()),
+    }
+}
+
+#[tauri::command]
+fn desk_available() -> bool {
+    desk::desk_bin().exists()
+}
+
+#[tauri::command]
+async fn alt_for_url(url: String) -> Result<String, String> {
+    alttext::generate_alt_for_url(&url).await
+}
+
 // Open a terminal and run a command with the file path
 #[tauri::command]
 fn open_in_terminal(path: String, cmd: String) -> Result<(), String> {
@@ -411,8 +479,12 @@ fn create_new_post(title: String) -> Result<String, String> {
         .join("-");
 
     // Use current year
-    let year = chrono::Utc::now().format("%Y").to_string();
-    let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    if slug.is_empty() {
+        return Err("That title has no letters or numbers to make a file name from.".into());
+    }
+    // Your day, not UTC's: an evening post shouldn't be dated tomorrow.
+    let year = chrono::Local::now().format("%Y").to_string();
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
 
     // Create blog/year directory if needed
     let dir = format!("{}/blog/{}", vault_path, year);
@@ -422,7 +494,10 @@ fn create_new_post(title: String) -> Result<String, String> {
 
     // Don't overwrite existing files
     if std::path::Path::new(&file_path).exists() {
-        return Err(format!("File already exists: {}", slug));
+        return Err(format!(
+            "You already have a post called {}.md this year.",
+            slug
+        ));
     }
 
     let content = format!("---\ndate: {}\n---\n\n# {}\n\n", date, title);
@@ -503,10 +578,7 @@ async fn get_site_analytics(days: Option<u32>) -> Result<analytics::PostStats, S
 }
 
 #[tauri::command]
-async fn get_post_pageview_series(
-    url: String,
-    days: Option<u32>,
-) -> Result<Vec<u32>, String> {
+async fn get_post_pageview_series(url: String, days: Option<u32>) -> Result<Vec<u32>, String> {
     analytics::get_post_pageview_series(&url, days.unwrap_or(30)).await
 }
 
@@ -1145,6 +1217,10 @@ pub fn run() {
             check_obsidian_api,
             open_in_obsidian,
             open_in_app,
+            activate_app,
+            desk_available,
+            upload_local_media,
+            alt_for_url,
             open_in_terminal,
             set_preview_file,
             open_preview,

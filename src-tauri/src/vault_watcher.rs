@@ -7,6 +7,7 @@
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 use std::path::Path;
 use std::sync::mpsc::channel;
+use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
@@ -84,27 +85,46 @@ pub fn start(app: AppHandle, vault_path: String) {
         // than once per MIN_EMIT_INTERVAL — iCloud's background sync re-touches
         // `.md` files constantly, and each emit costs a full vault rescan on
         // the frontend, so an unthrottled watcher storms the CPU.
+        // A change inside that window isn't dropped: it's owed one emit when
+        // the window closes, or the last save of a burst never reaches the UI.
         let mut last_emit: Option<Instant> = None;
-        for result in rx {
+        let mut owed = false;
+        loop {
+            let result = if owed {
+                let elapsed = last_emit.map_or(MIN_EMIT_INTERVAL, |t| t.elapsed());
+                match rx.recv_timeout(MIN_EMIT_INTERVAL.saturating_sub(elapsed)) {
+                    Ok(r) => Some(r),
+                    Err(RecvTimeoutError::Timeout) => None,
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            } else {
+                match rx.recv() {
+                    Ok(r) => Some(r),
+                    Err(_) => break,
+                }
+            };
+
             match result {
-                Ok(events) => {
+                None => {}
+                Some(Ok(events)) => {
                     if !events.iter().any(|ev| is_relevant(&ev.path)) {
                         continue;
                     }
-                    if let Some(t) = last_emit {
-                        if t.elapsed() < MIN_EMIT_INTERVAL {
-                            continue; // coalesce a sync storm into silence
-                        }
+                    if last_emit.is_some_and(|t| t.elapsed() < MIN_EMIT_INTERVAL) {
+                        owed = true;
+                        continue;
                     }
-                    last_emit = Some(Instant::now());
-                    log::info!(
-                        "vault_watcher: {} event(s), emitting vault-changed",
-                        events.len()
-                    );
-                    let _ = app.emit("vault-changed", ());
                 }
-                Err(e) => log::warn!("vault_watcher: debouncer error: {:?}", e),
+                Some(Err(e)) => {
+                    log::warn!("vault_watcher: debouncer error: {:?}", e);
+                    continue;
+                }
             }
+
+            owed = false;
+            last_emit = Some(Instant::now());
+            log::info!("vault_watcher: emitting vault-changed");
+            let _ = app.emit("vault-changed", ());
         }
     });
 }

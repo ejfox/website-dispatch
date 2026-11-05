@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { parseEpochSeconds } from '../utils/formatting'
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { perfTrace } from '../utils/perfTrace'
 import { useOverflowMenu } from '../composables/useOverflowMenu'
 import { useDeployStatus } from '../composables/useUiState'
@@ -22,8 +22,6 @@ import {
   PhClockCounterClockwise,
 } from '@phosphor-icons/vue'
 import UiButton from './ui/UiButton.vue'
-import InlineTip from './ui/InlineTip.vue'
-import { useTip } from '../composables/useTips'
 import type { MarkdownFile } from '../types'
 import { useAppConfig } from '../composables/useVaultData'
 import { CHANGED_LABEL, CHANGED_PILL, CHANGED_HINT, NOT_PUBLISHED_LABEL } from '../utils/vocab'
@@ -43,11 +41,14 @@ const emit = defineEmits<{
   'open-settings': []
 }>()
 
-// First-use tip: what the row dots and pills mean. Shows once the vault has
-// both live and unpublished posts, so the legend has something to point at.
-const statesTip = useTip(
-  'list-states',
-  () => props.files.some((f) => f.published_url) && props.files.some((f) => !f.published_url),
+// Keep the selected post in view: it's restored at launch and can be chosen
+// from the palette, often far down a 150-post list.
+watch(
+  () => props.selected?.path,
+  async () => {
+    await nextTick()
+    document.querySelector('.sidebar .item.selected')?.scrollIntoView({ block: 'nearest' })
+  },
 )
 
 const { appConfig, defaultEditor } = useAppConfig()
@@ -149,8 +150,8 @@ interface FilterDef {
 const filterDefs = computed<FilterDef[]>(() => {
   const defs: FilterDef[] = [
     { key: 'all', label: `All ${counts.value.all}`, active: filter.value === 'all', onPick: () => (filter.value = 'all') },
-    { key: 'published', label: `Live ${counts.value.published}`, active: filter.value === 'published', onPick: () => (filter.value = 'published') },
     { key: 'drafts', label: `${NOT_PUBLISHED_LABEL} ${counts.value.drafts}`, active: filter.value === 'drafts', onPick: () => (filter.value = 'drafts') },
+    { key: 'published', label: `Live ${counts.value.published}`, active: filter.value === 'published', onPick: () => (filter.value = 'published') },
   ]
   if (counts.value.photos > 0) {
     defs.push({
@@ -561,10 +562,6 @@ async function startWindowDrag(e: MouseEvent) {
     </div>
 
     <div v-else class="list">
-      <InlineTip v-if="statesTip.show.value" class="list-tip" @close="statesTip.close()">
-        A green dot means the post is live on ejfox.com, orange or red means it needs a look, and no dot
-        means it isn’t published yet.
-      </InlineTip>
       <template v-for="group in groupedFiles" :key="group.label">
         <div
           v-if="group.label"
@@ -684,7 +681,6 @@ async function startWindowDrag(e: MouseEvent) {
               </span>
             </div>
             <div v-if="file.dek" class="dek">{{ file.dek }}</div>
-            <div class="filename">{{ file.source_dir ? file.source_dir + '/' : '' }}{{ file.filename }}</div>
             <div class="meta">
               <span v-if="file.source_dir" class="dir">
                 <PhFolderOpen :size="8" weight="duotone" />
@@ -921,11 +917,6 @@ async function startWindowDrag(e: MouseEvent) {
   to {
     transform: rotate(360deg);
   }
-}
-
-.list-tip {
-  flex-shrink: 0;
-  margin: var(--space-2) var(--space-2) var(--space-1);
 }
 
 .list {

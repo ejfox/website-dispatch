@@ -115,7 +115,10 @@ fn git_preflight(repo_path: &str, expected_branch: &str) -> Result<(), Blocker> 
     if git_ok(repo_path, &["rev-parse", "--git-dir"], LOCAL_TIMEOUT).is_err() {
         return Err(Blocker::new(
             "not_a_repo",
-            format!("{} isn't a git repository, so there's nothing to publish to.", repo_path),
+            format!(
+                "{} isn't a git repository, so there's nothing to publish to.",
+                repo_path
+            ),
         ));
     }
     let branch = current_branch(repo_path).map_err(|e| Blocker::new("git_error", e))?;
@@ -192,8 +195,12 @@ pub(crate) fn commit_and_push(
 ) -> Result<(), String> {
     let mut add = vec!["add", "-A", "--"];
     add.extend_from_slice(paths);
-    git_ok(repo_path, &add, LOCAL_TIMEOUT)
-        .map_err(|e| format!("Couldn't stage the change in git, so nothing was published.\n{}", e))?;
+    git_ok(repo_path, &add, LOCAL_TIMEOUT).map_err(|e| {
+        format!(
+            "Couldn't stage the change in git, so nothing was published.\n{}",
+            e
+        )
+    })?;
 
     let mut staged = vec!["diff", "--cached", "--quiet", "--"];
     staged.extend_from_slice(paths);
@@ -418,8 +425,10 @@ fn clobber_verdict(
         return Ok(());
     }
     let read_err = |e: String| Blocker::new("unreadable", e);
-    let source = fs::read(source_path).map_err(|e| read_err(format!("Failed to read source: {}", e)))?;
-    let current = fs::read(&dest).map_err(|e| read_err(format!("Failed to read repo copy: {}", e)))?;
+    let source =
+        fs::read(source_path).map_err(|e| read_err(format!("Failed to read source: {}", e)))?;
+    let current =
+        fs::read(&dest).map_err(|e| read_err(format!("Failed to read repo copy: {}", e)))?;
     if source == current {
         return Ok(());
     }
@@ -525,11 +534,33 @@ pub struct Published {
 
 /// Publish a vault note using the app config. Blocking (git + network): call
 /// it through `off_main`, never on the UI thread.
+/// A dragged-in image is a bare filename line until `upload_local_media`
+/// rewrites it. Every publish path lands here, so that line can't go live as
+/// plain text, whichever way the publish started.
+fn refuse_bare_media_lines(source_path: &str) -> Result<(), String> {
+    let content = std::fs::read_to_string(source_path).map_err(|e| e.to_string())?;
+    let dir = std::path::Path::new(source_path)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let bare = crate::cloudinary::extract_local_media(&content, &dir)
+        .into_iter()
+        .find(|r| !r.original_text.starts_with("![") && !r.original_text.starts_with('<'));
+    match bare {
+        Some(media) => Err(format!(
+            "{} hasn't been uploaded, so it would show as plain text. Nothing was published.",
+            media.path
+        )),
+        None => Ok(()),
+    }
+}
+
 pub fn publish_file(source_path: &str, target_id: Option<&str>) -> Result<Published, String> {
     // Hard refusal first: week-notes/, drafts/, `type: weeknote`, empty slug.
     // (publish_guard owns this; it runs before any config or path logic.)
     let guard_slug = bare_slug(source_path).unwrap_or_default();
     crate::publish_guard::refuse_unpublishable(source_path, &guard_slug)?;
+    refuse_bare_media_lines(source_path)?;
     let app_config = config::get()?;
     let target = config::resolve_target(target_id)?;
     // Dispatch pieces (vault dispatch/) → content/dispatch/<slug>.md.
@@ -636,7 +667,11 @@ fn parse_when(key: &str, raw: &str) -> WhenField {
     let utc = DateTime::parse_from_rfc3339(&raw)
         .map(|d| d.with_timezone(&Utc))
         .ok()
-        .or_else(|| date_only.and_then(|d| d.and_hms_opt(0, 0, 0)).map(|d| d.and_utc()))
+        .or_else(|| {
+            date_only
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                .map(|d| d.and_utc())
+        })
         .map(|d| d.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
     WhenField {
         key: key.into(),
@@ -649,7 +684,10 @@ fn parse_when(key: &str, raw: &str) -> WhenField {
 /// website2's `publishTime`: `publishAt || date`. Returned only while it's
 /// in the future. A value with no zone (`"2026-10-01 09:00"`) can't be placed
 /// in time from here, so it's returned with `utc: None` for the sheet to flag.
-fn embargo_from(fm: &std::collections::HashMap<String, String>, now: chrono::DateTime<chrono::Utc>) -> Option<WhenField> {
+fn embargo_from(
+    fm: &std::collections::HashMap<String, String>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<WhenField> {
     let (key, raw) = ["publishAt", "date"]
         .iter()
         .find_map(|k| fm.get(*k).filter(|v| !v.trim().is_empty()).map(|v| (*k, v)))?;
@@ -833,7 +871,10 @@ fn syndication_plan(p: &PublishPreview, source_path: &str) -> Vec<SyndicationPla
 
 /// The `publish_preview` command: `preview_note` with the app config, plus
 /// Bridgy Fed and syndication. Reads only. Blocking (git): call via `off_main`.
-pub fn publish_preview(source_path: &str, target_id: Option<&str>) -> Result<PublishPreview, String> {
+pub fn publish_preview(
+    source_path: &str,
+    target_id: Option<&str>,
+) -> Result<PublishPreview, String> {
     let app_config = config::get()?;
     let target = config::resolve_target(target_id)?;
     let year = chrono::Utc::now().format("%Y").to_string();
@@ -988,7 +1029,13 @@ pub async fn run_schedule_checker(app_handle: tauri::AppHandle) {
                         serde_json::json!({ "slug": slug, "url": url, "title": file.title }),
                     );
                     log::warn!("Scheduled publish pushed: {}", url);
-                    watch_scheduled_deploy(app_handle.clone(), &file.path, url, title, file.password.is_some());
+                    watch_scheduled_deploy(
+                        app_handle.clone(),
+                        &file.path,
+                        url,
+                        title,
+                        file.password.is_some(),
+                    );
                 }
                 Err(e) => {
                     let why = e.lines().next().unwrap_or(&e).to_string();
@@ -1001,7 +1048,13 @@ pub async fn run_schedule_checker(app_handle: tauri::AppHandle) {
 
 /// Follow a scheduled publish's deploy in the background; `wait_for_deploy`
 /// sends the "Live" / "Deploy problem" notification itself.
-fn watch_scheduled_deploy(app: tauri::AppHandle, source_path: &str, url: String, title: String, password: bool) {
+fn watch_scheduled_deploy(
+    app: tauri::AppHandle,
+    source_path: &str,
+    url: String,
+    title: String,
+    password: bool,
+) {
     let target = match config::resolve_target(None) {
         Ok(t) => t,
         Err(_) => return,
@@ -1013,7 +1066,9 @@ fn watch_scheduled_deploy(app: tauri::AppHandle, source_path: &str, url: String,
     });
     tauri::async_runtime::spawn(async move {
         let repo = target.repo_path.clone();
-        let Ok(Ok(sha)) = tauri::async_runtime::spawn_blocking(move || crate::deploy::head_sha(&repo)).await else {
+        let Ok(Ok(sha)) =
+            tauri::async_runtime::spawn_blocking(move || crate::deploy::head_sha(&repo)).await
+        else {
             return;
         };
         let _ = crate::deploy::wait_for_deploy(
@@ -1355,16 +1410,22 @@ mod tests {
         let (head, detail) = err.split_once('\n').expect("sentence, then git output");
         assert!(head.starts_with("Committed, but the push"), "{}", err);
         assert!(detail.contains("offline"), "{}", err);
-        assert!(f.remote_file("main", "content/blog/2026/fresh.md").is_none());
+        assert!(f
+            .remote_file("main", "content/blog/2026/fresh.md")
+            .is_none());
 
         fs::remove_file(&hook).unwrap();
         publish_blog(&f.target("main"), &f.vault, &note, "2026").unwrap();
         assert_eq!(
-            f.remote_file("main", "content/blog/2026/fresh.md").as_deref(),
+            f.remote_file("main", "content/blog/2026/fresh.md")
+                .as_deref(),
             Some("fresh\n")
         );
         // One commit, not two: the retry only pushed.
-        assert_eq!(sh(&f.work, &["log", "-2", "--format=%s"]), "Publish: fresh\nPublish: old");
+        assert_eq!(
+            sh(&f.work, &["log", "-2", "--format=%s"]),
+            "Publish: fresh\nPublish: old"
+        );
     }
 
     #[test]
@@ -1372,8 +1433,13 @@ mod tests {
         let none: Vec<String> = vec![];
         assert_eq!(scheduled_hold_reason(false, &none), None);
         // Being out of date with the live copy isn't a reason to hold.
-        assert_eq!(scheduled_hold_reason(false, &["Modified since publish".into()]), None);
-        assert!(scheduled_hold_reason(true, &none).unwrap().contains("draft"));
+        assert_eq!(
+            scheduled_hold_reason(false, &["Modified since publish".into()]),
+            None
+        );
+        assert!(scheduled_hold_reason(true, &none)
+            .unwrap()
+            .contains("draft"));
         let why = scheduled_hold_reason(false, &["No date".into(), "Has TODOs".into()]).unwrap();
         assert_eq!(why, "fix these first: No date, Has TODOs");
     }
@@ -1414,7 +1480,10 @@ mod tests {
         assert_eq!(p.url, "https://ejfox.com/blog/2026/fresh");
         assert_eq!(p.rel_path, "content/blog/2026/fresh.md");
         assert_eq!(p.repo_name, "website2");
-        assert_eq!((p.branch.as_str(), p.current_branch.as_str()), ("main", "main"));
+        assert_eq!(
+            (p.branch.as_str(), p.current_branch.as_str()),
+            ("main", "main")
+        );
         assert!(p.on_branch && p.clobber_ok);
         assert_eq!(p.visibility, "public");
         assert_eq!(p.embargo, None);
@@ -1452,14 +1521,22 @@ mod tests {
     #[test]
     fn preview_reports_the_clobber_guard() {
         let f = Fixture::new("pv-clobber", "main");
-        fs::write(format!("{}/content/blog/2025/old.md", f.work), "hand edit\n").unwrap();
+        fs::write(
+            format!("{}/content/blog/2025/old.md", f.work),
+            "hand edit\n",
+        )
+        .unwrap();
         let p = preview(&f, "main", "blog/2026/old.md");
         assert_eq!(p.blocked.expect("blocked").kind, "clobber_uncommitted");
         assert!(!p.clobber_ok);
 
         // Committed by hand, not by Dispatch: also refused.
         let f = Fixture::new("pv-clobber2", "main");
-        fs::write(format!("{}/content/blog/2025/old.md", f.work), "hand edit\n").unwrap();
+        fs::write(
+            format!("{}/content/blog/2025/old.md", f.work),
+            "hand edit\n",
+        )
+        .unwrap();
         sh(&f.work, &["commit", "-qam", "Fix typo"]);
         let p = preview(&f, "main", "blog/2026/old.md");
         assert_eq!(p.blocked.expect("blocked").kind, "clobber_edited");
@@ -1495,7 +1572,11 @@ mod tests {
         let note = "blog/2026/fresh.md";
         fs::write(f.note(note), "---\nunlisted: true\n---\n# T\n").unwrap();
         assert_eq!(preview(&f, "main", note).visibility, "unlisted");
-        fs::write(f.note(note), "---\nunlisted: true\npassword: hunter2\n---\n# T\n").unwrap();
+        fs::write(
+            f.note(note),
+            "---\nunlisted: true\npassword: hunter2\n---\n# T\n",
+        )
+        .unwrap();
         assert_eq!(preview(&f, "main", note).visibility, "password");
         fs::write(f.note(note), "---\npassword: \"\"\n---\n# T\n").unwrap();
         assert_eq!(preview(&f, "main", note).visibility, "public");
@@ -1531,11 +1612,19 @@ mod tests {
         assert_eq!(preview(&f, "main", note).embargo, None);
 
         // No zone: can't be placed in time, so it's flagged, not guessed.
-        fs::write(f.note(note), "---\npublishAt: \"2026-10-14 09:00\"\n---\n# T\n").unwrap();
+        fs::write(
+            f.note(note),
+            "---\npublishAt: \"2026-10-14 09:00\"\n---\n# T\n",
+        )
+        .unwrap();
         let e = preview(&f, "main", note).embargo.expect("embargo");
         assert_eq!((e.raw.as_str(), e.utc), ("2026-10-14 09:00", None));
 
-        fs::write(f.note(note), "---\npublish_at: 2026-10-20T13:00:00Z\n---\n# T\n").unwrap();
+        fs::write(
+            f.note(note),
+            "---\npublish_at: 2026-10-20T13:00:00Z\n---\n# T\n",
+        )
+        .unwrap();
         let p = preview(&f, "main", note);
         assert_eq!(p.embargo, None);
         assert_eq!(p.dispatch_schedule.expect("hold").key, "publish_at");
@@ -1545,7 +1634,11 @@ mod tests {
     fn preview_of_a_dispatch_piece() {
         let f = Fixture::new("pv-dispatch", "main");
         fs::create_dir_all(format!("{}/dispatch", f.vault)).unwrap();
-        fs::write(f.note("dispatch/water.md"), "---\ntitle: Water\n---\nbody\n").unwrap();
+        fs::write(
+            f.note("dispatch/water.md"),
+            "---\ntitle: Water\n---\nbody\n",
+        )
+        .unwrap();
         let p = preview(&f, "main", "dispatch/water.md");
         assert_eq!(p.blocked, None);
         assert_eq!(p.kind, "dispatch");

@@ -34,6 +34,16 @@ pub fn open_in_app(path: &str, app: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Bring an app to the front without opening anything in it, so whatever
+/// document you were working in stays put.
+pub fn activate_app(app: &str) -> Result<(), String> {
+    std::process::Command::new("open")
+        .args(["-a", app])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Open a terminal (iTerm or Terminal.app) and run a command with the file path
 pub fn open_in_terminal(path: &str, cmd: &str) -> Result<(), String> {
     // AppleScript to control iTerm

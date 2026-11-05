@@ -166,6 +166,8 @@ export function usePublishing(options: {
     const path = options.getFilePath()
     const title = options.getTitle?.() || 'Your post'
     try {
+      // Screenshots dragged into the editor are local files until now.
+      await invoke('upload_local_media', { path })
       const url = await invoke<string>('publish_file', {
         sourcePath: path,
         targetId: options.getActiveTargetId() || null,

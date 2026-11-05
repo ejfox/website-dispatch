@@ -46,6 +46,9 @@ import CommandPalette from './components/CommandPalette.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ToastStack from './components/ToastStack.vue'
 import InlineTip from './components/ui/InlineTip.vue'
+import { checkDesk, deskAvailable } from './composables/useDesk'
+import { slugifyTitle } from './utils/slug'
+import { useImageUpload, IMAGE_EXTS, VIDEO_EXTS, fileExt } from './composables/useImageUpload'
 import { useTip, invalidateTip, recordTipEvent, tipEventCount, helpRequest } from './composables/useTips'
 import { useDebounceFn, useLocalStorage } from '@vueuse/core'
 import type { MarkdownFile } from './types'
@@ -119,6 +122,7 @@ async function startWindowDrag(e: MouseEvent) {
 // Drag-drop state — drives the full-window overlay so the user gets visual
 // confirmation that Dispatch is going to handle the dropped file(s).
 const dragActive = ref(false)
+const { uploadMedia, chooseAndUpload } = useImageUpload()
 const dragCount = ref(0)
 const dragKind = ref<'media' | 'markdown' | 'mixed' | 'unsupported'>('media')
 
@@ -146,6 +150,8 @@ const folderHintForSelected = computed(() => {
 
 // Capitalize the destination key from `check_media_status` for display.
 // "cloudinary" → "Cloudinary", "r2" → "R2".
+const defaultEditorName = computed(() => appConfig.value?.default_editor || 'iA Writer')
+
 const destinationLabel = computed(() => {
   const p = mediaStatusCache.value?.primary
   if (!p) return 'Cloudinary'
@@ -255,15 +261,14 @@ watch(
 )
 
 // Right panel tab state. Persists the user's last/preferred home tab so
-// Dispatch opens where they want to be — Preview by default for most folks,
-// but switchable to Journal for routines that don't start with the post list.
+// Dispatch opens on your post. A new key, because the old one defaulted to the
+// Desk and would have kept people there.
 type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'
-const defaultHomeTab = useLocalStorage<RightTab>('dispatch-home-tab', 'desk')
-// The Desk is the landing view (`d` returns to it from anywhere). A stored
-// 'preview' is the old default, not a choice — land on the Desk instead.
-// A stored 'gear' is from the removed Gear panel.
-const storedHome = defaultHomeTab.value as string
-const rightTab = ref<RightTab>(storedHome === 'preview' || storedHome === 'gear' ? 'desk' : defaultHomeTab.value)
+const defaultHomeTab = useLocalStorage<RightTab>('dispatch-open-to', 'preview')
+const rightTab = ref<RightTab>(defaultHomeTab.value)
+void checkDesk().then((ok) => {
+  if (!ok && rightTab.value === 'desk') rightTab.value = 'preview'
+})
 
 // Desk → "Start piece": the desk wrote a draft into vault dispatch/. Refresh,
 // select it, and open it in the default editor.
@@ -369,11 +374,12 @@ async function createNewPost() {
     // Select the new file
     const newFile = files.value.find((f) => f.path === path)
     if (newFile) selectedFile.value = newFile
+    rightTab.value = 'preview'
     // Open in default editor
     const editor = appConfig.value?.default_editor || 'iA Writer'
     invoke('open_in_app', { path, app: editor })
   } catch (e) {
-    console.error('Failed to create post:', e)
+    toasts.error('Couldn’t create the post', String(e))
   }
   newPostCreating.value = false
 }
@@ -582,8 +588,6 @@ const paletteTip = useTip('palette', () => postsOpened.value >= 4 && !paletteOpe
 watch(paletteOpen, (open) => open && invalidateTip('palette'))
 
 // Drag-and-drop upload is invisible until you try it: say so on the Media tab.
-const dropTip = useTip('drop-media', () => rightTab.value === 'media')
-watch(dragActive, (on) => on && invalidateTip('drop-media'))
 
 // Keyboard shortcuts composable
 const { handleGlobalKey } = useKeyboardShortcuts({
@@ -678,6 +682,8 @@ onMounted(async () => {
   // Track window focus for native dimming behavior
   track(getCurrentWindow().onFocusChanged(({ payload: focused }) => {
     windowFocused.value = focused
+    // Coming back from your editor: pick up what you just saved right away.
+    if (focused) loadFiles()
   }))
 
   // Handle menu bar events from Rust
@@ -711,30 +717,18 @@ onMounted(async () => {
     }
   }))
 
-  // Auto-refresh on vault file changes (fs::notify watcher in Rust).
-  // Debounced 500ms server-side; we still throttle the toast so a flurry
-  // of saves doesn't spam the UI.
-  let lastVaultToastAt = 0
-  track(listen('vault-changed', () => {
-    loadFiles()
-    const now = Date.now()
-    if (now - lastVaultToastAt > 8000) {
-      lastVaultToastAt = now
-      toasts.info('Vault updated')
-    }
-  }))
+  // Auto-refresh on vault file changes (fs::notify watcher in Rust). Quiet:
+  // saving is what you're supposed to be doing, so it isn't news.
+  track(listen('vault-changed', () => loadFiles()))
 
   // Drag-in handler: routes by file type.
   //   .md  → select the post in the list (existing behavior)
-  //   image/video → upload to Cloudinary, copy ready-to-paste markdown
-  //                 references to the clipboard. One motion: drag → ⌘V in
-  //                 your editor at the cursor where you want it.
+  //   image/video → useImageUpload: upload, copy the markdown, bring the
+  //                 editor forward. One motion: drag → ⌘V at your cursor.
   // Drag-drop: window-level handler. Tauri 2 emits four types — `enter` /
   // `over` / `leave` / `drop` — we use the first three to drive the visual
   // overlay and `drop` to actually do the work.
-  const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic', 'heif', 'avif', 'bmp', 'tiff']
-  const VIDEO_EXTS = ['mp4', 'mov', 'webm', 'm4v', 'mkv']
-  const ext = (p: string) => p.split('.').pop()?.toLowerCase() || ''
+  const ext = fileExt
   const classify = (paths: string[]): typeof dragKind.value => {
     let md = 0
     let media = 0
@@ -798,120 +792,7 @@ onMounted(async () => {
       }
     }
 
-    // Media: upload to the user's primary destination (plus any mirrors)
-    // and copy markdown refs to the clipboard. The Rust `media` orchestrator
-    // handles which destination's URL goes in the ref.
-    if (mediaPaths.length) {
-      // Folder derivation:
-      //   1. If a post is selected, try to extract a YYYY from its source_dir
-      //      ("blog/2026" → "blog/2026"). This is the common case for blog
-      //      posts living in year folders.
-      //   2. Else, if the selected post has a non-empty source_dir without a
-      //      year (e.g. "blog/week-notes"), use that verbatim so screenshots
-      //      land near the post they're for.
-      //   3. Else, no post selected — surface a warning so the user knows
-      //      assets are going to the Cloudinary root, then proceed.
-      const folder = (() => {
-        const sd = selectedFile.value?.source_dir
-        if (!sd) return undefined
-        const m = sd.match(/(\d{4})/)
-        if (m) return `blog/${m[1]}`
-        return sd // "blog/week-notes", "drafts", etc — preserve hierarchy
-      })()
-      if (!selectedFile.value) {
-        toasts.warn(
-          'No post selected',
-          'Files will upload to the Cloudinary root. Click a post first to organize by folder.',
-        )
-      }
-
-      const status: any = await invoke('check_media_status').catch(() => null)
-      const primaryLabel = (status?.primary ?? 'cloudinary').toString()
-      const mirrorCount = Array.isArray(status?.mirrors) ? status.mirrors.length : 0
-      const destDesc =
-        mirrorCount > 0 ? `${primaryLabel} (+ ${mirrorCount} mirror)` : primaryLabel
-      // Surface the configured-creds problem early — otherwise the user
-      // just sees N "Upload failed" toasts with no actionable hint.
-      if (status && status[primaryLabel] === false) {
-        toasts.error(
-          `${primaryLabel} not configured`,
-          `Open Settings → Media to paste your ${primaryLabel} credentials.`,
-        )
-        return
-      }
-      toasts.info(
-        `Uploading ${mediaPaths.length} ${mediaPaths.length === 1 ? 'file' : 'files'} to ${destDesc}…`,
-      )
-
-      // Upload in parallel batches. Cloudinary's free tier is fine with
-      // 3 concurrent uploads — more risks getting rate-limited. Sequential
-      // (the old loop) made 6 screenshots take 6× longer than necessary.
-      const CONCURRENCY = 3
-      const refs: { idx: number; ref: string }[] = []
-      let failures = 0
-      let lastError: string | undefined
-      const mirrorFailures: string[] = []
-
-      async function uploadOne(p: string, idx: number) {
-        try {
-          const result: any = await invoke('media_upload', { filePath: p, folder })
-          if (result?.success && result?.asset?.url) {
-            const url = result.asset.url
-            const isVideo = VIDEO_EXTS.includes(ext(p))
-            refs.push({
-              idx,
-              ref: isVideo ? `<video src="${url}" controls></video>` : `![](${url})`,
-            })
-            for (const m of result.mirrors ?? []) {
-              if (!m.success) {
-                mirrorFailures.push(`${m.destination}: ${m.error ?? 'unknown'}`)
-                console.warn('Mirror upload failed', m.destination, m.error)
-              }
-            }
-          } else {
-            failures++
-            lastError = result?.error ?? 'unknown error'
-            console.warn('media_upload returned failure', p, result?.error)
-          }
-        } catch (e: any) {
-          failures++
-          lastError = typeof e === 'string' ? e : (e?.message ?? String(e))
-          console.warn('media_upload threw', p, e)
-        }
-      }
-
-      // Worker-pool pattern: keep CONCURRENCY in flight at all times until
-      // every path has been processed.
-      let cursor = 0
-      async function worker() {
-        while (cursor < mediaPaths.length) {
-          const i = cursor++
-          await uploadOne(mediaPaths[i], i)
-        }
-      }
-      await Promise.all(
-        Array.from({ length: Math.min(CONCURRENCY, mediaPaths.length) }, () => worker()),
-      )
-
-      // Preserve original drop order in the clipboard payload.
-      refs.sort((a, b) => a.idx - b.idx)
-
-      if (refs.length) {
-        await navigator.clipboard.writeText(refs.map((r) => r.ref).join('\n\n'))
-        const subtitle: string[] = []
-        if (failures) subtitle.push(`${failures} failed (${lastError ?? 'see console'})`)
-        if (mirrorFailures.length) subtitle.push(`mirror: ${mirrorFailures.join(', ')}`)
-        toasts.success(
-          `${refs.length} uploaded — ⌘V in your editor`,
-          subtitle.length ? subtitle.join(' · ') : undefined,
-        )
-      } else {
-        toasts.error(
-          'Upload failed',
-          lastError ?? `${failures} file${failures === 1 ? '' : 's'} didn't upload`,
-        )
-      }
-    }
+    if (mediaPaths.length) void uploadMedia(mediaPaths, selectedFile.value)
 
     if (!mdPaths.length && !mediaPaths.length) {
       toasts.warn(
@@ -981,6 +862,12 @@ onUnmounted(() => {
         }
       "
       @toggle-diff="toggleDiffFromPalette"
+      @add-image="
+        () => {
+          paletteOpen = false
+          chooseAndUpload(selectedFile)
+        }
+      "
     />
 
     <!-- New Post Modal -->
@@ -999,13 +886,7 @@ onUnmounted(() => {
           />
           <div class="new-post-footer">
             <span class="new-post-slug" v-if="newPostTitle.trim()">
-              blog/{{ new Date().getFullYear() }}/{{
-                newPostTitle
-                  .trim()
-                  .toLowerCase()
-                  .replace(/[^a-z0-9\s]/g, '')
-                  .replace(/\s+/g, '-')
-              }}.md
+              blog/{{ new Date().getFullYear() }}/{{ slugifyTitle(newPostTitle) }}.md
             </span>
             <div class="new-post-actions">
               <UiButton variant="plain" label="Cancel" @click="closeNewPost" />
@@ -1085,7 +966,7 @@ onUnmounted(() => {
              on top, tab strip below. -->
         <div class="panel-tabs">
           <!-- Left to right after the Desk: ⌘1–⌘5 (View menu, menu.rs). -->
-          <button data-tab="desk" :class="{ active: rightTab === 'desk' }" data-tip="Your writing desk: today’s pieces and what’s on deck (d)" @click="rightTab = 'desk'">
+          <button v-if="deskAvailable" data-tab="desk" :class="{ active: rightTab === 'desk' }" data-tip="Your writing desk: today’s pieces and what’s on deck (d)" @click="rightTab = 'desk'">
             <PhNewspaper :size="13" />
             <span>Desk</span>
           </button>
@@ -1155,13 +1036,13 @@ onUnmounted(() => {
                 <kbd>?</kbd>
                 <span>shortcuts</span>
               </div>
+              <div class="shortcut-row">
+                <span>Drag an image anywhere to upload it</span>
+              </div>
             </div>
           </div>
 
           <template v-else-if="rightTab === 'media'">
-            <InlineTip v-if="dropTip.show.value" class="media-tip" @close="dropTip.close()">
-              Drag images or video onto this window to upload them and put the markdown on your clipboard.
-            </InlineTip>
             <MediaLibraryModal
               :selected-file="selectedFile"
               :inline="true"
@@ -1219,6 +1100,7 @@ onUnmounted(() => {
               {{ dragCount }} file{{ dragCount === 1 ? '' : 's' }} ·
               <template v-if="selectedFile">going into <code>{{ folderHintForSelected }}</code></template>
               <template v-else>no post selected · will land at root</template>
+              <div class="drag-overlay-next">Then press ⌘V in {{ defaultEditorName }}</div>
             </template>
             <template v-else-if="dragKind === 'unsupported'">
               Dispatch accepts <code>.md</code>, images, and video.
@@ -1276,13 +1158,13 @@ onUnmounted(() => {
           {{ gitBranch || '---' }}
         </span>
         <span
-          class="status-item"
-          :class="obsidianConnected ? 'connected' : 'muted'"
-          :data-tip="obsidianConnected ? 'Obsidian vault connected · right-click for options' : 'Obsidian not detected'"
+          v-if="obsidianConnected"
+          class="status-item connected"
+          data-tip="Obsidian’s Local REST API is answering, so backlinks work · right-click for options"
           @contextmenu="showVaultMenu"
         >
-          <PhCircleWavy :size="10" :weight="obsidianConnected ? 'fill' : 'light'" />
-          vault
+          <PhCircleWavy :size="10" weight="fill" />
+          obsidian
         </span>
         <span
           class="status-item"
@@ -1294,12 +1176,12 @@ onUnmounted(() => {
           media
         </span>
         <span
-          class="status-item"
-          :class="analyticsConnected ? 'connected' : 'muted'"
-          :data-tip="analyticsConnected ? 'Umami analytics connected · right-click for options' : 'Analytics not configured'"
+          v-if="analyticsConnected"
+          class="status-item connected"
+          data-tip="Umami analytics connected · right-click for options"
           @contextmenu="showAnalyticsMenu"
         >
-          <PhChartBar :size="10" :weight="analyticsConnected ? 'fill' : 'light'" />
+          <PhChartBar :size="10" weight="fill" />
           analytics
         </span>
         <span class="status-divider"></span>
@@ -1635,11 +1517,6 @@ onUnmounted(() => {
   position: relative;
   display: inline-flex;
 }
-.media-tip {
-  flex-shrink: 0;
-  margin: var(--space-2) var(--space-3) 0;
-}
-
 /* Status Bar */
 .statusbar {
   grid-area: status;
@@ -1851,6 +1728,11 @@ onUnmounted(() => {
   color: var(--text-secondary);
   line-height: 1.4;
 }
+.drag-overlay-next {
+  margin-top: var(--space-1);
+  color: var(--label);
+}
+
 .drag-overlay-sub code {
   background: var(--bg-tertiary);
   padding: 1px 6px;

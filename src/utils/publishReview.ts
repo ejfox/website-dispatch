@@ -4,6 +4,7 @@
 // one sentence that states the consequence, then a button that repeats it.
 
 import { parseDate } from './formatting'
+import { isBlockingWarning } from './lint'
 import type { PublishPreview, WhenField } from '../types'
 
 export type ReviewMode = 'publish' | 'unlisted'
@@ -20,7 +21,7 @@ export interface Review {
    *  isn't reachable yet), so the toggle has nothing to control. */
   webmentionsApply: boolean
   undo: string
-  /** Lint issues that don't block (an update), as sentences. */
+  /** Lint issues that don't block, as sentences. */
   notes: string[]
   /** Small grey git detail. */
   git: string
@@ -98,6 +99,8 @@ export function lintSentences(warnings: string[]): string[] {
           return 'It has no date in its frontmatter.'
         case 'Has TODOs':
           return 'It still has a TODO or FIXME in the text.'
+        case 'Images to upload':
+          return 'Local images will upload when you publish.'
         case 'Local images':
           return 'It points at images on this Mac, which won’t load on the site.'
         case 'Local media':
@@ -207,12 +210,14 @@ export function composeReview(
       ? ` · ${others} other uncommitted file${others === 1 ? '' : 's'} in ${p.repo_name} stay${others === 1 ? 's' : ''} out of this commit`
       : '')
 
-  // Lint gates a first publish only; an update has always gone through.
+  // Only what would break the live post gates a first publish; an update has
+  // always gone through. The rest is shown and never stops you.
+  const blocking = lintSentences((opts.warnings ?? []).filter(isBlockingWarning))
   let blocker = p.blocked?.message ?? null
   let blockerList: string[] = []
-  if (!blocker && !p.is_update && lint.length) {
-    blocker = `Fix ${lint.length === 1 ? 'this' : 'these'} in Obsidian first, then come back:`
-    blockerList = lint
+  if (!blocker && !p.is_update && blocking.length) {
+    blocker = `Fix ${blocking.length === 1 ? 'this' : 'these'} in your editor first, then come back:`
+    blockerList = blocking
   }
 
   const primaryLabel = future(p.embargo)
@@ -247,7 +252,7 @@ export function composeReview(
       : webmentionLine(p, send, visibility),
     webmentionsApply: !embargoed && p.webmentions_after_live,
     undo: `You can unpublish later; that deploys again (~${mins} min).`,
-    notes: p.is_update ? lint : [],
+    notes: p.is_update ? lint : lintSentences((opts.warnings ?? []).filter((w) => !isBlockingWarning(w))),
     git,
     blocker,
     blockerList,
