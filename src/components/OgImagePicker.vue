@@ -28,6 +28,14 @@ const uploadedUrl = ref<string | null>(null)
 const error = ref<string | null>(null)
 const batch = ref(0)
 
+// website2's generator renders one house style per slot, always in this order
+// (STYLES in website2/scripts/og-image/styles.mjs).
+const STYLE_NAMES = ['Dither', 'Academic', 'Vulpes', 'Broadcast']
+
+function styleName(i: number): string {
+  return STYLE_NAMES[i] || `v${i}`
+}
+
 // Convert file paths to displayable URLs (Tauri asset protocol)
 // Every render overwrites the same variant-N.png, so stamp the URL or the
 // webview serves the previous batch from cache (the asset protocol reads only
@@ -239,8 +247,8 @@ onUnmounted(() => window.removeEventListener('dispatch:generate-og', onGenerateR
         @dblclick="invoke('open_in_app', { path: variants!.paths[i], app: 'Preview' }).catch(() => {})"
         @contextmenu="showVariantMenu(i, $event)"
       >
-        <img :src="url" :alt="`OG variant ${i}`" loading="eager" @error="onImageError" />
-        <div class="variant-label">v{{ i }}</div>
+        <img :src="url" :alt="`Social card, ${styleName(i)} style`" loading="eager" @error="onImageError" />
+        <div class="variant-label">{{ styleName(i) }}</div>
         <div v-if="selectedIdx === i" class="variant-check">
           <PhCheck :size="16" weight="bold" />
         </div>
