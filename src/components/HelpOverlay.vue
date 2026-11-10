@@ -227,6 +227,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey, true))
             <div class="help-row"><kbd>&#8984;3</kbd> or <kbd>J</kbd><span>Journal</span></div>
             <div class="help-row"><kbd>&#8984;4</kbd><span>{{ CHANGED_LABEL }}</span></div>
             <div class="help-row"><kbd>&#8984;5</kbd><span>Activity</span></div>
+            <div class="help-row"><kbd>&#8984;6</kbd><span>Projects</span></div>
           </div>
         </div>
         <div class="help-divider"></div>

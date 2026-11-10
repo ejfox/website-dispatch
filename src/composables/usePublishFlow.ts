@@ -447,6 +447,8 @@ export function usePublishing(options: {
 
 export function usePostActions(options: {
   slug: Ref<string>
+  getSourcePath: () => string
+  getContentNoun: () => string
   getLiveUrl: () => string | null
   isLive: () => boolean
   getActiveTargetId: () => string | undefined
@@ -544,7 +546,7 @@ export function usePostActions(options: {
     // Native NSAlert: wry implements no WKUIDelegate confirm panel, so a
     // webview confirm() silently returns false and Unpublish never ran.
     const ok = await ask(`"${options.slug.value}" will come off the site and move back to drafts.`, {
-      title: 'Unpublish this post?',
+      title: `Unpublish this ${options.getContentNoun()}?`,
       kind: 'warning',
       okLabel: 'Unpublish',
       cancelLabel: 'Cancel',
@@ -552,7 +554,11 @@ export function usePostActions(options: {
     if (!ok) return
     unpublishing.value = true
     try {
-      await invoke('unpublish_file', { slug: options.slug.value, targetId: options.getActiveTargetId() || null })
+      await invoke('unpublish_file', {
+        slug: options.slug.value,
+        sourcePath: options.getSourcePath(),
+        targetId: options.getActiveTargetId() || null,
+      })
       options.showSuccessToast('Unpublished: it\'ll come down in about 3 minutes')
       setTimeout(() => options.onRefresh(), 500)
     } catch (e) {

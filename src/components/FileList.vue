@@ -2,29 +2,24 @@
 import { parseEpochSeconds } from '../utils/formatting'
 import { ref, computed, watch, nextTick } from 'vue'
 import { perfTrace } from '../utils/perfTrace'
-import { useOverflowMenu } from '../composables/useOverflowMenu'
 import { useDeployStatus } from '../composables/useUiState'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useLocalStorage } from '@vueuse/core'
-import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
+import { Menu, MenuItem, CheckMenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
+import { LogicalPosition } from '@tauri-apps/api/dpi'
 import {
   PhLockSimple,
-  PhEye,
+  PhEyeSlash,
   PhClock,
-  PhCheckCircle,
-  PhFolderOpen,
-  PhPencilSimple,
-  PhTextAa,
-  PhCalendarBlank,
-  PhTextAlignLeft,
-  PhBroadcast,
-  PhClockCounterClockwise,
+  PhCaretRight,
+  PhCaretDown,
+  PhArrowsDownUp,
 } from '@phosphor-icons/vue'
 import UiButton from './ui/UiButton.vue'
 import type { MarkdownFile } from '../types'
 import { useAppConfig } from '../composables/useVaultData'
-import { CHANGED_LABEL, CHANGED_PILL, CHANGED_HINT, NOT_PUBLISHED_LABEL } from '../utils/vocab'
+import { CHANGED_LABEL, CHANGED_HINT, NOT_PUBLISHED_LABEL } from '../utils/vocab'
 
 const props = defineProps<{
   files: MarkdownFile[]
@@ -39,6 +34,8 @@ const emit = defineEmits<{
   'request-publish': [file: MarkdownFile, mode: 'publish' | 'unlisted']
   'request-unpublish': [file: MarkdownFile]
   'open-settings': []
+  /** Rows in on-screen order, collapsed sections skipped (keyboard nav). */
+  'update:visible': [files: MarkdownFile[]]
 }>()
 
 // Keep the selected post in view: it's restored at launch and can be chosen
@@ -76,177 +73,212 @@ function thumbSrc(url: string): string {
 
 const { phaseFor, deployStatus } = useDeployStatus()
 
-const filter = ref<'all' | 'published' | 'drafts' | 'scheduled' | 'photos'>('all')
-const sort = ref<'recent' | 'created' | 'title' | 'words'>('recent')
-const showWeeknotes = useLocalStorage('dispatch-show-weeknotes', true)
+// ── Filter + sort ───────────────────────────────────────────────────────
+// One status filter for the whole list, picked from a native menu (Finder's
+// pull-down idiom). Content type is not a filter any more: each type is its
+// own collapsible section below, so "show only projects" is "collapse the
+// rest".
+type StatusFilter = 'all' | 'published' | 'drafts' | 'scheduled'
+type SortKey = 'recent' | 'created' | 'title' | 'words'
+const filter = ref<StatusFilter>('all')
+const sort = useLocalStorage<SortKey>('dispatch-sidebar-sort', 'recent')
 
-const filteredFiles = computed(() => {
-  let result = props.files
+const FILTER_LABELS: Record<StatusFilter, string> = {
+  all: 'All',
+  published: 'Live',
+  drafts: NOT_PUBLISHED_LABEL,
+  scheduled: 'Publish Later',
+}
+const SORT_LABELS: Record<SortKey, string> = {
+  recent: 'Most Recent',
+  created: 'Date Created',
+  title: 'Title',
+  words: 'Word Count',
+}
 
-  // Filter
-  if (filter.value === 'published') {
-    result = result.filter((f) => f.published_url)
-  } else if (filter.value === 'drafts') {
-    result = result.filter((f) => !f.published_url)
-  } else if (filter.value === 'scheduled') {
-    result = result.filter((f) => f.publish_at && !f.published_url)
-  } else if (filter.value === 'photos') {
-    result = result.filter((f) => f.content_type === 'photos')
+function matchesFilter(f: MarkdownFile, which: StatusFilter): boolean {
+  switch (which) {
+    case 'published':
+      return !!f.published_url
+    case 'drafts':
+      return !f.published_url
+    case 'scheduled':
+      return !!f.publish_at && !f.published_url
+    default:
+      return true
   }
+}
 
-  // Hide weeknotes if toggled off
-  if (!showWeeknotes.value) {
-    result = result.filter((f) => f.content_type !== 'weeknote')
+function compare(a: MarkdownFile, b: MarkdownFile): number {
+  switch (sort.value) {
+    case 'recent':
+      return (b.published_date || b.modified) - (a.published_date || a.modified)
+    case 'created':
+      // An unparseable date falls back to created; NaN would scramble the sort.
+      return (parseEpochSeconds(b.date) ?? b.created) - (parseEpochSeconds(a.date) ?? a.created)
+    case 'title':
+      return formatTitle(a).localeCompare(formatTitle(b))
+    case 'words':
+      return b.word_count - a.word_count
   }
+}
 
-  // Sort
-  result = [...result].sort((a, b) => {
-    switch (sort.value) {
-      case 'recent':
-        // Use published_date if available, otherwise modified
-        const aRecent = a.published_date || a.modified
-        const bRecent = b.published_date || b.modified
-        return bRecent - aRecent
-      case 'created':
-        // An unparseable date falls back to created; NaN would scramble the sort.
-        const aDate = parseEpochSeconds(a.date) ?? a.created
-        const bDate = parseEpochSeconds(b.date) ?? b.created
-        return bDate - aDate
-      case 'title':
-        return formatTitle(a).localeCompare(formatTitle(b))
-      case 'words':
-        return b.word_count - a.word_count
-      default:
-        return 0
-    }
-  })
-
-  return result
-})
-
-// NSToolbar-style overflow for the .filters row. When the sidebar gets too
-// narrow, filter buttons that don't fit are hidden and a `»` chevron pops a
-// native Tauri menu containing them.
-const filtersRef = ref<HTMLElement | null>(null)
-const filterItemRefs = ref<(HTMLElement | null)[]>([])
-const { hiddenIndices: hiddenFilterIndices, remeasure: remeasureFilters } =
-  useOverflowMenu(filtersRef, filterItemRefs)
-
-// The set of filter items is static today (all/published/drafts) plus an
-// optional week-toggle that appears once any week-notes exist — re-measure
-// when that toggle's existence flips.
-watch(
-  () => filterItemRefs.value.filter(Boolean).length,
-  () => remeasureFilters(),
+const filteredFiles = computed(() =>
+  props.files.filter((f) => matchesFilter(f, filter.value)).sort(compare),
 )
 
-interface FilterDef {
-  key: 'all' | 'published' | 'drafts' | 'week' | 'photos'
-  label: string
-  active: boolean
-  onPick: () => void
-}
-
-const filterDefs = computed<FilterDef[]>(() => {
-  const defs: FilterDef[] = [
-    { key: 'all', label: `All ${counts.value.all}`, active: filter.value === 'all', onPick: () => (filter.value = 'all') },
-    { key: 'drafts', label: `${NOT_PUBLISHED_LABEL} ${counts.value.drafts}`, active: filter.value === 'drafts', onPick: () => (filter.value = 'drafts') },
-    { key: 'published', label: `Live ${counts.value.published}`, active: filter.value === 'published', onPick: () => (filter.value = 'published') },
-  ]
-  if (counts.value.photos > 0) {
-    defs.push({
-      key: 'photos',
-      label: `PHOTO ${counts.value.photos}`,
-      active: filter.value === 'photos',
-      // Toggle: clicking the active PHOTO pill clears back to All.
-      onPick: () => (filter.value = filter.value === 'photos' ? 'all' : 'photos'),
-    })
+const filterCounts = computed(() => {
+  const c = {} as Record<StatusFilter, number>
+  for (const k of Object.keys(FILTER_LABELS) as StatusFilter[]) {
+    c[k] = props.files.filter((f) => matchesFilter(f, k)).length
   }
-  if (counts.value.weeknotes > 0) {
-    defs.push({
-      key: 'week',
-      label: `WEEK ${counts.value.weeknotes}${showWeeknotes.value ? '' : ' (hidden)'}`,
-      active: showWeeknotes.value,
-      onPick: () => (showWeeknotes.value = !showWeeknotes.value),
-    })
-  }
-  return defs
+  return c
 })
 
-// Pop a native menu listing the items that didn't fit on the bar.
-async function showOverflowMenu() {
+// Native pull-down menus. CheckMenuItem gives the real macOS checkmark.
+async function showFilterMenu(e: MouseEvent) {
   const items = await Promise.all(
-    hiddenFilterIndices.value.map(async (i) => {
-      const def = filterDefs.value[i]
-      return await MenuItem.new({
-        // Active state shown with a trailing dot; native menus don't expose
-        // the "checked" state from JS in Tauri 2, so a textual cue is it.
-        text: def.label + (def.active ? '  •' : ''),
-        action: def.onPick,
-      })
-    }),
+    (Object.keys(FILTER_LABELS) as StatusFilter[]).map((k) =>
+      CheckMenuItem.new({
+        text: `${FILTER_LABELS[k]}  (${filterCounts.value[k]})`,
+        checked: filter.value === k,
+        enabled: k === 'all' || filterCounts.value[k] > 0,
+        action: () => (filter.value = k),
+      }),
+    ),
   )
-  if (!items.length) return
-  const menu = await Menu.new({ items })
-  await menu.popup()
+  await popupBelow(await Menu.new({ items }), e)
 }
 
-const counts = computed(() => {
-  // "All / Live / Drafts" counts respect the weeknote toggle, so the numbers
-  // match what the user is actually seeing.
-  const base = showWeeknotes.value
-    ? props.files
-    : props.files.filter((f) => f.content_type !== 'weeknote')
-  return {
-    all: base.length,
-    published: base.filter((f) => f.published_url).length,
-    drafts: base.filter((f) => !f.published_url).length,
-    scheduled: base.filter((f) => f.publish_at && !f.published_url).length,
-    weeknotes: props.files.filter((f) => f.content_type === 'weeknote').length,
-    photos: props.files.filter((f) => f.content_type === 'photos').length,
+async function showSortMenu(e: MouseEvent) {
+  const items = await Promise.all(
+    (Object.keys(SORT_LABELS) as SortKey[]).map((k) =>
+      CheckMenuItem.new({ text: SORT_LABELS[k], checked: sort.value === k, action: () => (sort.value = k) }),
+    ),
+  )
+  await popupBelow(await Menu.new({ items }), e)
+}
+
+/** Drop the menu from the button's bottom-left corner, like an NSPopUpButton. */
+async function popupBelow(menu: Menu, e: MouseEvent) {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  await menu.popup(new LogicalPosition(r.left, r.bottom + 4))
+}
+
+// ── Sections ────────────────────────────────────────────────────────────
+// Finder/Mail source list: one collapsible section per content type, posts
+// first. Projects (91, mostly drafts) and week notes start collapsed so they
+// can't bury the posts; the open/closed state persists.
+type SectionKey = 'posts' | 'dispatch' | 'projects' | 'weeknotes'
+interface Group {
+  label: string | null
+  files: MarkdownFile[]
+}
+interface Section {
+  key: SectionKey
+  label: string
+  /** Quiet text before the count, e.g. "6 live" for projects. */
+  meta: string | null
+  files: MarkdownFile[]
+  groups: Group[]
+}
+
+const SECTION_LABELS: Record<SectionKey, string> = {
+  posts: 'Posts',
+  dispatch: 'Dispatch',
+  projects: 'Projects',
+  weeknotes: 'Week Notes',
+}
+function sectionOf(f: MarkdownFile): SectionKey {
+  if (f.content_type === 'project') return 'projects'
+  if (f.content_type === 'dispatch') return 'dispatch'
+  if (f.content_type === 'weeknote') return 'weeknotes'
+  return 'posts' // blog posts and photo posts
+}
+
+const collapsed = useLocalStorage<Record<SectionKey, boolean>>(
+  'dispatch-sidebar-collapsed-sections',
+  { posts: false, dispatch: false, projects: true, weeknotes: true },
+  { mergeDefaults: true },
+)
+function toggleSection(key: SectionKey) {
+  collapsed.value = { ...collapsed.value, [key]: !collapsed.value[key] }
+}
+
+// Notes.app date buckets: Today, Yesterday, Previous 7 Days, Previous 30
+// Days, then this year's months by name, then whole years.
+function dateGroups(list: MarkdownFile[]): Group[] {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const t0 = today.getTime() / 1000
+  const groups: Group[] = []
+  for (const f of list) {
+    const ts = f.published_date || f.modified
+    const d = new Date(ts * 1000)
+    let label: string
+    if (ts >= t0) label = 'Today'
+    else if (ts >= t0 - 86400) label = 'Yesterday'
+    else if (ts >= t0 - 86400 * 7) label = 'Previous 7 Days'
+    else if (ts >= t0 - 86400 * 30) label = 'Previous 30 Days'
+    else if (d.getFullYear() === today.getFullYear()) label = d.toLocaleString('en-US', { month: 'long' })
+    else label = String(d.getFullYear())
+    const last = groups[groups.length - 1]
+    if (last?.label === label) last.files.push(f)
+    else groups.push({ label, files: [f] })
   }
-})
-
-// Group files by time period (only for 'recent' sort)
-const groupedFiles = computed(() => {
-  if (sort.value !== 'recent') {
-    return [{ label: null, files: filteredFiles.value }]
-  }
-
-  const now = Date.now() / 1000
-  const dayAgo = now - 86400
-  const weekAgo = now - 86400 * 7
-  const monthAgo = now - 86400 * 30
-
-  const groups: { label: string | null; files: MarkdownFile[] }[] = []
-
-  const today: MarkdownFile[] = []
-  const thisWeek: MarkdownFile[] = []
-  const thisMonth: MarkdownFile[] = []
-  const earlier: MarkdownFile[] = []
-
-  for (const file of filteredFiles.value) {
-    const ts = file.published_date || file.modified
-    if (ts > dayAgo) {
-      today.push(file)
-    } else if (ts > weekAgo) {
-      thisWeek.push(file)
-    } else if (ts > monthAgo) {
-      thisMonth.push(file)
-    } else {
-      earlier.push(file)
-    }
-  }
-
-  if (today.length) groups.push({ label: 'Today', files: today })
-  if (thisWeek.length) groups.push({ label: 'This Week', files: thisWeek })
-  if (thisMonth.length) groups.push({ label: 'This Month', files: thisMonth })
-  if (earlier.length) groups.push({ label: 'Earlier', files: earlier })
-
   return groups
+}
+
+const sections = computed<Section[]>(() => {
+  const by: Record<SectionKey, MarkdownFile[]> = { posts: [], dispatch: [], projects: [], weeknotes: [] }
+  for (const f of filteredFiles.value) by[sectionOf(f)].push(f)
+  return (Object.keys(SECTION_LABELS) as SectionKey[])
+    .filter((key) => by[key].length)
+    .map((key) => {
+      const list = by[key]
+      let groups: Group[]
+      let meta: string | null = null
+      if (key === 'projects') {
+        // Live first: the six on the site matter more than 85 parked drafts.
+        const live = list.filter((f) => f.published_url)
+        const rest = list.filter((f) => !f.published_url)
+        groups =
+          live.length && rest.length
+            ? [
+                { label: 'Live', files: live },
+                { label: NOT_PUBLISHED_LABEL, files: rest },
+              ]
+            : [{ label: null, files: list }]
+        if (live.length && rest.length) meta = `${live.length} live`
+      } else if (key === 'posts' && sort.value === 'recent') {
+        groups = dateGroups(list)
+      } else {
+        groups = [{ label: null, files: list }]
+      }
+      return { key, label: SECTION_LABELS[key], meta, files: list, groups }
+    })
 })
 
-/** What the empty list says when a filter hides everything. */
+// The selected post can arrive from launch restore or the command palette:
+// open its section so it's never selected-but-invisible.
+watch(
+  () => props.selected?.path,
+  (path) => {
+    if (!path || !props.selected) return
+    const key = sectionOf(props.selected)
+    if (collapsed.value[key]) collapsed.value = { ...collapsed.value, [key]: false }
+  },
+  { immediate: true },
+)
+
+// Rows in on-screen order, collapsed sections skipped. App.vue walks this
+// for ↑↓ / j k / gg / G, so the keyboard follows what you see.
+const visibleFiles = computed(() =>
+  sections.value.filter((s) => !collapsed.value[s.key]).flatMap((s) => s.files),
+)
+watch(visibleFiles, (list) => emit('update:visible', list), { immediate: true })
+
+/** What the empty list says when the filter hides everything. */
 const emptyFilterText = computed(() => {
   switch (filter.value) {
     case 'published':
@@ -255,10 +287,8 @@ const emptyFilterText = computed(() => {
       return 'Everything here is live.'
     case 'scheduled':
       return 'Nothing set to publish later.'
-    case 'photos':
-      return 'No photo posts.'
     default:
-      return showWeeknotes.value ? 'No posts match.' : 'Only week notes here, and they’re hidden.'
+      return 'No posts match.'
   }
 })
 
@@ -501,40 +531,25 @@ async function startWindowDrag(e: MouseEvent) {
          function comment for why CSS-region drag is broken under
          `titleBarStyle: "Overlay"`. -->
     <div class="control-bar" data-tauri-drag-region @mousedown="startWindowDrag">
-      <div ref="filtersRef" class="filters">
-        <button
-          v-for="(def, i) in filterDefs"
-          :key="def.key"
-          :ref="(el) => (filterItemRefs[i] = el as HTMLElement | null)"
-          :class="{
-            active: def.active,
-            'week-toggle': def.key === 'week',
-            off: def.key === 'week' && !showWeeknotes,
-            overflowed: hiddenFilterIndices.includes(i),
-          }"
-          @click="def.onPick"
-        >
-          {{ def.label }}
-        </button>
-        <button
-          v-if="hiddenFilterIndices.length"
-          class="filter-overflow"
-          data-tip="Show filters that didn’t fit"
-          aria-label="More filters"
-          @click="showOverflowMenu"
-        >»</button>
-      </div>
-      <div class="sort-row">
-        <button :class="{ active: sort === 'recent' }" @click="sort = 'recent'" data-tip="Sort by most recent" aria-label="Sort by most recent">
-          <PhClockCounterClockwise :size="9" weight="bold" />
-        </button>
-        <button :class="{ active: sort === 'created' }" @click="sort = 'created'" data-tip="Sort by date created" aria-label="Sort by date created">
-          <PhCalendarBlank :size="9" weight="bold" />
-        </button>
-        <button :class="{ active: sort === 'title' }" @click="sort = 'title'" data-tip="Sort by title" aria-label="Sort by title">
-          <PhTextAlignLeft :size="9" weight="bold" />
-        </button>
-      </div>
+      <button
+        class="filter-popup"
+        :class="{ active: filter !== 'all' }"
+        :aria-label="`Filter: ${FILTER_LABELS[filter]}`"
+        data-tip="Show all, live, or unpublished"
+        @click="showFilterMenu"
+      >
+        {{ FILTER_LABELS[filter] }}
+        <span class="filter-popup-count">{{ filteredFiles.length }}</span>
+        <PhCaretDown :size="9" weight="bold" class="filter-popup-caret" />
+      </button>
+      <button
+        class="sort-button"
+        :aria-label="`Sort: ${SORT_LABELS[sort]}`"
+        :data-tip="`Sorted by ${SORT_LABELS[sort].toLowerCase()}`"
+        @click="showSortMenu"
+      >
+        <PhArrowsDownUp :size="13" />
+      </button>
     </div>
 
     <div v-if="loading" class="loading">Loading...</div>
@@ -558,162 +573,116 @@ async function startWindowDrag(e: MouseEvent) {
     <!-- A filter hid everything. -->
     <div v-else-if="filteredFiles.length === 0" class="list-empty">
       <div class="list-empty-sub">{{ emptyFilterText }}</div>
-      <UiButton size="small" class="list-empty-btn" label="Show all" @click="filter = 'all'; showWeeknotes = true" />
+      <UiButton size="small" class="list-empty-btn" label="Show all" @click="filter = 'all'" />
     </div>
 
     <div v-else class="list">
-      <template v-for="group in groupedFiles" :key="group.label">
-        <div
-          v-if="group.label"
-          class="group-header"
-          @contextmenu="showGroupContextMenu(group, $event)"
-        >
-          {{ group.label }}
-          <span class="group-count">{{ group.files.length }}</span>
-        </div>
+      <section v-for="section in sections" :key="section.key" class="section" :class="`section-${section.key}`">
         <button
-          v-for="file in group.files"
-          :key="file.path"
-          v-memo="[
-            file.path,
-            file.modified,
-            file.published_url,
-            file.published_word_count,
-            file.word_count,
-            file.warnings.length,
-            file.draft,
-            phaseFor(file.path),
-            selected?.path === file.path,
-          ]"
-          class="item"
-          :class="{
-            selected: selected?.path === file.path,
-            published: !!file.published_url,
-            weeknote: file.content_type === 'weeknote',
-            photos: file.content_type === 'photos',
-          }"
-          @click="onRowClick(file)"
-          @contextmenu="showContextMenu(file, $event)"
+          class="section-header"
+          :aria-expanded="!collapsed[section.key]"
+          @click="toggleSection(section.key)"
+          @contextmenu="showGroupContextMenu(section, $event)"
         >
-          <img
-            v-if="file.content_type === 'photos' && file.thumbnail"
-            class="row-thumb"
-            :src="thumbSrc(file.thumbnail)"
-            loading="lazy"
-            alt=""
-          />
-          <div class="content">
-            <div class="row">
-              <!-- Leading status dot — Mail's "blue unread dot" idiom, but
-                   color-coded by visibility/state. Drafts show no dot so
-                   they read as quiet. -->
-              <span
-                v-if="rowState(file)"
-                class="status-dot row-dot"
-                :data-state="rowState(file)"
-                :data-status="rowStatus(file)"
-                :data-tip="rowStateLabel(file)"
-                aria-hidden="true"
-              ></span>
-              <span v-if="file.content_type === 'weeknote'" class="weeknote-badge">WEEK</span>
-              <span v-if="file.content_type === 'photos'" class="photo-badge">PHOTO</span>
-              <span
-                v-if="file.content_type === 'dispatch'"
-                class="dispatch-badge"
-                data-tip="Dispatch piece → ejfox.com/dispatch/"
-                >DISPATCH</span
-              >
-              <span
-                v-if="file.draft && !file.published_url"
-                class="draft-badge"
-                data-tip="draft: true — publishing asks to clear it first"
-                >DRAFT</span
-              >
-              <span
-                v-if="file.password && !file.published_url"
-                class="protected-badge-draft"
-                data-tip="Will be password-protected"
-              >
-                <PhLockSimple :size="10" weight="fill" />
-              </span>
-              <span
-                v-else-if="file.unlisted && !file.published_url"
-                class="unlisted-badge-draft"
-                data-tip="Will be unlisted"
-              >
-                <PhEye :size="10" weight="fill" />
-              </span>
-              <span class="title" :title="formatTitle(file)">{{ formatTitle(file) }}</span>
-              <span
-                v-if="file.published_url && file.warnings.includes('Modified since publish')"
-                class="modified-badge"
-                :data-tip="
-                  file.published_word_count != null
-                    ? `${CHANGED_HINT} · was ${file.published_word_count.toLocaleString()}w, now ${file.word_count.toLocaleString()}w`
-                    : CHANGED_HINT
-                "
-              >
-                {{ CHANGED_PILL }}
-                <span
-                  v-if="file.published_word_count != null"
-                  class="modified-delta"
-                  :class="{ pos: file.word_count > file.published_word_count, neg: file.word_count < file.published_word_count }"
-                >
-                  {{ file.word_count >= file.published_word_count ? '+' : ''
-                  }}{{ (file.word_count - file.published_word_count).toLocaleString() }}w
-                </span>
-              </span>
-              <span v-else-if="file.published_url && file.password" class="protected-badge" data-tip="Live, behind a password">
-                <PhLockSimple :size="9" weight="bold" />
-                PROTECTED
-              </span>
-              <span v-else-if="file.published_url && file.unlisted" class="unlisted-badge" data-tip="Live, but left off listings and feeds">
-                <PhEye :size="9" weight="bold" />
-                UNLISTED
-              </span>
-              <span v-else-if="file.published_url" class="live-badge" data-tip="On ejfox.com and matches your vault">
-                <PhCheckCircle :size="9" weight="fill" />
-                LIVE
-              </span>
-              <span v-else-if="file.publish_at" class="scheduled-badge" data-tip="Dispatch publishes it at the set time, while it’s open">
-                <PhClock :size="9" weight="bold" />
-                PUBLISH LATER
-              </span>
-            </div>
-            <div v-if="file.dek" class="dek">{{ file.dek }}</div>
-            <div class="meta">
-              <span v-if="file.source_dir" class="dir">
-                <PhFolderOpen :size="8" weight="duotone" />
-                {{ file.source_dir }}/
-              </span>
-              <template v-if="file.published_date">
-                <span class="pub-date">
-                  <PhBroadcast :size="8" weight="fill" />
-                  {{ formatAge(file.published_date) }}
-                </span>
-                <span v-if="file.warnings.includes('Modified since publish')" class="edit-date">
-                  <PhPencilSimple :size="8" weight="fill" />
-                  {{ formatAge(file.modified) }}
-                </span>
-              </template>
-              <template v-else>
-                <span class="create-date">
-                  <PhCalendarBlank :size="8" weight="duotone" />
-                  {{ formatAge(file.created) }}
-                </span>
-                <span class="edit-date">
-                  <PhPencilSimple :size="8" weight="duotone" />
-                  {{ formatAge(file.modified) }}
-                </span>
-              </template>
-              <span class="word-count">
-                <PhTextAa :size="8" weight="duotone" />
-                {{ formatWordCount(file.word_count) }}w
-              </span>
-            </div>
-          </div>
+          <PhCaretRight :size="10" weight="bold" class="disclosure" :class="{ open: !collapsed[section.key] }" />
+          <span class="section-label">{{ section.label }}</span>
+          <span v-if="section.meta" class="section-meta">{{ section.meta }}</span>
+          <span class="section-count">{{ section.files.length }}</span>
         </button>
-      </template>
+        <template v-if="!collapsed[section.key]">
+          <template v-for="group in section.groups" :key="`${section.key}-${group.label}`">
+            <div v-if="group.label" class="group-header" @contextmenu="showGroupContextMenu(group, $event)">
+              {{ group.label }}
+            </div>
+            <button
+              v-for="file in group.files"
+              :key="file.path"
+              v-memo="[
+                file.path,
+                file.modified,
+                file.published_url,
+                file.published_word_count,
+                file.word_count,
+                file.warnings.length,
+                file.draft,
+                phaseFor(file.path),
+                selected?.path === file.path,
+              ]"
+              class="item"
+              :class="{
+                selected: selected?.path === file.path,
+                published: !!file.published_url,
+                parked: file.draft && !file.published_url,
+              }"
+              @click="onRowClick(file)"
+              @contextmenu="showContextMenu(file, $event)"
+            >
+              <!-- Fixed-width dot slot so titles line up whether or not a row
+                   has a state. Drafts show no dot: rest state stays quiet. -->
+              <span class="dot-slot">
+                <span
+                  v-if="rowState(file)"
+                  class="status-dot row-dot"
+                  :data-state="rowState(file)"
+                  :data-status="rowStatus(file)"
+                  :data-tip="rowStateLabel(file)"
+                  aria-hidden="true"
+                ></span>
+              </span>
+              <img
+                v-if="file.content_type === 'photos' && file.thumbnail"
+                class="row-thumb"
+                :src="thumbSrc(file.thumbnail)"
+                loading="lazy"
+                alt=""
+              />
+              <div class="content">
+                <div class="row">
+                  <span class="title" :title="formatTitle(file)">{{ formatTitle(file) }}</span>
+                  <!-- Trailing accessories, Mail-style: one quiet glyph or
+                       number, never a pill. The dot already says live. -->
+                  <span
+                    v-if="file.published_url && file.warnings.includes('Modified since publish') && file.published_word_count != null"
+                    class="accessory delta"
+                    :class="{ pos: file.word_count > file.published_word_count, neg: file.word_count < file.published_word_count }"
+                    :data-tip="`${CHANGED_HINT} · was ${file.published_word_count.toLocaleString()}w, now ${file.word_count.toLocaleString()}w`"
+                  >
+                    {{ file.word_count >= file.published_word_count ? '+' : ''
+                    }}{{ (file.word_count - file.published_word_count).toLocaleString() }}w
+                  </span>
+                  <span
+                    v-if="file.password"
+                    class="accessory"
+                    :data-tip="file.published_url ? 'Live, behind a password' : 'Will be password-protected'"
+                  >
+                    <PhLockSimple :size="11" weight="fill" />
+                  </span>
+                  <span
+                    v-else-if="file.unlisted"
+                    class="accessory"
+                    :data-tip="file.published_url ? 'Live, left off listings and feeds' : 'Will be unlisted'"
+                  >
+                    <PhEyeSlash :size="11" />
+                  </span>
+                  <span
+                    v-if="file.publish_at && !file.published_url"
+                    class="accessory"
+                    data-tip="Dispatch publishes it at the set time, while it’s open"
+                  >
+                    <PhClock :size="11" />
+                  </span>
+                </div>
+                <div v-if="file.dek" class="dek">{{ file.dek }}</div>
+                <div class="meta">
+                  <span v-if="file.draft && !file.published_url">Draft</span>
+                  <span>{{ formatAge(file.published_date || file.modified) }}</span>
+                  <span>{{ formatWordCount(file.word_count) }} words</span>
+                </div>
+              </div>
+            </button>
+          </template>
+        </template>
+      </section>
     </div>
   </aside>
 </template>
@@ -738,133 +707,68 @@ async function startWindowDrag(e: MouseEvent) {
    filter buttons, and (b) any horizontal whitespace between the traffic
    lights and the filter buttons. Bumping `padding-top` to 18px gives a
    fatter grab strip that survives any responsive layout. */
+/* ── Control bar: filter pull-down + sort ─────────────────────────── */
 .control-bar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   background: transparent;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-  /* Traffic lights now live in the unified titlebar above, so the old
-     78px keepout is gone. Standard 10px sidebar padding. */
-  padding: 0 10px;
+  /* No rule under it: the column reads as one translucent surface. */
+  padding: 0 8px 0 10px;
   height: 32px;
   gap: 6px;
 }
 
-.filters {
-  display: flex;
-  flex: 1;
-  /* `overflow: hidden` keeps overflowing items from painting past the bar
-     while useOverflowMenu re-measures. Items get `flex-shrink: 0` so they
-     keep their natural width instead of silently shrinking — the composable
-     hides ones that don't fit and surfaces them via the » chevron. */
-  overflow: hidden;
-  min-width: 0;
-}
-
-.filters button {
-  flex-shrink: 0;
-  padding: 5px 8px;
-  font-size: 9px;
-  font-weight: 500;
-  background: transparent;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  transition: all var(--transition-fast, 0.15s cubic-bezier(0.34, 1.56, 0.64, 1));
+/* NSPopUpButton, pull-down style: borderless until hovered. */
+.filter-popup {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-variant-numeric: tabular-nums;
-  -webkit-app-region: no-drag;
-}
-
-.filters button.overflowed {
-  display: none;
-}
-
-/* NSToolbar-style overflow chevron — pops a native menu of hidden filters. */
-.filters .filter-overflow {
-  margin-left: auto;
-  padding: 5px 6px;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  line-height: 1;
-}
-.filters .filter-overflow:hover {
-  color: var(--text-primary);
-}
-
-.filters button:hover {
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-}
-
-.filters button.active {
-  /* Match the panel-tab pill style — a translucent accent fill instead
-     of the old "just bump the text weight" treatment. Reads as a real
-     selected state against the vibrant sidebar. */
-  color: var(--text-primary);
-  background: var(--accent-selected);
-  border-radius: 4px;
-  font-weight: 600;
-}
-
-.filters .week-toggle {
-  margin-left: 4px;
-  /* Content-type filter, not a status: neutral. */
-  background: var(--fill-2);
-  color: var(--label-2);
-  border-radius: 8px;
-  letter-spacing: 0.5px;
-  font-weight: 600;
-}
-.filters .week-toggle:hover {
-  background: var(--fill-2);
-  color: var(--label);
-}
-.filters .week-toggle.off {
-  background: transparent;
-  color: var(--text-tertiary);
-  text-decoration: line-through;
-  text-decoration-thickness: 1px;
-  opacity: 0.6;
-}
-.filters .week-toggle.off:hover {
-  opacity: 1;
-}
-
-.sort-row {
-  display: flex;
-  gap: 0;
-}
-
-.sort-row button {
-  padding: 5px 6px;
-  background: transparent;
+  gap: 5px;
+  height: 22px;
+  padding: 0 6px;
+  margin-left: -6px;
   border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  transition: all var(--transition-fast, 0.15s cubic-bezier(0.34, 1.56, 0.64, 1));
+  border-radius: 5px;
+  background: transparent;
+  color: var(--label);
+  font: 600 13px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  cursor: default;
+}
+.filter-popup:hover {
+  background: var(--fill);
+}
+.filter-popup:active {
+  background: var(--fill-2);
+}
+/* A narrowed list says so in the accent, Finder-style. */
+.filter-popup.active {
+  color: var(--accent);
+}
+.filter-popup-count {
+  font-weight: 400;
+  color: var(--label-2);
+  font-variant-numeric: tabular-nums;
+}
+.filter-popup-caret {
+  color: var(--label-2);
+}
+
+.sort-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.5;
-  -webkit-app-region: no-drag;
+  width: 24px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--label-2);
+  cursor: default;
 }
-
-.sort-row button:hover {
-  opacity: 1;
-  color: var(--text-secondary);
-}
-
-.sort-row button.active {
-  opacity: 1;
-  color: var(--text-primary);
-}
-
-.weeknote-toggle[data-tip]:hover::after {
-  transform: translateX(0) translateY(0);
+.sort-button:hover {
+  background: var(--fill);
+  color: var(--label);
 }
 
 .list-empty {
@@ -919,406 +823,194 @@ async function startWindowDrag(e: MouseEvent) {
   }
 }
 
+/* ── Source list ───────────────────────────────────────────────────── */
 .list {
   flex: 1;
   overflow-y: auto;
-  scroll-behavior: smooth;
-  /* Column flex so rows stretch to full width — the .item buttons size to
-     content otherwise, leaving short-title rows (and their selection rect)
-     narrower than the sidebar. */
+  padding: 2px 0 12px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
 }
 
-.group-header {
-  padding: 5px 12px;
-  font-size: 9px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--text-tertiary);
-  background: color-mix(in srgb, var(--bg-tertiary) 80%, var(--bg-secondary));
-  /* Sticky group label — solid background, no blur needed (and blur on a
-     position:sticky element causes layout-shift hitches during scroll). */
-  border-bottom: 1px solid var(--border);
+.section {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* Section header: Finder/Mail sidebar heading. Title Case, small bold,
+   secondary label, disclosure chevron, trailing count. Not sticky: on a
+   vibrant surface a sticky header would need an opaque fill. */
+.section-header {
+  display: flex;
   align-items: center;
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  gap: 4px;
+  margin: 10px 6px 2px;
+  padding: 3px 8px 3px 4px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--label-2);
+  font: 700 11px/14px -apple-system, BlinkMacSystemFont, sans-serif;
+  text-align: left;
+  cursor: default;
 }
-
-.group-count {
+.section:first-child .section-header {
+  margin-top: 2px;
+}
+.section-header:hover {
+  background: var(--fill);
+}
+.disclosure {
+  flex-shrink: 0;
+  color: var(--label-3);
+  transition: transform 0.15s ease;
+}
+.disclosure.open {
+  transform: rotate(90deg);
+}
+.section-header:hover .disclosure {
+  color: var(--label-2);
+}
+.section-label {
+  flex: 1;
+}
+.section-meta,
+.section-count {
   font-weight: 400;
-  opacity: 0.5;
-  font-family: 'SF Mono', monospace;
-  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.section-meta {
+  color: var(--label-2);
+}
+.section-meta::after {
+  content: ' ·';
+}
+.section-count {
+  color: var(--label-3);
 }
 
+/* Date / Live sub-groups inside a section: Notes.app-style small heading. */
+.group-header {
+  padding: 8px 14px 2px 26px;
+  font: 600 11px/14px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--label-3);
+}
+
+/* Row: inset rounded selection, no dividers (source lists have none). */
 .item {
-  width: auto;
   display: flex;
-  /* Don't shrink on the column's main axis. .item has overflow:hidden, which
-     gives it an automatic min-height:0 — so inside the flex-column .list it
-     would otherwise collapse to near-zero height when many rows compete for
-     space. flex:none keeps each row at its content height; align-items:stretch
-     on .list still gives us the full-width rows this branch was after. */
+  align-items: flex-start;
   flex: none;
   gap: 0;
-  padding: 0;
-  /* Inset the rounded source-list selection from the sidebar edges. The
-     6px margin holds the selection rect away from the sidebar walls —
-     same idiom as Mail / Finder. overflow:hidden clips the row
-     thumbnail's corners to the row's border-radius. */
   margin: 0 6px;
-  border-radius: 6px;
+  padding: 0;
+  min-height: 28px;
   border: none;
+  border-radius: 6px;
   background: transparent;
-  cursor: pointer;
+  cursor: default;
   text-align: left;
   overflow: hidden;
-  transition: background 0.12s ease;
 }
-
-/* Hairline divider between rows, drawn inside the row's content (so it
-   doesn't paint over the rounded selection rect). */
-.item + .item {
-  box-shadow: inset 0 1px 0 0 color-mix(in srgb, var(--border) 40%, transparent);
-}
-
 .item:hover {
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  background: var(--fill);
 }
-
-.item:active {
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-}
-
-/* Source-list selection — translucent accent fill with rounded corners,
-   floating with margin from the sidebar edges. The macOS NSSourceList
-   look. Replaces the old solid-color row + left accent stripe. */
 .item.selected {
   background: var(--accent-selected);
-  box-shadow: none;
-}
-.item.selected + .item {
-  /* No top divider under the selection rect — the rounded fill should
-     read as a discrete chip, not a row with a hairline above it. */
-  box-shadow: none;
 }
 
-/* Old override compensated for the now-gone 2px left accent border — the
-   source-list rect doesn't need a content padding adjustment. */
-
-/* The selection fill is a translucent tint, not a solid accent — so the
-   title stays --label. (Forcing #fff here was 1.5:1 in light mode.) */
-.item.selected .title {
-  color: var(--label);
-}
-
-.item.selected .meta,
-.item.selected .dir {
-  color: var(--text-tertiary);
-}
-
-.content {
-  flex: 1;
-  padding: 7px 10px;
-  min-width: 0;
-}
-
-.row {
+.dot-slot {
+  flex: none;
+  width: 20px;
+  height: 28px;
   display: flex;
   align-items: center;
-  gap: 6px;
-}
-
-/* Leading status dot — Mail's unread-dot idiom. Color comes from the
-   global .status-dot[data-status] map (live green, attention orange, broken
-   red, scheduled purple, deploying = pulsing accent). Drafts get no dot. */
-.row-dot {
-  margin-left: 1px;
+  justify-content: center;
 }
 /* Hold the dot off the accent selection fill so it never merges into it. */
 .item.selected .row-dot:not([data-status='deploying']) {
   box-shadow: 0 0 0 1.5px var(--control-bg);
 }
 
-/* Pills: one dialect. Status pills = 15% tint + colored glyph + neutral
-   label text. Visibility and content-type tags = neutral fill + --label-2. */
-.live-badge {
-  font-size: 7.5px;
-  font-weight: 600;
-  background: var(--tint-live);
-  color: var(--label);
-  padding: 1px 5px;
-  border-radius: 8px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  letter-spacing: 0.3px;
-}
-
-.live-badge svg {
-  color: var(--status-live);
-}
-
-.modified-badge {
-  font-size: 7.5px;
-  font-weight: 600;
-  background: var(--tint-attention);
-  color: var(--label);
-  padding: 1px 5px;
-  border-radius: 8px;
-  flex-shrink: 0;
-  letter-spacing: 0.3px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.modified-delta {
-  font-weight: 500;
-  letter-spacing: 0;
-  opacity: 0.85;
-}
-/* A word-count diff, not a status: neutral (green here read as "live"). */
-.modified-delta { color: var(--label-2); }
-
-.unlisted-badge {
-  font-size: 7.5px;
-  font-weight: 600;
-  background: var(--fill-2);
-  color: var(--label-2);
-  padding: 1px 5px;
-  border-radius: 8px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  letter-spacing: 0.3px;
-}
-
-.protected-badge {
-  font-size: 7.5px;
-  font-weight: 600;
-  background: var(--fill-2);
-  color: var(--label-2);
-  padding: 1px 5px;
-  border-radius: 8px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  letter-spacing: 0.3px;
-}
-
-.weeknote-badge {
-  font-size: 7.5px;
-  font-weight: 600;
-  background: var(--fill-2);
-  color: var(--label-2);
-  padding: 1px 5px;
-  border-radius: 8px;
-  flex-shrink: 0;
-  letter-spacing: 0.5px;
-}
-
-.photo-badge {
-  font-size: 7.5px;
-  font-weight: 600;
-  background: var(--fill-2);
-  color: var(--label-2);
-  padding: 1px 5px;
-  border-radius: 8px;
-  flex-shrink: 0;
-  letter-spacing: 0.5px;
-}
-
-.dispatch-badge {
-  font-size: 7.5px;
-  font-weight: 700;
-  background: var(--fill-2);
-  color: var(--label-2);
-  padding: 1px 5px;
-  border-radius: 8px;
-  flex-shrink: 0;
-  letter-spacing: 0.5px;
-}
-
-.draft-badge {
-  font-size: 7.5px;
-  font-weight: 600;
-  border: 1px dashed var(--label-3);
-  color: var(--label-2);
-  padding: 0 5px;
-  border-radius: 8px;
-  flex-shrink: 0;
-  letter-spacing: 0.5px;
-}
-
-/* List thumbnail for photo posts — small cropped square before the text
-   content, so photo posts are scannable in the sidebar. */
 .row-thumb {
-  width: 34px;
-  height: 34px;
   flex: none;
-  object-fit: cover;
+  width: 28px;
+  height: 28px;
+  margin: 6px 6px 6px 0;
   border-radius: 4px;
-  margin: 4px 0 4px 4px;
-  background: var(--under-page);
+  object-fit: cover;
 }
 
-.unlisted-badge-draft {
-  font-size: 9px;
-  flex-shrink: 0;
-  padding: 1px 4px;
-  border-radius: 2px;
-  background: transparent;
-  color: var(--label-2);
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px 6px 0;
 }
 
-.protected-badge-draft {
-  font-size: 9px;
-  flex-shrink: 0;
-  padding: 1px 4px;
-  border-radius: 2px;
-  background: transparent;
-  color: var(--label-2);
-}
-
-.scheduled-badge {
-  font-size: 8px;
-  font-weight: 500;
-  padding: 1px 4px;
-  border-radius: 2px;
-  background: var(--tint-scheduled);
-  color: var(--label);
-}
-.scheduled-badge svg {
-  color: var(--status-scheduled);
-}
-
-/* Pills keep their tints when selected — the selection is a tint too. */
-
-.filename {
-  font-size: 8.5px;
-  font-family: 'SF Mono', monospace;
-  color: var(--text-tertiary);
-  opacity: 0.45;
-  margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  letter-spacing: 0.01em;
-}
-
-/* .item.selected .filename inherits from the rule above */
-
-.dek {
-  font-size: 9px;
-  color: var(--text-tertiary);
-  margin-top: 2px;
-  line-height: 1.35;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-style: italic;
-  opacity: 0.65;
-}
-
-.item.selected .dek {
-  color: var(--text-tertiary);
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 16px;
 }
 
 .title {
   flex: 1;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-primary);
+  min-width: 0;
+  font: 400 13px/16px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--label);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
-  letter-spacing: -0.01em;
+}
+/* `draft: true` rows are parked on purpose: secondary label, like a
+   disabled-but-present item. */
+.item.parked .title {
+  color: var(--label-2);
+}
+
+/* Trailing accessories: one quiet glyph or number per fact. */
+.accessory {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--label-2);
+  font: 400 11px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.dek {
+  margin-top: 2px;
+  font: 400 12px/15px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--label-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .meta {
-  margin-top: 2px;
-  font-size: 9px;
-  font-family: 'SF Mono', monospace;
-  color: var(--text-tertiary);
   display: flex;
   gap: 8px;
-  align-items: center;
-}
-
-.dir {
-  color: var(--text-tertiary);
-  max-width: 80px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.pub-date {
-  color: var(--text-tertiary);
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.create-date {
-  color: var(--text-tertiary);
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.edit-date {
-  color: var(--text-tertiary);
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.word-count {
+  margin-top: 2px;
+  font: 400 11px/14px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--label-2);
   font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum';
-  opacity: 0.7;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
 }
 
-/* Compact Mode */
+/* Compact (View › Compact List): one 28px line per row, Finder density. */
 .sidebar.compact .item .content {
-  padding: 4px 10px;
+  padding: 6px 10px 6px 0;
 }
-
-.sidebar.compact .filename {
-  display: none;
-}
-
-.sidebar.compact .dek {
-  display: none;
-}
-
+.sidebar.compact .dek,
 .sidebar.compact .meta {
   display: none;
 }
-
-.sidebar.compact .item .row {
-  gap: 4px;
-}
-
-.sidebar.compact .group-header {
-  padding: 4px 10px;
-  font-size: 8px;
+.sidebar.compact .row-thumb {
+  width: 20px;
+  height: 20px;
+  margin: 4px 6px 4px 0;
 }
 </style>

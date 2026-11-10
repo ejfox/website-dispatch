@@ -65,8 +65,8 @@ fn word_count(s: &str) -> usize {
 }
 
 /// Compute diff between source file and published copy, looking up the
-/// published copy via the existing `vault::find_published_info_for_target`
-/// resolver so we honor the user's configured publish target.
+/// published copy via the source-aware vault resolver so projects, dispatches,
+/// and dated blog posts each use their own canonical destination.
 pub fn compute_publish_diff(source_file_path: &str) -> Result<PublishDiff, String> {
     let source_path = Path::new(source_file_path);
     if !source_path.exists() {
@@ -80,9 +80,14 @@ pub fn compute_publish_diff(source_file_path: &str) -> Result<PublishDiff, Strin
 
     // Use the default publish target — same resolution path the rest of
     // Dispatch uses when checking modified status.
+    let app = crate::config::get()?;
     let target = crate::config::default_target()?;
-    let (_url, _date, published_content) =
-        crate::vault::find_published_info_for_target(&target, slug);
+    let (_url, _date, published_content) = crate::vault::find_published_info_for_source(
+        &target,
+        &app.vault.path,
+        source_file_path,
+        slug,
+    );
 
     let source_raw = fs::read_to_string(source_file_path)
         .map_err(|e| format!("Failed to read source: {}", e))?;

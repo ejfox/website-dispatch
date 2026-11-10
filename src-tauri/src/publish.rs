@@ -302,9 +302,9 @@ pub fn get_git_status(target_id: Option<&str>) -> GitStatus {
     }
 }
 
-/// Where a vault blog note lands in the website repo, and the URL it serves
-/// at. The one place that maps a vault file to its repo destination; path and
-/// URL are derived together so they can't disagree.
+/// Where a vault blog note or portfolio project lands in the website repo,
+/// and the URL it serves at. The one place that maps a vault file to its repo
+/// destination; path and URL are derived together so they can't disagree.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlogDest {
     /// Bare slug: the vault file's name without `.md`.
@@ -313,7 +313,8 @@ pub struct BlogDest {
     pub rel_path: String,
     /// Public URL, e.g. `https://ejfox.com/blog/2026/the-knife`.
     pub url: String,
-    /// True when the post is already in the repo (a republish).
+    /// True when the post is publicly live (a republish). A `draft: true`
+    /// project may already have a repo copy without being live.
     pub existing: bool,
 }
 
@@ -339,9 +340,8 @@ fn content_base(target: &config::PublishTarget) -> &str {
         .trim_end_matches('/')
 }
 
-/// Repo-relative path of an already-published `<slug>.md` anywhere under the
-/// content base (a year folder, projects/, week-notes/). Skips private/
-/// (sealed posts) and drafts/. From EJ's republish-in-place WIP.
+/// Repo-relative path of an already-published dated blog post. Projects are a
+/// separate collection and must never win a same-slug lookup for a blog post.
 fn find_existing_copy(repo_path: &str, content_base: &str, slug: &str) -> Option<String> {
     let file_name = format!("{}.md", slug);
     let base = Path::new(repo_path).join(content_base);
@@ -357,8 +357,13 @@ fn find_existing_copy(repo_path: &str, content_base: &str, slug: &str) -> Option
                 .ok()?
                 .to_string_lossy()
                 .to_string();
-            let private = rel.split('/').any(|c| c == "private" || c == "drafts");
-            (!private).then_some(rel)
+            let rest = rel.strip_prefix(&format!("{}/", content_base))?;
+            let parts: Vec<&str> = rest.split('/').collect();
+            let dated_post = parts.len() == 2
+                && parts[0].len() == 4
+                && parts[0].chars().all(|c| c.is_ascii_digit())
+                && parts[1] == file_name.as_str();
+            dated_post.then_some(rel)
         })
         .collect();
     hits.sort(); // deterministic if a slug somehow exists twice
@@ -367,6 +372,8 @@ fn find_existing_copy(repo_path: &str, content_base: &str, slug: &str) -> Option
 
 /// Map a vault note to its repo destination.
 ///
+/// `<vault>/blog/projects/<slug>.md` -> `content/blog/projects/<slug>.md`
+/// with canonical URL `/projects/<slug>`;
 /// `<vault>/blog/<YYYY>/<slug>.md` -> `content/blog/<YYYY>/<slug>.md`;
 /// `<vault>/blog/<slug>.md` (no year folder) -> `current_year`. A post already
 /// in the repo is updated where it lives, never duplicated into another year.
@@ -384,6 +391,17 @@ pub fn blog_destination(
         .ok_or("Publish blocked: file must live in the vault's blog/ folder")?;
     let slug = bare_slug(rel)?;
     let base = content_base(target);
+
+    if crate::projects::is_project_note(vault_root, source_path) {
+        let rel_path = crate::projects::relative_dest(target, &slug);
+        let existing = crate::projects::find_published(target, &slug).0.is_some();
+        return Ok(BlogDest {
+            slug: slug.clone(),
+            rel_path,
+            url: crate::projects::public_url(&target.domain, &slug),
+            existing,
+        });
+    }
 
     let (rel_path, existing) = match find_existing_copy(&target.repo_path, base, &slug) {
         Some(found) => (found, true),
@@ -524,7 +542,7 @@ pub fn publish_blog(
     Ok(dest)
 }
 
-/// Result of a successful publish (blog post or dispatch piece).
+/// Result of a successful publish (blog post, project, or dispatch piece).
 #[derive(Debug, Clone)]
 pub struct Published {
     pub url: String,
@@ -622,7 +640,7 @@ pub struct SyndicationPlan {
 pub struct PublishPreview {
     pub title: String,
     pub slug: String,
-    /// `blog` or `dispatch`.
+    /// `blog`, `project`, or `dispatch`.
     pub kind: String,
     /// True when the post is already in the repo: this replaces it in place.
     pub is_update: bool,
@@ -741,6 +759,7 @@ pub fn preview_note(
     let content = fs::read_to_string(source_path).unwrap_or_default();
     let (fm, body) = crate::vault::parse_frontmatter(&content);
     let is_dispatch = crate::dispatch::is_dispatch_note(vault_root, source_path);
+    let is_project = crate::projects::is_project_note(vault_root, source_path);
     let slug = bare_slug(source_path).unwrap_or_default();
     let title = (if is_dispatch {
         fm.get("title").filter(|t| !t.is_empty()).cloned()
@@ -755,7 +774,14 @@ pub fn preview_note(
     let mut p = PublishPreview {
         title,
         slug: slug.clone(),
-        kind: if is_dispatch { "dispatch" } else { "blog" }.into(),
+        kind: if is_dispatch {
+            "dispatch"
+        } else if is_project {
+            "project"
+        } else {
+            "blog"
+        }
+        .into(),
         is_update: false,
         url: String::new(),
         rel_path: String::new(),
@@ -904,9 +930,13 @@ where
         .map_err(|e| format!("Publish task failed: {}", e))?
 }
 
-/// Move a published post to `content/drafts/` and push. Accepts a bare slug
-/// or a `year/slug` string.
-pub fn unpublish_file(slug: &str, target_id: Option<&str>) -> Result<(), String> {
+/// Move a published post or project to `content/drafts/` and push. The source
+/// path disambiguates a project from a same-slug dated post.
+pub fn unpublish_file(
+    slug: &str,
+    source_path: Option<&str>,
+    target_id: Option<&str>,
+) -> Result<(), String> {
     let target = config::resolve_target(target_id)?;
     let slug = bare_slug(slug)?;
     let repo = &target.repo_path;
@@ -914,8 +944,16 @@ pub fn unpublish_file(slug: &str, target_id: Option<&str>) -> Result<(), String>
     check_git_status(repo, &target.branch)?;
     sync_with_remote(repo, &target.branch)?;
 
-    let source_rel = find_existing_copy(repo, content_base(&target), &slug)
-        .ok_or_else(|| "Published file not found".to_string())?;
+    let app_config = config::get()?;
+    let is_project =
+        source_path.is_some_and(|p| crate::projects::is_project_note(&app_config.vault.path, p));
+    let source_rel = if is_project {
+        let rel = crate::projects::relative_dest(&target, &slug);
+        Path::new(repo).join(&rel).exists().then_some(rel)
+    } else {
+        find_existing_copy(repo, content_base(&target), &slug)
+    }
+    .ok_or_else(|| "Published file not found".to_string())?;
     let dest_rel = format!("content/drafts/{}.md", slug);
     let dest_abs = Path::new(repo).join(&dest_rel);
     if dest_abs.exists() {
@@ -1238,6 +1276,28 @@ mod tests {
     }
 
     #[test]
+    fn project_destination_keeps_collection_path_and_canonical_url() {
+        let f = Fixture::new("project-dest", "main");
+        fs::create_dir_all(format!("{}/blog/projects", f.vault)).unwrap();
+        fs::write(
+            f.note("blog/projects/websdr-vcv.md"),
+            "---\ntitle: WebSDR VCV\n---\nbody\n",
+        )
+        .unwrap();
+
+        let d = blog_destination(
+            &f.target("main"),
+            &f.vault,
+            &f.note("blog/projects/websdr-vcv.md"),
+            "2031",
+        )
+        .unwrap();
+        assert_eq!(d.rel_path, "content/blog/projects/websdr-vcv.md");
+        assert_eq!(d.url, "https://ejfox.com/projects/websdr-vcv");
+        assert!(!d.existing);
+    }
+
+    #[test]
     fn slug_is_normalized_from_any_shape() {
         assert_eq!(bare_slug("2026/the-knife").unwrap(), "the-knife");
         assert_eq!(bare_slug("the-knife").unwrap(), "the-knife");
@@ -1266,6 +1326,34 @@ mod tests {
             .remote_file("main", "content/blog/2026/2026/fresh.md")
             .is_none());
         assert_eq!(sh(&f.work, &["log", "-1", "--format=%s"]), "Publish: fresh");
+    }
+
+    #[test]
+    fn project_publish_lands_in_projects_and_reports_canonical_url() {
+        let f = Fixture::new("project-publish", "main");
+        fs::create_dir_all(format!("{}/blog/projects", f.vault)).unwrap();
+        fs::write(
+            f.note("blog/projects/websdr-vcv.md"),
+            "---\ntitle: WebSDR VCV\ndate: 2025-08-01\n---\nbody\n",
+        )
+        .unwrap();
+
+        let d = publish_blog(
+            &f.target("main"),
+            &f.vault,
+            &f.note("blog/projects/websdr-vcv.md"),
+            "2026",
+        )
+        .unwrap();
+        assert_eq!(d.url, "https://ejfox.com/projects/websdr-vcv");
+        assert_eq!(
+            f.remote_file("main", "content/blog/projects/websdr-vcv.md")
+                .as_deref(),
+            Some("---\ntitle: WebSDR VCV\ndate: 2025-08-01\n---\nbody\n")
+        );
+        assert!(f
+            .remote_file("main", "content/blog/2026/websdr-vcv.md")
+            .is_none());
     }
 
     #[test]
@@ -1645,6 +1733,25 @@ mod tests {
         assert_eq!(p.title, "Water");
         assert_eq!(p.url, "https://ejfox.com/dispatch/water");
         assert_eq!(p.rel_path, "content/dispatch/water.md");
+        assert!(!p.is_update);
+    }
+
+    #[test]
+    fn preview_of_a_project_names_the_type_and_canonical_route() {
+        let f = Fixture::new("pv-project", "main");
+        fs::create_dir_all(format!("{}/blog/projects", f.vault)).unwrap();
+        fs::write(
+            f.note("blog/projects/websdr-vcv.md"),
+            "---\ntitle: WebSDR VCV\ndate: 2025-08-01\n---\nbody\n",
+        )
+        .unwrap();
+
+        let p = preview(&f, "main", "blog/projects/websdr-vcv.md");
+        assert_eq!(p.blocked, None);
+        assert_eq!(p.kind, "project");
+        assert_eq!(p.title, "WebSDR VCV");
+        assert_eq!(p.url, "https://ejfox.com/projects/websdr-vcv");
+        assert_eq!(p.rel_path, "content/blog/projects/websdr-vcv.md");
         assert!(!p.is_update);
     }
 

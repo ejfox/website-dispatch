@@ -28,6 +28,7 @@ pub const ACCELERATORS: &[(&str, &str)] = &[
     ("panel_journal", "CmdOrCtrl+3"),
     ("panel_changed", "CmdOrCtrl+4"),
     ("panel_activity", "CmdOrCtrl+5"),
+    ("panel_projects", "CmdOrCtrl+6"),
     ("search", "CmdOrCtrl+K"),
     // Publish
     ("publish", "CmdOrCtrl+Return"),
@@ -373,6 +374,7 @@ pub fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
             &item(handle, "panel_journal", "Show Journal")?,
             &item(handle, "panel_changed", "Show Changed Since Live")?,
             &item(handle, "panel_activity", "Show Activity")?,
+            &item(handle, "panel_projects", "Show Projects")?,
             &PredefinedMenuItem::separator(handle)?,
             &item(handle, "search", "Search\u{2026}")?,
             &PredefinedMenuItem::separator(handle)?,
@@ -558,6 +560,7 @@ pub const MENU_EVENT_IDS: &[&str] = &[
     "panel_journal",
     "panel_changed",
     "panel_activity",
+    "panel_projects",
     "show_help",
     "show_overview",
     "reset_tips",

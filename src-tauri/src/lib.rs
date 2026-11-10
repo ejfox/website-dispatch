@@ -34,6 +34,7 @@ mod omnipublish; // Fan-out syndication to every network with retry, idempotency
 mod open; // Open files in Obsidian, editors, terminal
 mod patterns; // Shared compiled regex patterns (LazyLock statics)
 mod preview; // Manages a local Node.js server for previewing posts
+mod projects; // Portfolio projects: blog/projects/ in the vault and repo, /projects/ on the site
 mod publish; // Handles git operations to publish posts to your website
 mod publish_diff; // Computes a line-level diff between vault source and the published copy
 mod publish_guard; // Hard refusal of week-notes/, drafts/, type: weeknote
@@ -98,7 +99,7 @@ pub struct MarkdownFile {
     // Scheduling
     pub publish_at: Option<String>, // ISO 8601 datetime for scheduled publishing
 
-    // Content type: "post", "weeknote", or "photos"
+    // Content type: "post", "project", "dispatch", "weeknote", or "photos"
     pub content_type: String,
 
     // Photo-post extras (populated for any post, cheap to compute): how many
@@ -266,11 +267,16 @@ async fn publish_preview(
     publish::off_main(move || publish::publish_preview(&source_path, target_id.as_deref())).await
 }
 
-// Unpublish a file (move from blog/ to drafts/ in the website repo)
+// Unpublish a file (move from its public collection to drafts/ in the website repo)
 #[tauri::command]
-async fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), String> {
+async fn unpublish_file(
+    slug: String,
+    source_path: Option<String>,
+    target_id: Option<String>,
+) -> Result<(), String> {
     let (s, t) = (slug.clone(), target_id.clone());
-    publish::off_main(move || publish::unpublish_file(&s, t.as_deref())).await?;
+    let source = source_path.clone();
+    publish::off_main(move || publish::unpublish_file(&s, source.as_deref(), t.as_deref())).await?;
     let slug = publish::bare_slug(&slug)?;
 
     // Record in journal
@@ -280,7 +286,14 @@ async fn unpublish_file(slug: String, target_id: Option<String>) -> Result<(), S
         title: None,
         word_count: 0,
         tags: &[],
-        content_type: "post",
+        content_type: if source_path
+            .as_deref()
+            .is_some_and(|p| p.replace('\\', "/").contains("/blog/projects/"))
+        {
+            "project"
+        } else {
+            "post"
+        },
         url: None,
         target_id: target_id.as_deref(),
         visibility: "public",

@@ -910,6 +910,7 @@ const formatTitle = (filename: string): string => {
 
 const title = computed(() => props.file.title || formatTitle(props.file.filename))
 const titleIsDerived = computed(() => !props.file.title)
+const contentNoun = computed(() => (props.file.content_type === 'project' ? 'project' : 'post'))
 
 // Extract <year>/<slug> from the file's path. website2 organizes processed
 // posts as content/processed/<year>/<slug>.json, so OG generation needs the
@@ -920,6 +921,9 @@ const slug = computed(() => {
   const baseName = props.file.filename.replace('.md', '')
   // Dispatch pieces: bare slug → content/dispatch/<slug>.md (no year).
   if (props.file.content_type === 'dispatch') return baseName
+  // Projects use the blog processing pipeline, but their processed slug and
+  // canonical route retain the projects/ collection prefix.
+  if (props.file.content_type === 'project') return `projects/${baseName}`
   const yearMatch = props.file.path.match(/\/blog\/(\d{4})\//)
   if (yearMatch) return `${yearMatch[1]}/${baseName}`
   return props.file.path.includes('/blog/') ? baseName : ''
@@ -1095,6 +1099,8 @@ const {
   unpublish,
 } = usePostActions({
   slug,
+  getSourcePath: () => props.file.path,
+  getContentNoun: () => contentNoun.value,
   getLiveUrl: () => liveUrl.value,
   isLive: () => isLive.value,
   getActiveTargetId,
@@ -1250,7 +1256,7 @@ async function openPreview() {
         variant="primary"
         size="small"
         :disabled="publishing"
-        :label="publishing ? 'Publishing…' : isLive ? 'Update live post…' : file.is_safe ? 'Publish…' : 'See what to fix…'"
+        :label="publishing ? 'Publishing…' : isLive ? `Update live ${contentNoun}…` : file.is_safe ? 'Publish…' : 'See what to fix…'"
         @click="requestPublish(isLive)"
       />
       <UiButton variant="plain" size="small" label="Add image…" @click="chooseAndUpload(file)" />
@@ -1457,7 +1463,7 @@ async function openPreview() {
       <!-- ── Inspector ────────────────────────────────────────────────────── -->
       <aside v-if="inspector.visible.value" class="inspector" :style="inspectorStyle" aria-label="Inspector">
         <InlineTip v-if="inspectorTip.show.value" class="insp-tip" @close="inspectorTip.close()">
-          This is the Inspector: where the post stands, what to fix, and how to share it
+          This is the Inspector: where the {{ contentNoun }} stands, what to fix, and how to share it
           (<kbd>⌥⌘I</kbd> hides it).
         </InlineTip>
         <!-- Status -->
@@ -1517,7 +1523,8 @@ async function openPreview() {
             :selected-target-id="selectedTargetId"
             :is-live="isLive"
             :live-url="liveUrl"
-            :is-vue-page="isVuePage || file.content_type === 'dispatch' /* no Vue-page conversion for dispatch */"
+            :is-vue-page="isVuePage || ['dispatch', 'project'].includes(file.content_type) /* collection templates own these routes */"
+            :content-label="contentNoun"
             :converting="converting"
             :unpublishing="unpublishing"
             :publishing="publishing"

@@ -41,6 +41,7 @@ import MediaLibraryModal from './components/Media/MediaLibraryModal.vue'
 import PublishingJournal from './components/PublishingJournal.vue'
 import ActivityFeed from './components/ActivityFeed.vue'
 import ModifiedPostsView from './components/ModifiedPostsView.vue'
+import ProjectsView from './components/ProjectsView.vue'
 import { openSettings } from './utils/openSettings'
 import CommandPalette from './components/CommandPalette.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
@@ -72,6 +73,9 @@ const inspector = useInspector()
 // filters — pure cost with no benefit.
 const files = shallowRef<MarkdownFile[]>([])
 const selectedFile = shallowRef<MarkdownFile | null>(null)
+// The sidebar's rows in on-screen order (sections, filter, sort; collapsed
+// sections skipped). Keyboard navigation walks this, not vault order.
+const visibleFiles = shallowRef<MarkdownFile[]>([])
 const loading = ref(true)
 
 const appVersion = __APP_VERSION__
@@ -209,6 +213,9 @@ const titlebarSubtitle = computed(() => {
 const modifiedCount = computed(
   () => files.value.filter((f) => f.warnings.includes('Modified since publish')).length,
 )
+const projectCount = computed(
+  () => files.value.filter((f) => f.content_type === 'project').length,
+)
 
 // Reflect the modified backlog on the Dock icon. macOS shows the number in a
 // red bubble on the app icon — glanceable "you have N posts to triage" without
@@ -263,7 +270,7 @@ watch(
 // Right panel tab state. Persists the user's last/preferred home tab so
 // Dispatch opens on your post. A new key, because the old one defaulted to the
 // Desk and would have kept people there.
-type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'
+type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'projects'
 const defaultHomeTab = useLocalStorage<RightTab>('dispatch-open-to', 'preview')
 const rightTab = ref<RightTab>(defaultHomeTab.value)
 void checkDesk().then((ok) => {
@@ -591,7 +598,7 @@ watch(paletteOpen, (open) => open && invalidateTip('palette'))
 
 // Keyboard shortcuts composable
 const { handleGlobalKey } = useKeyboardShortcuts({
-  files,
+  files: visibleFiles,
   selectedFile,
   searchOpen: paletteOpen,
   newPostOpen,
@@ -938,6 +945,7 @@ onUnmounted(() => {
         :selected="selectedFile"
         :loading="loading"
         :compact="compactMode"
+        @update:visible="(list) => (visibleFiles = list)"
         @select="
           (f) => {
             selectedFile = f
@@ -965,7 +973,7 @@ onUnmounted(() => {
              This is the Apple Mail two-row chrome: titlebar (title + actions)
              on top, tab strip below. -->
         <div class="panel-tabs">
-          <!-- Left to right after the Desk: ⌘1–⌘5 (View menu, menu.rs). -->
+          <!-- Left to right after the Desk: ⌘1–⌘6 (View menu, menu.rs). -->
           <button v-if="deskAvailable" data-tab="desk" :class="{ active: rightTab === 'desk' }" data-tip="Your writing desk: today’s pieces and what’s on deck (d)" @click="rightTab = 'desk'">
             <PhNewspaper :size="13" />
             <span>Desk</span>
@@ -990,6 +998,11 @@ onUnmounted(() => {
           <button data-tab="activity" :class="{ active: rightTab === 'activity' }" data-tip="See recent edits, publishes and social posts together (⌘5)" @click="rightTab = 'activity'">
             <Activity :size="13" />
             <span>Activity</span>
+          </button>
+          <button data-tab="projects" :class="{ active: rightTab === 'projects' }" data-tip="Manage portfolio projects (⌘6)" @click="rightTab = 'projects'">
+            <PhFolder :size="13" />
+            <span>Projects</span>
+            <span v-if="projectCount > 0" class="tab-count">{{ projectCount }}</span>
           </button>
           <span class="panel-tabs-spacer" />
           <UiButton
@@ -1057,6 +1070,12 @@ onUnmounted(() => {
             :files="files"
             @select-file="(file) => (selectedFile = file)"
             @jump-to-slug="jumpToSlug"
+          />
+
+          <ProjectsView
+            v-else-if="rightTab === 'projects'"
+            :files="files"
+            @select-file="(file) => { selectedFile = file; rightTab = 'preview' }"
           />
 
           <ModifiedPostsView
@@ -1336,10 +1355,10 @@ onUnmounted(() => {
   container-name: panel-tabs;
 }
 
-/* Not enough room for six labelled tabs: show icons only. Names stay in the
+/* Not enough room for seven labelled tabs: show icons only. Names stay in the
    hover hints (data-tip) and for VoiceOver (visually hidden, not removed). */
 @container panel-tabs (max-width: 560px) {
-  .panel-tabs button[data-tab] > span:not(.tab-badge) {
+  .panel-tabs button[data-tab] > span:not(.tab-badge):not(.tab-count) {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -1416,6 +1435,21 @@ onUnmounted(() => {
   color: var(--label);
   font-variant-numeric: tabular-nums;
   line-height: 1;
+}
+.panel-tabs button .tab-count {
+  min-width: 14px;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: var(--fill-2);
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  text-align: center;
+}
+.panel-tabs button.active .tab-count {
+  background: var(--accent-tint);
+  color: var(--text-primary);
 }
 
 /* The middle of the title-bar is the primary window-drag handle. Reserve a

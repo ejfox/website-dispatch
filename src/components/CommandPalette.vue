@@ -56,7 +56,7 @@ const emit = defineEmits<{
   newPost: []
   refresh: []
   showHelp: [section: 'overview' | 'shortcuts']
-  togglePanel: [panel: 'desk' | 'preview' | 'media' | 'journal' | 'modified' | 'activity']
+  togglePanel: [panel: 'desk' | 'preview' | 'media' | 'journal' | 'modified' | 'activity' | 'projects']
   publish: []
   toggleDiff: []
   addImage: []
@@ -295,6 +295,16 @@ const actions = computed<Action[]>(() => {
       shortcut: '⌘5',
       synonyms: ['feed', 'recent', 'edits'],
       run: () => emit('togglePanel', 'activity'),
+    },
+    {
+      id: 'panel_projects',
+      label: 'Show Projects',
+      section: 'Actions',
+      icon: PhFolder,
+      enabled: true,
+      shortcut: '⌘6',
+      synonyms: ['portfolio', 'projects', 'case studies', 'work'],
+      run: () => emit('togglePanel', 'projects'),
     },
   ]
 })

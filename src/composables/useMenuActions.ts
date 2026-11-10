@@ -8,7 +8,7 @@ import { useAppConfig } from './useVaultData'
 import { checkForUpdate } from './useAutoUpdate'
 import { resetTips } from './useTips'
 
-type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'
+type RightTab = 'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'projects'
 type HelpSection = 'overview' | 'shortcuts'
 
 /** The bits of FilePreview a menu item can reach. It only exists while the
@@ -166,6 +166,7 @@ export function useMenuActions(options: {
     'menu-panel-journal': () => (rightTab.value = 'journal'),
     'menu-panel-changed': () => (rightTab.value = 'modified'),
     'menu-panel-activity': () => (rightTab.value = 'activity'),
+    'menu-panel-projects': () => (rightTab.value = 'projects'),
     // Publish (Publish ⌘↩ and Publish as Unlisted ⌘⇧↩ are in App.vue)
     'menu-publish-later': async () => {
       if (modalOpen()) return

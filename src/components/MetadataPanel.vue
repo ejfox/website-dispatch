@@ -13,6 +13,15 @@ import { formatDate, formatAgeShort, formatDateCompact } from '../utils/formatti
 import { useAppConfig } from '../composables/useVaultData'
 
 const { publishTargets } = useAppConfig()
+const CONTENT_TYPE_LABELS: Record<string, string> = {
+  project: 'Portfolio Project',
+  dispatch: 'Dispatch',
+  photos: 'Photo Post',
+  weeknote: 'Week Note',
+}
+function contentTypeLabel(type: string): string | null {
+  return CONTENT_TYPE_LABELS[type] || null
+}
 function siteDomain() {
   const t = publishTargets.value.find((x) => x.is_default) || publishTargets.value[0]
   return (t?.domain || 'https://ejfox.com').replace(/\/$/, '')
@@ -71,9 +80,9 @@ defineEmits<{
       <span class="insp-key">Date</span>
       <span class="insp-val">{{ formatDate(file.date) || formatDateCompact(file.created) }}</span>
     </div>
-    <div v-if="file.content_type === 'weeknote'" class="insp-kv">
+    <div v-if="contentTypeLabel(file.content_type)" class="insp-kv">
       <span class="insp-key">Type</span>
-      <span class="insp-val">Week Note</span>
+      <span class="insp-val">{{ contentTypeLabel(file.content_type) }}</span>
     </div>
     <div class="insp-kv">
       <span class="insp-key">Folder</span>

@@ -14,7 +14,7 @@
  *
  *   ?mock            install the mock, show the first fixture in Preview
  *   ?mock&file=N     show fixture N (0 live photo post · 1 not published ·
- *                    2 live, changed since live · 3 scheduled)
+ *                    2 live, changed since live · 3 scheduled · 4 project)
  *   ?mock&overlay    at a narrow width, also open the inspector overlay
  *
  * Publishing (nothing leaves the browser): the review sheet reads a fake
@@ -166,13 +166,146 @@ const files: MarkdownFile[] = [
     image_count: 0,
     thumbnail: null,
   },
+  {
+    path: `${VAULT}/blog/projects/websdr-vcv.md`,
+    filename: 'websdr-vcv.md',
+    title: 'WebSDR VCV',
+    dek: null,
+    date: '2025-08-01',
+    tags: ['audio', 'radio', 'hardware'],
+    created: now - 460 * day,
+    modified: now - 3 * day,
+    word_count: 71,
+    published_word_count: 71,
+    is_safe: true,
+    warnings: [],
+    published_url: 'https://ejfox.com/projects/websdr-vcv',
+    published_date: now - 460 * day,
+    source_dir: 'blog/projects',
+    unlisted: false,
+    password: null,
+    publish_at: null,
+    content_type: 'project',
+    image_count: 2,
+    thumbnail: fakeImage(19, 1200, 700),
+  },
 ]
+
+// ?mock&many — a vault shaped like the real one, for judging the sidebar at
+// scale: ~40 posts across two years, 91 portfolio projects (85 of them
+// `draft: true`, like website2's projects collection), Dispatch pieces and
+// week notes. Titles are invented; only the proportions are real.
+if (params.has('many')) {
+  const base = files[1]
+  const mk = (over: Partial<MarkdownFile>): MarkdownFile => ({
+    ...base,
+    tags: [],
+    warnings: [],
+    thumbnail: null,
+    image_count: 0,
+    dek: null,
+    draft: false,
+    ...over,
+  })
+  const postTitles = [
+    'Selecting a CMS', 'Boring infrastructure is a feature', 'Panic-driven development', 'Using radios',
+    'Personal APIs', 'Owning my Cloudinary photos', 'MCP meta-mapping', 'Why I love Obsidian',
+    'Starting a studio', 'Crypto, AI and colonization', 'How I built Coach Artie', 'The prototyping toolkit',
+    'Notes on a dither shader', 'A week with a cyberdeck', 'Election night graphics', 'Field recording kit',
+    'Small multiples, big data', 'What a newsroom CMS hides', 'Scraping responsibly', 'The 417am archive',
+    'Gear for a motorcycle trip', 'Mapping the Hudson', 'Hand-drawn marginalia', 'Paperclip',
+  ]
+  postTitles.forEach((t, i) => {
+    const slug = t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    const age = Math.round(i * i * 1.6 + i * 3)
+    const year = new Date((now - age * day) * 1000).getFullYear()
+    const live = i % 5 !== 2
+    const changed = live && i % 7 === 1
+    files.push(
+      mk({
+        path: `${VAULT}/blog/${year}/${slug}.md`,
+        filename: `${slug}.md`,
+        title: t,
+        dek: i % 3 === 0 ? 'One line about what this post argues, as the dek reads on the site.' : null,
+        created: now - (age + 4) * day,
+        modified: now - (changed ? 1 : age) * day,
+        word_count: 600 + ((i * 337) % 2400),
+        published_word_count: live ? 600 + ((i * 337) % 2400) - (changed ? 120 : 0) : null,
+        warnings: changed ? ['Modified since publish'] : [],
+        published_url: live ? `https://ejfox.com/blog/${year}/${slug}` : null,
+        published_date: live ? now - age * day : null,
+        source_dir: `blog/${year}`,
+        unlisted: i === 9,
+        draft: !live && i % 2 === 0,
+      }),
+    )
+  })
+  const projectTitles = [
+    'Mapping ICE', 'Scrapbook CLI', 'Vulpes RSS', 'groundwave', 'Typing Test', 'Directory Sync Tool',
+    'Dispatch', 'smallweb-starter', 'Scrapscroller', 'Tailwind Φ', 'tmux-link-grab', 'phone-stack',
+    'Torchslit', 'room302-template', 'Context Alchemy', 'Moto GPX', 'Transcript Video', 'VulpeSVG',
+    'CLI AI Chat', 'Cavapalooza', 'code-network-gen', 'dockrune', 'Journo LLM', 'Radio & Music Tools',
+  ]
+  for (let i = 0; i < 91; i++) {
+    const t = projectTitles[i % projectTitles.length] + (i >= projectTitles.length ? ` ${Math.floor(i / projectTitles.length) + 1}` : '')
+    const slug = t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    const live = i % 15 === 3 // 6 of 91
+    files.push(
+      mk({
+        path: `${VAULT}/blog/projects/${slug}.md`,
+        filename: `${slug}.md`,
+        title: t,
+        created: now - (300 + i) * day,
+        // A bulk edit touched every project recently: that's what floods "Earlier".
+        modified: now - (40 + i) * day,
+        word_count: 20 + ((i * 53) % 400),
+        published_word_count: live ? 20 + ((i * 53) % 400) : null,
+        published_url: live ? `https://ejfox.com/projects/${slug}` : null,
+        published_date: live ? now - (200 + i) * day : null,
+        source_dir: 'blog/projects',
+        content_type: 'project',
+        draft: !live,
+      }),
+    )
+  }
+  ;['The county water audit', 'Who owns the river', 'Three bridges', 'Grain and war'].forEach((t, i) => {
+    const slug = t.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+    files.push(
+      mk({
+        path: `${VAULT}/dispatch/${slug}.md`,
+        filename: `${slug}.md`,
+        title: t,
+        modified: now - (i * 9 + 2) * day,
+        published_url: i ? `https://ejfox.com/dispatch/${slug}` : null,
+        published_date: i ? now - (i * 9 + 2) * day : null,
+        source_dir: 'dispatch',
+        content_type: 'dispatch',
+        draft: i === 0,
+      }),
+    )
+  })
+  for (let w = 1; w <= 12; w++) {
+    files.push(
+      mk({
+        path: `${VAULT}/blog/week-notes/2026-${String(w).padStart(2, '0')}.md`,
+        filename: `2026-${String(w).padStart(2, '0')}.md`,
+        title: `Week ${44 - w}`,
+        modified: now - w * 7 * day,
+        published_url: null,
+        published_date: null,
+        source_dir: 'blog/week-notes',
+        content_type: 'weeknote',
+      }),
+    )
+  }
+}
 
 const contents: Record<string, string> = {
   [files[0].path]: `---\ntitle: Photography 2008-2010\ndate: 2010-01-01\ntype: photos\n---\n${photoBody}`,
   [files[1].path]: `---\ntitle: Finishing a chart\n---\n${essayBody}\n![](charts/final.png)\n\n![](charts/grid.png)\n`,
   [files[2].path]: `---\ntitle: Boring infrastructure is a feature\n---\n${essayBody}`,
   [files[3].path]: `---\ntitle: Notes for next week\n---\n${essayBody.slice(0, 600)}\n`,
+  [files[4].path]: `---\ntitle: WebSDR VCV\ndate: 2025-08-01\ncategory: Hardware\n---\nA VCV Rack / Cardinal plugin that streams real radio from KiwiSDR servers into a modular synth.\n\n![WebSDR patched into a modular synth](${fakeImage(19, 1200, 700)})\n\n![The module source code](${fakeImage(20, 1200, 700)})\n`,
 }
 
 const backlinks: Record<string, Backlink[]> = {
@@ -235,6 +368,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const MOCK_SHA = 'd57aecc4ff85880009177738ccd95fc05d3ffa78'
 function mockUrl(path: string) {
   const f = files.find((x) => x.path === path)
+  if (f?.content_type === 'project') {
+    return f.published_url ?? `https://ejfox.com/projects/${f.filename.replace(/\.md$/, '')}`
+  }
   return f?.published_url ?? `https://ejfox.com/blog/2026/${(f?.filename ?? 'post.md').replace(/\.md$/, '')}`
 }
 function mockPreview({ sourcePath }: { sourcePath: string }) {
@@ -245,10 +381,11 @@ function mockPreview({ sourcePath }: { sourcePath: string }) {
   return {
     title: f.title ?? f.filename,
     slug: f.filename.replace(/\.md$/, ''),
-    kind: 'blog',
+    kind: f.content_type === 'project' ? 'project' : 'blog',
     is_update: !!f.published_url,
     url: mockUrl(sourcePath),
-    rel_path: `content/blog/2026/${f.filename}`,
+    rel_path:
+      f.content_type === 'project' ? `content/blog/projects/${f.filename}` : `content/blog/2026/${f.filename}`,
     repo_name: 'website2',
     repo_path: '/Users/ej/code/website2',
     branch: 'main',

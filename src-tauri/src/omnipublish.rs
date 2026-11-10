@@ -723,15 +723,20 @@ fn resolve_note(source_path: &str) -> Result<(String, String, String, bool), Str
             published,
         ));
     }
-    let (url, _, _) = crate::vault::find_published_info_for_target(&target, &slug);
+    let (url, _, _) =
+        crate::vault::find_published_info_for_source(&target, &app.vault.path, source_path, &slug);
     let published = url.is_some();
     let url = url.unwrap_or_else(|| {
-        format!(
-            "{}/blog/{}/{}",
-            target.domain.trim_end_matches('/'),
-            chrono::Utc::now().format("%Y"),
-            slug
-        )
+        if crate::projects::is_project_note(&app.vault.path, source_path) {
+            crate::projects::public_url(&target.domain, &slug)
+        } else {
+            format!(
+                "{}/blog/{}/{}",
+                target.domain.trim_end_matches('/'),
+                chrono::Utc::now().format("%Y"),
+                slug
+            )
+        }
     });
     Ok((content, slug, url, published))
 }

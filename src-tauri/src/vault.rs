@@ -24,6 +24,7 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
         // Vault dispatch/ is always publishable (it's the publish intent for
         // Dispatch pieces), even on configs saved before it existed.
         let is_dispatch = crate::dispatch::is_dispatch_note(&config.vault_path, &path_str);
+        let is_project = crate::projects::is_project_note(&config.vault_path, &path_str);
 
         // Only include files from publishable directories
         let in_publishable = is_dispatch
@@ -34,6 +35,8 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
         // Determine content type from path
         let content_type = if is_dispatch {
             "dispatch"
+        } else if is_project {
+            "project"
         } else if path_str.contains("/week-notes/") {
             "weeknote"
         } else {
@@ -78,7 +81,7 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
             // `type: photos` (or `photo`) becomes a "photos" post so the UI can
             // give it gallery treatment. Weeknotes keep their path-based type —
             // the checks below depend on it and photos never live in week-notes/.
-            let content_type = if content_type == "weeknote" || content_type == "dispatch" {
+            let content_type = if matches!(content_type, "weeknote" | "dispatch" | "project") {
                 content_type
             } else if frontmatter
                 .get("type")
@@ -123,8 +126,9 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .and_then(|d| parse_iso_date(d))
                 .or(filename_date)
                 .unwrap_or(fs_created);
-            // Dispatch pieces carry their title in frontmatter.
-            let title = if content_type == "dispatch" {
+            // Dispatch pieces and projects carry their display title in
+            // frontmatter; project bodies intentionally do not repeat an H1.
+            let title = if matches!(content_type, "dispatch" | "project") {
                 frontmatter
                     .get("title")
                     .filter(|t| !t.is_empty())
@@ -140,13 +144,9 @@ pub fn get_recent_files(limit: usize) -> Result<Vec<MarkdownFile>, String> {
                 .to_string();
             let slug = filename.trim_end_matches(".md");
 
-            let (published_url, published_date, published_content) = if content_type == "dispatch" {
-                config::default_target()
-                    .map(|t| crate::dispatch::find_published(&t, slug))
-                    .unwrap_or((None, None, None))
-            } else {
-                find_published_info(&config.website_repo, slug)
-            };
+            let (published_url, published_date, published_content) = config::default_target()
+                .map(|t| find_published_info_for_source(&t, &config.vault_path, &path_str, slug))
+                .unwrap_or((None, None, None));
             let source_dir = path
                 .parent()
                 .and_then(|p| p.strip_prefix(&config.vault_path).ok())
@@ -337,23 +337,23 @@ fn parse_iso_date(date_str: &str) -> Option<u64> {
     None
 }
 
-/// Public version that accepts an explicit target (used by journal)
-pub fn find_published_info_for_target(
+/// Resolve a published copy from the source collection, not just its slug.
+/// A project and a dated blog post may legally share a filename; the source
+/// path is what tells us whether the canonical URL is `/projects/…` or
+/// `/blog/<year>/…`.
+pub fn find_published_info_for_source(
     target: &config::PublishTarget,
+    vault_root: &str,
+    source_path: &str,
     slug: &str,
 ) -> (Option<String>, Option<u64>, Option<String>) {
-    find_published_info_inner(target, &target.repo_path, slug)
-}
-
-fn find_published_info(
-    website_repo: &str,
-    slug: &str,
-) -> (Option<String>, Option<u64>, Option<String>) {
-    let target = match config::default_target() {
-        Ok(t) => t,
-        Err(_) => return (None, None, None),
-    };
-    find_published_info_inner(&target, website_repo, slug)
+    if crate::dispatch::is_dispatch_note(vault_root, source_path) {
+        crate::dispatch::find_published(target, slug)
+    } else if crate::projects::is_project_note(vault_root, source_path) {
+        crate::projects::find_published(target, slug)
+    } else {
+        find_published_info_inner(target, &target.repo_path, slug)
+    }
 }
 
 fn find_published_info_inner(

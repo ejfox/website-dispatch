@@ -55,7 +55,7 @@
         "minWidth": 560,
         "minHeight": 420,
         "resizable": true,
-        "transparent": false,
+        "transparent": true,
         "visible": true,
         "useHttpsScheme": true,
         "decorations": true,

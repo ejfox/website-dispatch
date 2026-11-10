@@ -81,6 +81,14 @@ Standalone journalism lives in the vault folder `dispatch/` (badged **DISPATCH**
 `https://ejfox.com/dispatch/<slug>`. Frontmatter: `title, dek, date, image, image_alt` (required with `image`),
 `tags, sources, data, claims, syndication, unlisted, draft`.
 
+## Portfolio projects
+
+Portfolio write-ups live in the vault at `blog/projects/<slug>.md`. Dispatch treats them as a distinct **PROJECT**
+content type: they have their own list filter, use the frontmatter `title`, publish in place to website2
+`content/blog/projects/<slug>.md`, and open at the canonical `https://ejfox.com/projects/<slug>` URL. Live/changed
+status, diffs, social cards, syndication, and unpublish all resolve against that project copy rather than a dated
+blog post.
+
 ## Omnipublish (Bluesky + Mastodon)
 
 The Syndicate wizard's **Post now** fans a published note out to every selected network independently:

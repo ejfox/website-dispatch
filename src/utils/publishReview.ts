@@ -156,6 +156,7 @@ export function composeReview(
   const send = opts.webmentions ?? true
   const where = plainUrl(p.url)
   const title = p.title || p.slug
+  const noun = p.kind === 'project' ? 'project' : 'post'
   const mins = minutes(p.deploy_estimate_secs)
   // The Unlisted button writes `unlisted: true` before publishing; a password
   // still wins on the site.
@@ -181,7 +182,7 @@ export function composeReview(
     const midnight = p.embargo!.date_only ? ' (a date with no time counts as midnight UTC)' : ''
     summary.push(
       `It’ll be committed to ${p.repo_name} on ${p.branch} and deployed in about ${mins} minutes.`,
-      `The site deploys now, but the post stays hidden until ${formatWhen(p.embargo!)}${midnight}.`,
+      `The site deploys now, but the ${noun} stays hidden until ${formatWhen(p.embargo!)}${midnight}.`,
     )
   } else {
     summary.push(
@@ -225,7 +226,7 @@ export function composeReview(
     : p.is_update
       ? mode === 'unlisted'
         ? 'Update as unlisted'
-        : 'Update live post'
+        : `Update live ${noun}`
       : mode === 'unlisted'
         ? 'Publish unlisted'
         : 'Publish now'

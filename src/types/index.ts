@@ -245,7 +245,7 @@ export interface SyndicationPlan {
 export interface PublishPreview {
   title: string
   slug: string
-  kind: 'blog' | 'dispatch'
+  kind: 'blog' | 'project' | 'dispatch'
   is_update: boolean
   url: string
   rel_path: string

@@ -41,6 +41,7 @@ const props = defineProps<{
   isSafe: boolean
   isScheduled: boolean
   isUnlisted: boolean
+  contentLabel: string
 }>()
 
 const emit = defineEmits<{
@@ -139,7 +140,7 @@ async function showMoreMenu(e: MouseEvent) {
       variant="primary"
       class="full"
       :disabled="publishing"
-      :label="publishing ? 'Publishing…' : 'Update live post…'"
+      :label="publishing ? 'Publishing…' : `Update live ${contentLabel}…`"
       @click="emit('open-publish-confirm', true)"
     />
     <UiButton v-else variant="primary" class="full" :disabled="publishing" @click="emit('open-publish-confirm', false)">

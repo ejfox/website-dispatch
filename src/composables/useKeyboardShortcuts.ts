@@ -10,7 +10,7 @@ export function useKeyboardShortcuts(options: {
   searchOpen: Ref<boolean>
   newPostOpen: Ref<boolean>
   showHelp: Ref<boolean>
-  rightTab: Ref<'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal'>
+  rightTab: Ref<'desk' | 'preview' | 'media' | 'activity' | 'modified' | 'journal' | 'projects'>
   sidebarCollapsed: Ref<boolean>
   filePreviewRef: Ref<{
     openPublishConfirm: (isRepublish: boolean) => void
@@ -59,7 +59,7 @@ export function useKeyboardShortcuts(options: {
   function handleGlobalKey(e: KeyboardEvent) {
     // --- COMMAND-MODIFIED SHORTCUTS — fire even while typing ---
 
-    // ⌘K, ⌘,, ⌘0 and ⌘1–5 are owned by the native menu (menu.rs, handled in
+    // ⌘K, ⌘,, ⌘0 and ⌘1–6 are owned by the native menu (menu.rs, handled in
     // useMenuActions.ts). On macOS the menu sees a key equivalent before
     // the webview, so a second handler here was either dead or a double fire.
 
